@@ -235,6 +235,7 @@ public struct MainListView: View {
     @State private var focusedIndex: Int = 0
     @State private var listMode: ListMode = .grouped
     @State private var groupedEntitiesCache: [GroupingCacheKey: [EntityGroup]] = [:]
+    @State private var expandedGroupIDs = Set<String>()
     @State private var groupingTask: Task<[EntityGroup], Never>?
     @State private var isGrouping = false
     @State private var processOperatorRequest: ProcessOperatorRequest?
@@ -395,6 +396,9 @@ public struct MainListView: View {
             .frame(width: 86)
             .onChange(of: listMode) { _, _ in
                 focusedIndex = 0
+                if listMode == .flat {
+                    expandedGroupIDs.removeAll()
+                }
                 if let selectedEntityID, !visibleEntityIDs.contains(selectedEntityID) {
                     self.selectedEntityID = nil
                 }
@@ -414,7 +418,7 @@ public struct MainListView: View {
         var items = [
             AetowerToolBadgeItem(
                 isGroupedMode ? "Groups" : "Entities",
-                value: "\(visibleEntityIDs.count)",
+                value: "\(visiblePrimaryRowCount)",
                 systemImage: isGroupedMode ? "square.grid.2x2" : "list.bullet",
                 tone: AetowerDesign.Tone.friction
             ),
@@ -896,21 +900,52 @@ public struct MainListView: View {
                             .padding(.vertical, AetowerDesign.Spacing.xs)
                         }
                         ForEach(allProcessGroupRows) { row in
-                            Button {
-                                searchFieldFocused = false
-                                withAnimation(AetowerDesign.Motion.standard) {
-                                    selectedEntityID = row.id
+                            let isExpanded = expandedGroupIDs.contains(row.id)
+                            GroupedEntityRow(
+                                row: row,
+                                isSelected: selectedEntityID == row.id,
+                                isExpanded: isExpanded,
+                                canExpand: canExpandGroup(row.group),
+                                onToggleExpansion: {
+                                    toggleGroupExpansion(row.group)
                                 }
-                            } label: {
-                                GroupedEntityRow(
-                                    row: row,
-                                    isSelected: selectedEntityID == row.id
-                                )
-                                .equatable()
+                            )
+                            .equatable()
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                selectEntity(row.id)
                             }
-                            .buttonStyle(.plain)
                             .contextMenu {
+                                if canExpandGroup(row.group) {
+                                    Button(isExpanded ? "Collapse Group" : "Expand Group") {
+                                        toggleGroupExpansion(row.group)
+                                    }
+                                    Divider()
+                                }
                                 monitorContextMenu(for: row.group.root, members: row.group.members)
+                            }
+
+                            if isExpanded {
+                                ForEach(expandedMemberRows(for: row.group)) { childRow in
+                                    Button {
+                                        searchFieldFocused = false
+                                        withAnimation(AetowerDesign.Motion.standard) {
+                                            selectedEntityID = childRow.id
+                                        }
+                                    } label: {
+                                        EntityRow(
+                                            row: childRow,
+                                            isSelected: selectedEntityID == childRow.id
+                                        )
+                                        .equatable()
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.leading, AetowerDesign.Spacing.lg)
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                                    .contextMenu {
+                                        monitorContextMenu(for: childRow.entity, members: [childRow.entity])
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -1583,9 +1618,16 @@ public struct MainListView: View {
 
     private var monitorVisibleRowCount: Int {
         if isGroupedMode {
-            return burdenLeaderRows.count + allProcessGroupRows.count
+            return burdenLeaderRows.count + visibleGroupedEntityIDs.count
         }
         return burdenLeaderRows.count + allProcessRows.count
+    }
+
+    private var visiblePrimaryRowCount: Int {
+        if isGroupedMode {
+            return burdenLeaderRows.count + allProcessGroupRows.count
+        }
+        return visibleEntityIDs.count
     }
 
     private var monitorVisibleRowBuildMillis: Double {
@@ -1667,9 +1709,19 @@ public struct MainListView: View {
     private var visibleEntityIDs: [String] {
         let sections = monitorSections
         if isGroupedMode {
-            return sections.burdenLeaderRows.map(\.id) + allProcessGroupRows.map(\.id)
+            return sections.burdenLeaderRows.map(\.id) + visibleGroupedEntityIDs
         }
         return sections.flatVisibleEntityIDs
+    }
+
+    private var visibleGroupedEntityIDs: [String] {
+        allProcessGroupRows.flatMap { row in
+            var ids = [row.id]
+            if expandedGroupIDs.contains(row.id) {
+                ids.append(contentsOf: expandedMemberEntities(for: row.group, by: sortKey).map(\.entityId))
+            }
+            return ids
+        }
     }
 
     private var visibleProcessCount: Int {
@@ -1703,6 +1755,37 @@ public struct MainListView: View {
             return sortEntities(selectedEntityGroup.members, by: sortKey)
         }
         return [entity]
+    }
+
+    private func canExpandGroup(_ group: EntityGroup) -> Bool {
+        !expandedMemberEntities(for: group, by: sortKey).isEmpty
+    }
+
+    private func expandedMemberRows(for group: EntityGroup) -> [MonitorEntityRowModel] {
+        let nowMillis = state.snapshotCapturedAtMillis > 0
+            ? state.snapshotCapturedAtMillis
+            : UInt64(Date().timeIntervalSince1970 * 1000)
+        return expandedMemberEntities(for: group, by: sortKey).map {
+            MonitorEntityRowModel(
+                entity: $0,
+                origin: processOriginCache.summary(for: $0),
+                nowMillis: nowMillis
+            )
+        }
+    }
+
+    private func toggleGroupExpansion(_ group: EntityGroup) {
+        let childIDs = Set(expandedMemberEntities(for: group, by: sortKey).map(\.entityId))
+        withAnimation(AetowerDesign.Motion.standard) {
+            if expandedGroupIDs.contains(group.id) {
+                expandedGroupIDs.remove(group.id)
+                if let selectedEntityID, childIDs.contains(selectedEntityID) {
+                    self.selectedEntityID = group.id
+                }
+            } else {
+                expandedGroupIDs.insert(group.id)
+            }
+        }
     }
 
     private var normalizedSearchQuery: String {

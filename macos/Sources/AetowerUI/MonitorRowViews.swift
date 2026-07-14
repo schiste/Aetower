@@ -329,16 +329,23 @@ struct EntityRow: View, Equatable {
 struct GroupedEntityRow: View, Equatable {
     let row: MonitorGroupRowModel
     let isSelected: Bool
+    let isExpanded: Bool
+    let canExpand: Bool
+    let onToggleExpansion: () -> Void
 
     nonisolated static func == (lhs: GroupedEntityRow, rhs: GroupedEntityRow) -> Bool {
-        lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
+        lhs.row == rhs.row
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isExpanded == rhs.isExpanded
+            && lhs.canExpand == rhs.canExpand
     }
 
     var body: some View {
         MonitorRowChrome(
             frictionScore: row.frictionScore,
             isSelected: isSelected,
-            helpText: row.helpText
+            helpText: row.helpText,
+            trailingAction: disclosureAction
         ) { _ in
             Image(systemName: row.iconName)
                 .font(.system(size: 11))
@@ -380,23 +387,52 @@ struct GroupedEntityRow: View, Equatable {
             }
         }
     }
+
+    private var disclosureAction: MonitorRowTrailingAction? {
+        guard canExpand else { return nil }
+        return MonitorRowTrailingAction(
+            systemImage: isExpanded ? "chevron.down" : "chevron.right",
+            accessibilityLabel: isExpanded ? "Collapse grouped processes" : "Expand grouped processes",
+            help: isExpanded ? "Collapse grouped processes" : "Show grouped processes inline",
+            action: onToggleExpansion
+        )
+    }
+}
+
+private struct MonitorRowTrailingAction {
+    let systemImage: String
+    let accessibilityLabel: String
+    let help: String
+    let action: () -> Void
 }
 
 private struct MonitorRowChrome<Content: View>: View {
     let frictionScore: Float
     let isSelected: Bool
     let helpText: String
+    let trailingAction: MonitorRowTrailingAction?
     @ViewBuilder var content: (Bool) -> Content
     @State private var isHovered = false
+
+    init(
+        frictionScore: Float,
+        isSelected: Bool,
+        helpText: String,
+        trailingAction: MonitorRowTrailingAction? = nil,
+        @ViewBuilder content: @escaping (Bool) -> Content
+    ) {
+        self.frictionScore = frictionScore
+        self.isSelected = isSelected
+        self.helpText = helpText
+        self.trailingAction = trailingAction
+        self.content = content
+    }
 
     var body: some View {
         HStack(spacing: 6) {
             content(isSelected || isHovered)
 
-            Image(systemName: "sidebar.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(isSelected || isHovered ? Color.accentColor : Color.secondary.opacity(0.55))
-                .frame(width: 16)
+            trailingControl(isActive: isSelected || isHovered)
         }
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)
@@ -417,6 +453,27 @@ private struct MonitorRowChrome<Content: View>: View {
         .onHover { isHovered = $0 }
         .help(helpText)
         .animation(AetowerDesign.Motion.quick, value: isHovered)
+    }
+
+    @ViewBuilder
+    private func trailingControl(isActive: Bool) -> some View {
+        if let trailingAction {
+            Button(action: trailingAction.action) {
+                Image(systemName: trailingAction.systemImage)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.65))
+                    .frame(width: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(trailingAction.accessibilityLabel)
+            .help(trailingAction.help)
+        } else {
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.55))
+                .frame(width: 16)
+        }
     }
 
     private var frictionBackgroundOpacity: Double {

@@ -732,6 +732,13 @@ func sortEntities(_ entities: [EntitySnapshot], by sortKey: SortKey) -> [EntityS
     entities.sorted { compareEntities($0, $1, by: sortKey) }
 }
 
+func expandedMemberEntities(for group: EntityGroup, by sortKey: SortKey) -> [EntitySnapshot] {
+    sortEntities(
+        group.members.filter { $0.entityId != group.root.entityId },
+        by: sortKey
+    )
+}
+
 func buildGroupedEntities(
     from entities: [EntitySnapshot],
     query: String,

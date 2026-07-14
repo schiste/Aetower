@@ -55,6 +55,29 @@ final class MonitorListCoreTests: XCTestCase {
         XCTAssertEqual(sortEntities(group.members, by: .memory).map(\.entityId), ["large", "small"])
     }
 
+    func testExpandedGroupMembersExcludeRootAndFollowParentSort() {
+        let root = entity(id: "root", name: "Root", memory: 20)
+        let small = entity(id: "small", name: "Small", memory: 10)
+        let large = entity(id: "large", name: "Large", memory: 40)
+        let group = EntityGroup(
+            root: root,
+            members: [small, root, large],
+            cpuPercent: 0,
+            memoryBytes: 70,
+            wakeupsPerSecond: 0,
+            diskBps: 0,
+            networkBps: 0,
+            energyScore: 0,
+            frictionScore: 0,
+            processCount: 3,
+            userSummary: "",
+            oldestStartMillis: 0,
+            newestStartMillis: 0
+        )
+
+        XCTAssertEqual(expandedMemberEntities(for: group, by: .memory).map(\.entityId), ["large", "small"])
+    }
+
     func testRegexTokenizerKeepsEscapedSlashInsideRegexToken() {
         XCTAssertEqual(
             tokenizeSearchQuery(#"/Users\/me\/Project/i cpu>10"#),
