@@ -226,93 +226,141 @@
 
 <h2 id="performance">Performance monitoring &amp; management</h2>
 <p>
-  The crowded arena. Everyone shows you CPU; the differences are grouping, memory of the
-  past, energy attribution, and whether the tool can <em>act</em>.
+  The crowded arena. Everyone shows you CPU; the differences are grouping, scoring, memory
+  of the past, energy and thermal attribution, and whether the tool can <em>act</em>.
 </p>
 <div class="table-scroll"><table class="matrix">
   <thead><tr>
     <th>Tool</th>
-    <th><span class="tip" data-tip="Groups processes into app/session/agent entities with a single burden score.">Grouping &amp; scoring</span></th>
+    <th><span class="tip" data-tip="Groups processes into app/session/agent entities instead of a flat list.">Grouping</span></th>
+    <th><span class="tip" data-tip="A single burden score so the loudest thing sorts to the top.">Score</span></th>
     <th><span class="tip" data-tip="Stored history you can scrub or query after the fact.">History</span></th>
-    <th><span class="tip" data-tip="Energy, power, and GPU attribution.">Energy &amp; GPU</span></th>
-    <th><span class="tip" data-tip="Can the tool act: quit, throttle, or guarded process actions.">Interventions</span></th>
+    <th><span class="tip" data-tip="Narrated events, anomalies, and notifications.">Timeline&nbsp;&amp;&nbsp;alerts</span></th>
+    <th><span class="tip" data-tip="Energy and power attribution.">Energy</span></th>
+    <th><span class="tip" data-tip="GPU visibility: host-level or per-process.">GPU</span></th>
+    <th><span class="tip" data-tip="Temperatures, fans, battery health, thermal state.">Sensors</span></th>
+    <th><span class="tip" data-tip="Can the tool act: quit, throttle, or guarded process actions.">Act</span></th>
   </tr></thead>
   <tbody>
     <tr>
       <td><strong>Aetower</strong></td>
-      <td><span class="tip yes" data-tip="Entities (app + helpers + sessions) with a 0–100 friction score; loudest thing on top.">✓</span></td>
-      <td><span class="tip part" data-tip="Bounded local history with entity-level playback and a narrated timeline; 12h of raw snapshots by default with 30-day rollups.">◐</span></td>
-      <td><span class="tip yes" data-tip="Kernel-measured energy per entity, inferred GPU share, unified-memory pressure — labeled estimates.">✓</span></td>
+      <td><span class="tip yes" data-tip="Entities: app + helpers + sessions as one row.">✓</span></td>
+      <td><span class="tip yes" data-tip="0–100 friction score from CPU, memory, disk, network, wakeups, energy, thermal.">✓</span></td>
+      <td><span class="tip part" data-tip="Bounded local history with entity-level playback; 12h of raw snapshots by default with 30-day rollups.">◐</span></td>
+      <td><span class="tip yes" data-tip="Narrated timeline (spikes, anomalies, restart loops) plus configurable notifications.">✓</span></td>
+      <td><span class="tip yes" data-tip="Kernel-measured energy per entity, accumulated per agent session — labeled estimates.">✓</span></td>
+      <td><span class="tip part" data-tip="Host GPU metrics plus inferred per-agent share — a heuristic, and labeled as one.">◐</span></td>
+      <td><span class="tip yes" data-tip="Hardware sensors, fan readings, thermal state and forecast.">✓</span></td>
       <td><span class="tip part" data-tip="Guarded process actions with previews, approval gating, and follow-up verification.">◐</span></td>
     </tr>
     <tr>
       <td><a href="/vs/activity-monitor/">Activity Monitor</a></td>
       <td><span class="tip no" data-tip="Flat process list; helpers appear as unrelated rows.">—</span></td>
+      <td><span class="tip no" data-tip="Sort by one column at a time.">—</span></td>
       <td><span class="tip no" data-tip="No history.">—</span></td>
+      <td><span class="tip no" data-tip="No event log or alerts.">—</span></td>
       <td><span class="tip part" data-tip="Energy Impact pane — live-only, not attributed to sessions.">◐</span></td>
+      <td><span class="tip part" data-tip="A live %GPU column exists (via private APIs) — no history or session attribution.">◐</span></td>
+      <td><span class="tip no" data-tip="No sensor surface.">—</span></td>
       <td><span class="tip yes" data-tip="Force-quit in two clicks; always there.">✓</span></td>
     </tr>
     <tr>
       <td>iStat Menus</td>
       <td><span class="tip no" data-tip="Host gauges, not entities.">—</span></td>
+      <td><span class="tip no" data-tip="No scoring.">—</span></td>
       <td><span class="tip part" data-tip="Short rolling graph history per gauge.">◐</span></td>
-      <td><span class="tip part" data-tip="Power and sensor gauges, host-level.">◐</span></td>
+      <td><span class="tip part" data-tip="Threshold notifications per gauge.">◐</span></td>
+      <td><span class="tip part" data-tip="Power and battery gauges, host-level.">◐</span></td>
+      <td><span class="tip part" data-tip="Host GPU gauges.">◐</span></td>
+      <td><span class="tip yes" data-tip="Best-in-class sensor coverage: temperatures, fans, voltages.">✓</span></td>
       <td><span class="tip no" data-tip="Observes only.">—</span></td>
     </tr>
     <tr>
       <td>Stats</td>
       <td><span class="tip no" data-tip="Host gauges, not entities.">—</span></td>
+      <td><span class="tip no" data-tip="No scoring.">—</span></td>
       <td><span class="tip part" data-tip="Rolling graphs.">◐</span></td>
-      <td><span class="tip part" data-tip="Sensor and battery gauges, host-level.">◐</span></td>
+      <td><span class="tip part" data-tip="Basic notifications.">◐</span></td>
+      <td><span class="tip part" data-tip="Battery and power gauges, host-level.">◐</span></td>
+      <td><span class="tip part" data-tip="Host GPU gauge.">◐</span></td>
+      <td><span class="tip yes" data-tip="Broad sensor coverage for a free tool.">✓</span></td>
       <td><span class="tip no" data-tip="Observes only.">—</span></td>
     </tr>
     <tr>
       <td>Sensei</td>
       <td><span class="tip part" data-tip="Hardware dashboard with per-app energy hints.">◐</span></td>
+      <td><span class="tip no" data-tip="No scoring.">—</span></td>
       <td><span class="tip no" data-tip="No system-state history.">—</span></td>
-      <td><span class="tip part" data-tip="Per-app energy hints and hardware health.">◐</span></td>
+      <td><span class="tip no" data-tip="No event log.">—</span></td>
+      <td><span class="tip part" data-tip="Per-app energy hints.">◐</span></td>
+      <td><span class="tip no" data-tip="No GPU surface.">—</span></td>
+      <td><span class="tip yes" data-tip="Hardware health focus: fans, battery, thermals.">✓</span></td>
       <td><span class="tip no" data-tip="Cleanup yes, process control no.">—</span></td>
     </tr>
     <tr>
       <td>App Tamer</td>
       <td><span class="tip part" data-tip="Per-app CPU view.">◐</span></td>
+      <td><span class="tip no" data-tip="No scoring.">—</span></td>
       <td><span class="tip no" data-tip="No history.">—</span></td>
+      <td><span class="tip no" data-tip="No event log.">—</span></td>
       <td><span class="tip no" data-tip="CPU-focused.">—</span></td>
+      <td><span class="tip no" data-tip="No GPU surface.">—</span></td>
+      <td><span class="tip no" data-tip="No sensor surface.">—</span></td>
       <td><span class="tip yes" data-tip="The intervention specialist: automatically throttles or pauses CPU hogs.">✓</span></td>
     </tr>
     <tr>
       <td>htop / btop</td>
-      <td><span class="tip no" data-tip="Process trees, no scoring.">—</span></td>
+      <td><span class="tip no" data-tip="Process trees, no entity grouping.">—</span></td>
+      <td><span class="tip no" data-tip="Sortable columns, no composite score.">—</span></td>
       <td><span class="tip no" data-tip="Live view only.">—</span></td>
-      <td><span class="tip no" data-tip="CPU/memory focus.">—</span></td>
+      <td><span class="tip no" data-tip="No event log.">—</span></td>
+      <td><span class="tip no" data-tip="No macOS energy attribution.">—</span></td>
+      <td><span class="tip no" data-tip="No macOS GPU view.">—</span></td>
+      <td><span class="tip part" data-tip="btop shows battery and some temperatures.">◐</span></td>
       <td><span class="tip yes" data-tip="Kill and renice from the keyboard.">✓</span></td>
     </tr>
     <tr>
       <td>asitop / macmon</td>
       <td><span class="tip no" data-tip="Host power view.">—</span></td>
+      <td><span class="tip no" data-tip="No scoring.">—</span></td>
       <td><span class="tip no" data-tip="Live view only.">—</span></td>
-      <td><span class="tip yes" data-tip="The terminal reference for Apple-silicon CPU/GPU/ANE power — host-level, not per-process.">✓</span></td>
+      <td><span class="tip no" data-tip="No event log.">—</span></td>
+      <td><span class="tip yes" data-tip="Host CPU/GPU/ANE power in watts — the terminal reference for Apple silicon.">✓</span></td>
+      <td><span class="tip yes" data-tip="GPU utilization and power, host-level.">✓</span></td>
+      <td><span class="tip part" data-tip="SoC temperature readings.">◐</span></td>
       <td><span class="tip no" data-tip="Observes only.">—</span></td>
     </tr>
     <tr>
       <td>Glances</td>
       <td><span class="tip no" data-tip="Cross-platform process list.">—</span></td>
+      <td><span class="tip no" data-tip="No scoring.">—</span></td>
       <td><span class="tip part" data-tip="Optional history export to files/databases.">◐</span></td>
+      <td><span class="tip part" data-tip="Threshold alerts.">◐</span></td>
       <td><span class="tip no" data-tip="No macOS energy attribution.">—</span></td>
+      <td><span class="tip no" data-tip="GPU plugin targets NVIDIA, not macOS.">—</span></td>
+      <td><span class="tip part" data-tip="Sensors plugin where the platform exposes them.">◐</span></td>
       <td><span class="tip no" data-tip="Observes only.">—</span></td>
     </tr>
     <tr>
       <td>Netdata</td>
       <td><span class="tip no" data-tip="Per-host metrics; apps plugin without entity grouping.">—</span></td>
+      <td><span class="tip no" data-tip="No composite scoring.">—</span></td>
       <td><span class="tip yes" data-tip="Long metric retention with dashboards.">✓</span></td>
+      <td><span class="tip yes" data-tip="Mature alerting with many integrations.">✓</span></td>
       <td><span class="tip no" data-tip="No macOS energy attribution.">—</span></td>
+      <td><span class="tip no" data-tip="No macOS GPU view.">—</span></td>
+      <td><span class="tip part" data-tip="Sensor collectors, strongest on Linux.">◐</span></td>
       <td><span class="tip no" data-tip="Observes and alerts.">—</span></td>
     </tr>
     <tr>
       <td>Datadog / New Relic</td>
       <td><span class="tip part" data-tip="Host and process metrics with tagging; built for servers.">◐</span></td>
+      <td><span class="tip no" data-tip="No composite scoring.">—</span></td>
       <td><span class="tip yes" data-tip="Full retention per plan.">✓</span></td>
+      <td><span class="tip yes" data-tip="Enterprise alerting and incident tooling.">✓</span></td>
       <td><span class="tip no" data-tip="No macOS energy attribution.">—</span></td>
+      <td><span class="tip no" data-tip="GPU monitoring targets servers/CUDA fleets.">—</span></td>
+      <td><span class="tip no" data-tip="Not a sensor tool.">—</span></td>
       <td><span class="tip no" data-tip="Alerting and runbooks, not local process control.">—</span></td>
     </tr>
   </tbody>
@@ -328,44 +376,62 @@
   <thead><tr>
     <th>Tool</th>
     <th><span class="tip" data-tip="Treemaps, sunbursts, explorers.">Visualization</span></th>
-    <th><span class="tip" data-tip="What grew over time, and what wrote it.">Growth attribution</span></th>
-    <th><span class="tip" data-tip="Cleanup that understands safe vs rebuildable vs risky, staged rather than deleted.">Safety-tiered cleanup</span></th>
-    <th><span class="tip" data-tip="node_modules, build targets, caches — and the rebuild cost of removing them.">Dev-artifact awareness</span></th>
+    <th><span class="tip" data-tip="Browse every indexed item, not just the biggest folders.">Full-index browse</span></th>
+    <th><span class="tip" data-tip="What grew over time.">Growth</span></th>
+    <th><span class="tip" data-tip="Evidence of what wrote the bytes (filesystem events, writer history).">Write attribution</span></th>
+    <th><span class="tip" data-tip="Cleanup that understands safe vs rebuildable vs risky.">Safety tiers</span></th>
+    <th><span class="tip" data-tip="Staged, reversible cleanup instead of direct deletes.">Reversible cleanup</span></th>
+    <th><span class="tip" data-tip="node_modules, build targets, caches — and their rebuild cost.">Dev artifacts</span></th>
   </tr></thead>
   <tbody>
     <tr>
       <td><strong>Aetower</strong></td>
-      <td><span class="tip yes" data-tip="Treemap, cube explorer, full-index item list.">✓</span></td>
-      <td><span class="tip yes" data-tip="Persistent index with growth insights and filesystem-event evidence. APFS caveats (clones, sparse files, purgeable space) are documented — estimates, not forensics.">✓</span></td>
-      <td><span class="tip yes" data-tip="Safe / rebuildable / risky tiers, staged through the Trash with per-path outcomes.">✓</span></td>
+      <td><span class="tip yes" data-tip="Treemap and cube explorer.">✓</span></td>
+      <td><span class="tip yes" data-tip="Full persistent index with server-side paging.">✓</span></td>
+      <td><span class="tip yes" data-tip="Growth insights from the persistent index. APFS caveats (clones, sparse files, purgeable space) documented — estimates, not forensics.">✓</span></td>
+      <td><span class="tip yes" data-tip="Filesystem-event evidence correlates growth with what changed.">✓</span></td>
+      <td><span class="tip yes" data-tip="Safe / rebuildable / risky tiers.">✓</span></td>
+      <td><span class="tip yes" data-tip="Staged through the Trash with per-path outcomes.">✓</span></td>
       <td><span class="tip yes" data-tip="Recognizes build artifacts and weighs rebuild cost per repository.">✓</span></td>
     </tr>
     <tr>
       <td>DaisyDisk</td>
       <td><span class="tip yes" data-tip="The best pure disk-space visualization on macOS.">✓</span></td>
+      <td><span class="tip part" data-tip="Drill into the scan; no persistent index.">◐</span></td>
       <td><span class="tip no" data-tip="Point-in-time scans.">—</span></td>
-      <td><span class="tip part" data-tip="Collector basket before deleting, but no safety classification.">◐</span></td>
+      <td><span class="tip no" data-tip="No write attribution.">—</span></td>
+      <td><span class="tip no" data-tip="No safety classification.">—</span></td>
+      <td><span class="tip part" data-tip="Collector basket reviewed before deletion.">◐</span></td>
       <td><span class="tip no" data-tip="Treats all bytes equally.">—</span></td>
     </tr>
     <tr>
       <td>GrandPerspective / OmniDiskSweeper</td>
       <td><span class="tip yes" data-tip="Treemap (GrandPerspective) and size-sorted lists (ODS).">✓</span></td>
+      <td><span class="tip part" data-tip="Browse the scan results.">◐</span></td>
       <td><span class="tip no" data-tip="Point-in-time scans.">—</span></td>
-      <td><span class="tip no" data-tip="Direct deletes, no staging or tiers.">—</span></td>
+      <td><span class="tip no" data-tip="No write attribution.">—</span></td>
+      <td><span class="tip no" data-tip="No safety classification.">—</span></td>
+      <td><span class="tip no" data-tip="Direct deletes.">—</span></td>
       <td><span class="tip no" data-tip="Treats all bytes equally.">—</span></td>
     </tr>
     <tr>
       <td>CleanMyMac</td>
       <td><span class="tip part" data-tip="Space lens visualization.">◐</span></td>
+      <td><span class="tip part" data-tip="Large-files browser.">◐</span></td>
       <td><span class="tip no" data-tip="No growth history.">—</span></td>
-      <td><span class="tip part" data-tip="Curated &quot;safe to remove&quot; categories; consumer-shaped, not rebuild-cost aware.">◐</span></td>
-      <td><span class="tip part" data-tip="Xcode-junk and developer categories exist, without per-repo rebuild context.">◐</span></td>
+      <td><span class="tip no" data-tip="No write attribution.">—</span></td>
+      <td><span class="tip part" data-tip="Curated &quot;safe to remove&quot; categories; consumer-shaped.">◐</span></td>
+      <td><span class="tip part" data-tip="Review step before removal.">◐</span></td>
+      <td><span class="tip part" data-tip="Xcode-junk and developer categories, without per-repo rebuild context.">◐</span></td>
     </tr>
     <tr>
       <td>Sensei</td>
       <td><span class="tip part" data-tip="Storage overview.">◐</span></td>
+      <td><span class="tip no" data-tip="Category views.">—</span></td>
       <td><span class="tip no" data-tip="No growth history.">—</span></td>
+      <td><span class="tip no" data-tip="No write attribution.">—</span></td>
       <td><span class="tip part" data-tip="Cleanup suite without safety tiers.">◐</span></td>
+      <td><span class="tip part" data-tip="Review before cleanup.">◐</span></td>
       <td><span class="tip no" data-tip="General-purpose cleanup.">—</span></td>
     </tr>
   </tbody>
@@ -380,39 +446,54 @@
 <div class="table-scroll"><table class="matrix">
   <thead><tr>
     <th>Tool</th>
-    <th><span class="tip" data-tip="Live agent sessions: which agent, which repo, what state.">Agent sessions</span></th>
-    <th><span class="tip" data-tip="Tokens and dollars, attributed to something useful.">Cost tracking</span></th>
-    <th><span class="tip" data-tip="Energy and GPU attributed per agent on the machine.">Energy &amp; GPU per agent</span></th>
-    <th><span class="tip" data-tip="Local repository inventory: git state, clones, agent-contract readiness.">Repo fleet view</span></th>
+    <th><span class="tip" data-tip="Live agent sessions: which agent, which repo, what state.">Sessions</span></th>
+    <th><span class="tip" data-tip="Tokens and dollars, attributed to something useful.">Tokens&nbsp;&amp;&nbsp;$</span></th>
+    <th><span class="tip" data-tip="Estimated energy and carbon, attributed when the evidence is strong enough.">Energy&nbsp;&amp;&nbsp;carbon</span></th>
+    <th><span class="tip" data-tip="GPU and memory pressure attributed per agent on the machine.">GPU&nbsp;&amp;&nbsp;memory</span></th>
+    <th><span class="tip" data-tip="Local repository inventory: branches, dirty state, duplicate clones.">Repo inventory</span></th>
+    <th><span class="tip" data-tip="AGENTS.md and agent operating-contract readiness per repo.">Contract readiness</span></th>
+    <th><span class="tip" data-tip="Acting on providers: re-run failed CI, redeploy hosting.">Provider ops</span></th>
   </tr></thead>
   <tbody>
     <tr>
       <td><strong>Aetower</strong></td>
       <td><span class="tip yes" data-tip="Sessions with repo, branch, and prompt/approval state via the Chau7 adapter.">✓</span></td>
-      <td><span class="tip yes" data-tip="Per-repo cost rollups — dollars, tokens, and, when attribution is strong enough, estimated energy and carbon.">✓</span></td>
-      <td><span class="tip yes" data-tip="Kernel-measured energy and inferred GPU share per agent — labeled estimates, not exact metering.">✓</span></td>
-      <td><span class="tip yes" data-tip="Every local Git root: branch, dirty state, duplicate clones, AGENTS.md readiness.">✓</span></td>
+      <td><span class="tip yes" data-tip="Per-repo dollars and tokens.">✓</span></td>
+      <td><span class="tip yes" data-tip="Estimated energy and carbon, only when attribution is strong enough — tagged with source and confidence.">✓</span></td>
+      <td><span class="tip yes" data-tip="Inferred GPU share and unified-memory pressure per agent — labeled estimates.">✓</span></td>
+      <td><span class="tip yes" data-tip="Every local Git root: branch, dirty state, duplicate clones.">✓</span></td>
+      <td><span class="tip yes" data-tip="AGENTS.md and .agents/*.yaml readiness per repository.">✓</span></td>
+      <td><span class="tip yes" data-tip="Re-run failed GitHub workflows, redeploy Cloudflare Pages from the provider tile.">✓</span></td>
     </tr>
     <tr>
       <td>ccusage / <code>/cost</code></td>
       <td><span class="tip part" data-tip="Claude Code sessions from its logs.">◐</span></td>
       <td><span class="tip yes" data-tip="Tokens and dollars per session/day for Claude Code — focused and useful.">✓</span></td>
       <td><span class="tip no" data-tip="No system measurement.">—</span></td>
+      <td><span class="tip no" data-tip="No system measurement.">—</span></td>
       <td><span class="tip no" data-tip="No repo inventory.">—</span></td>
+      <td><span class="tip no" data-tip="No contract concept.">—</span></td>
+      <td><span class="tip no" data-tip="No provider actions.">—</span></td>
     </tr>
     <tr>
       <td>Langfuse / Helicone / LangSmith</td>
       <td><span class="tip yes" data-tip="Traces of every LLM call at the API layer, across all machines.">✓</span></td>
       <td><span class="tip yes" data-tip="Token and dollar analytics per trace/project.">✓</span></td>
       <td><span class="tip no" data-tip="The machine layer is invisible from the API layer.">—</span></td>
+      <td><span class="tip no" data-tip="The machine layer is invisible from the API layer.">—</span></td>
       <td><span class="tip no" data-tip="No local repo concept.">—</span></td>
+      <td><span class="tip no" data-tip="No contract concept.">—</span></td>
+      <td><span class="tip no" data-tip="No provider actions.">—</span></td>
     </tr>
     <tr>
       <td>Datadog / New Relic (LLM obs)</td>
       <td><span class="tip part" data-tip="LLM tracing products at the API layer.">◐</span></td>
       <td><span class="tip part" data-tip="Cost dashboards per service.">◐</span></td>
       <td><span class="tip no" data-tip="No machine-layer attribution.">—</span></td>
+      <td><span class="tip no" data-tip="No machine-layer attribution.">—</span></td>
       <td><span class="tip no" data-tip="No local repo concept.">—</span></td>
+      <td><span class="tip no" data-tip="No contract concept.">—</span></td>
+      <td><span class="tip part" data-tip="CI/CD integrations exist at the platform level.">◐</span></td>
     </tr>
   </tbody>
 </table></div>
@@ -425,10 +506,13 @@
 <div class="table-scroll"><table class="matrix">
   <thead><tr>
     <th>Tool</th>
-    <th><span class="tip" data-tip="Login items, launch agents/daemons, cron — what persists.">Persistence audit</span></th>
-    <th><span class="tip" data-tip="Code-signing status and binary reputation.">Signing &amp; reputation</span></th>
-    <th><span class="tip" data-tip="Which processes talk to the network, and control over it.">Outbound visibility</span></th>
-    <th><span class="tip" data-tip="CLI, API, SQL, or MCP — can scripts and agents use it.">Scriptable surface</span></th>
+    <th><span class="tip" data-tip="Login items, launch agents/daemons, cron — what persists.">Persistence</span></th>
+    <th><span class="tip" data-tip="Code-signing status and binary reputation.">Signing</span></th>
+    <th><span class="tip" data-tip="Which processes talk to the network, and control over it.">Outbound</span></th>
+    <th><span class="tip" data-tip="Detecting or removing malicious software.">Malware</span></th>
+    <th><span class="tip" data-tip="A first-class command-line tool.">CLI</span></th>
+    <th><span class="tip" data-tip="Structured programmatic access: REST, SQL, or MCP.">API&nbsp;/&nbsp;MCP</span></th>
+    <th><span class="tip" data-tip="Drivable UI: URL schemes, stable accessibility identifiers.">UI automation</span></th>
   </tr></thead>
   <tbody>
     <tr>
@@ -436,34 +520,49 @@
       <td><span class="tip part" data-tip="Persistence view in the System workspace; not audit-depth.">◐</span></td>
       <td><span class="tip part" data-tip="Signing labels per entity; optional hash-only VirusTotal lookups (off by default).">◐</span></td>
       <td><span class="tip no" data-tip="Shows its own outbound channels (Privacy → Outbound Data) — not a network monitor for other apps.">—</span></td>
-      <td><span class="tip yes" data-tip="aetower CLI, local MCP server (45 tools, operator actions preview- and approval-gated), aetower:// URL scheme, stable accessibility IDs.">✓</span></td>
+      <td><span class="tip no" data-tip="Not a malware tool.">—</span></td>
+      <td><span class="tip yes" data-tip="The aetower CLI: top, findings, storage, repos, tab, call — with --json.">✓</span></td>
+      <td><span class="tip yes" data-tip="Local MCP server (45 tools); operator actions preview- and approval-gated.">✓</span></td>
+      <td><span class="tip yes" data-tip="aetower:// URL scheme, ⌘1–8, stable accessibility identifiers — no Accessibility trust needed.">✓</span></td>
     </tr>
     <tr>
       <td>Objective-See</td>
       <td><span class="tip yes" data-tip="KnockKnock is the reference persistence enumerator.">✓</span></td>
       <td><span class="tip yes" data-tip="Signing analysis and VirusTotal checks throughout the suite.">✓</span></td>
       <td><span class="tip yes" data-tip="LuLu is a full outbound firewall.">✓</span></td>
+      <td><span class="tip yes" data-tip="Detection-focused: persistence, VirusTotal, ransomware and mic/camera monitors.">✓</span></td>
       <td><span class="tip part" data-tip="Some tools offer command-line modes.">◐</span></td>
+      <td><span class="tip no" data-tip="No structured API.">—</span></td>
+      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
     </tr>
     <tr>
       <td>Little Snitch</td>
       <td><span class="tip no" data-tip="Not a persistence tool.">—</span></td>
       <td><span class="tip no" data-tip="Not a signing tool.">—</span></td>
       <td><span class="tip yes" data-tip="The category-defining outbound monitor and firewall since 2003.">✓</span></td>
-      <td><span class="tip part" data-tip="Rule scripting and a CLI for management.">◐</span></td>
+      <td><span class="tip no" data-tip="Not a malware scanner, though rules block callbacks.">—</span></td>
+      <td><span class="tip part" data-tip="A CLI exists for rule management.">◐</span></td>
+      <td><span class="tip no" data-tip="No structured API.">—</span></td>
+      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
     </tr>
     <tr>
       <td>osquery / FleetDM</td>
       <td><span class="tip yes" data-tip="Deep persistence tables, compliance-grade.">✓</span></td>
       <td><span class="tip part" data-tip="Signature tables exist; reputation via integrations.">◐</span></td>
       <td><span class="tip part" data-tip="Socket and process tables; visibility, not control.">◐</span></td>
+      <td><span class="tip part" data-tip="Detection via queries and Fleet policies; not a scanner.">◐</span></td>
+      <td><span class="tip yes" data-tip="osqueryi interactive shell.">✓</span></td>
       <td><span class="tip yes" data-tip="SQL API at fleet scale — the machine-readable reference.">✓</span></td>
+      <td><span class="tip no" data-tip="No UI to automate.">—</span></td>
     </tr>
     <tr>
       <td>CleanMyMac</td>
       <td><span class="tip part" data-tip="Login-items management.">◐</span></td>
-      <td><span class="tip part" data-tip="Malware removal module.">◐</span></td>
+      <td><span class="tip no" data-tip="Not a signing tool.">—</span></td>
       <td><span class="tip no" data-tip="Not a network tool.">—</span></td>
+      <td><span class="tip yes" data-tip="Consumer malware removal module.">✓</span></td>
+      <td><span class="tip no" data-tip="No CLI.">—</span></td>
+      <td><span class="tip no" data-tip="No API.">—</span></td>
       <td><span class="tip no" data-tip="No automation surface.">—</span></td>
     </tr>
     <tr>
@@ -471,7 +570,10 @@
       <td><span class="tip no" data-tip="Not security tools.">—</span></td>
       <td><span class="tip no" data-tip="Not security tools.">—</span></td>
       <td><span class="tip no" data-tip="Traffic totals, not per-connection control.">—</span></td>
+      <td><span class="tip no" data-tip="Not security tools.">—</span></td>
+      <td><span class="tip yes" data-tip="Both are terminal-first tools.">✓</span></td>
       <td><span class="tip yes" data-tip="REST/JSON APIs and dashboards.">✓</span></td>
+      <td><span class="tip no" data-tip="No UI to automate.">—</span></td>
     </tr>
   </tbody>
 </table></div>
