@@ -1,28 +1,32 @@
 <h1>Aetower vs the field</h1>
 <p>
-  An honest capability matrix. Aetower overlaps five different tool categories, and in most
-  of them the incumbent is excellent at its slice — several of these tools are more mature,
-  more polished, or simply the right choice for what they do. The matrix marks Aetower's
+  An honest comparison. Aetower overlaps four different tool arenas, and in most of them
+  the incumbent is excellent at its slice — several of these tools are more mature, more
+  polished, or simply the right choice for what they do. Every table below marks Aetower's
   gaps as plainly as everyone else's, starting with the one that matters most:
   <strong>Aetower is an early alpha; everything else here is shipped, stable software.</strong>
 </p>
 <p>
   <strong>✓</strong> has it · <strong>◐</strong> partial or different scope ·
-  <strong>—</strong> doesn't do it. Hover (or focus) any mark for the detail. Starting
-  prices and release dates were verified against official pages in July 2026 — both drift;
-  check each vendor.
+  <strong>—</strong> doesn't do it. Hover any mark for the detail. Starting prices and
+  release dates were verified against official pages in July 2026 — both drift; check each
+  vendor.
+</p>
+
+<h2>Where each tool plays</h2>
+<p>
+  The four arenas Aetower covers, and who else lives in each. The detail tables below break
+  every arena down.
 </p>
 
 <div class="table-scroll"><table class="matrix">
   <thead><tr>
     <th>Tool</th>
     <th>From</th>
-    <th><span class="tip" data-tip="Groups processes into app/session/agent entities with a single burden score, instead of a flat process list.">Grouping</span></th>
-    <th><span class="tip" data-tip="Stored history you can scrub or query after the fact.">History</span></th>
-    <th><span class="tip" data-tip="Awareness of AI agents and model runtimes: sessions, resource attribution, cost.">AI&nbsp;agents</span></th>
-    <th><span class="tip" data-tip="Finding and reclaiming disk space.">Storage</span></th>
-    <th><span class="tip" data-tip="Persistence items, code signing, and security auditing.">Security</span></th>
-    <th><span class="tip" data-tip="CLI, API, or other machine-readable surface for scripts and agents.">Automation</span></th>
+    <th><a href="#performance">Performance</a></th>
+    <th><a href="#storage">Storage</a></th>
+    <th><a href="#repos-agents">Repos&nbsp;&amp;&nbsp;agents</a></th>
+    <th><a href="#security-automation">Security&nbsp;&amp;&nbsp;automation</a></th>
     <th><span class="tip" data-tip="Year of first release.">Since</span></th>
     <th><span class="tip" data-tip="Latest known update, verified July 2026 against official release pages.">Updated</span></th>
   </tr></thead>
@@ -30,230 +34,444 @@
     <tr>
       <td><strong>Aetower</strong></td>
       <td><span class="tip" data-tip="Free and open source, AGPL-3.0. macOS 14+, Apple silicon.">$0</span></td>
-      <td><span class="tip yes" data-tip="Entities (app + helpers + sessions) with a 0–100 friction score; loudest thing on top.">✓</span></td>
-      <td><span class="tip part" data-tip="Bounded local history with entity-level playback and a narrated timeline; 12h of raw snapshots by default with 30-day rollups.">◐</span></td>
-      <td><span class="tip yes" data-tip="Agent sessions with inferred GPU share, unified-memory pressure, kernel-measured energy, and per-repo spend — labeled estimates.">✓</span></td>
-      <td><span class="tip yes" data-tip="Safety-tiered reclaim staged through the Trash, growth attribution, treemap and full-index explorer.">✓</span></td>
-      <td><span class="tip part" data-tip="Code-signing labels and a persistence view — not a security product; Objective-See goes deeper.">◐</span></td>
-      <td><span class="tip yes" data-tip="aetower CLI, read-only local MCP server (45 tools), aetower:// URL scheme, stable accessibility IDs.">✓</span></td>
+      <td><span class="tip yes" data-tip="Entity grouping, friction scoring, bounded history, energy attribution.">✓</span></td>
+      <td><span class="tip yes" data-tip="Safety-tiered reclaim, growth attribution, treemap and cube explorer.">✓</span></td>
+      <td><span class="tip yes" data-tip="Agent sessions, per-repo cost rollups, repository fleet view.">✓</span></td>
+      <td><span class="tip part" data-tip="Signing labels and persistence view; CLI, MCP, and URL-scheme automation. Not a security product.">◐</span></td>
       <td><span class="tip" data-tip="First public preview 2026 — the youngest thing on this page by two decades."><strong>2026</strong></span></td>
       <td><span class="tip" data-tip="Early alpha, moving weekly."><strong>alpha</strong></span></td>
     </tr>
     <tr>
       <td><a href="/vs/activity-monitor/">Activity Monitor</a></td>
       <td><span class="tip" data-tip="Ships with every Mac.">$0</span></td>
-      <td><span class="tip no" data-tip="Flat process list sorted by columns; helpers appear as unrelated rows.">—</span></td>
-      <td><span class="tip no" data-tip="No history: if you didn't see it happen, it's gone.">—</span></td>
-      <td><span class="tip no" data-tip="Energy Impact is live-only and not attributed to sessions or projects.">—</span></td>
-      <td><span class="tip no" data-tip="Storage tab in About This Mac is separate and minimal.">—</span></td>
-      <td><span class="tip no" data-tip="No signing or persistence surface.">—</span></td>
-      <td><span class="tip no" data-tip="No API, no CLI, no automation surface.">—</span></td>
-      <td><span class="tip" data-tip="As &quot;Activity Monitor&quot; since Mac OS X 10.3 Panther (2003); ships with current macOS.">2003</span></td>
-      <td><span class="tip" data-tip="As &quot;Activity Monitor&quot; since Mac OS X 10.3 Panther (2003); ships with current macOS.">2026</span></td>
+      <td><span class="tip yes" data-tip="The built-in baseline: live process list, CPU/memory/energy/disk panes.">✓</span></td>
+      <td><span class="tip no" data-tip="Storage management lives elsewhere in macOS and is minimal.">—</span></td>
+      <td><span class="tip no" data-tip="No concept of agents or repositories.">—</span></td>
+      <td><span class="tip no" data-tip="No security surface, no API, no CLI.">—</span></td>
+      <td><span class="tip" data-tip="As &quot;Activity Monitor&quot; since Mac OS X 10.3 Panther (2003).">2003</span></td>
+      <td><span class="tip" data-tip="Ships with current macOS.">2026</span></td>
     </tr>
     <tr>
       <td>iStat Menus</td>
       <td><span class="tip" data-tip="Bjango; one-time license, around $11.99. Also on Setapp.">~$12</span></td>
-      <td><span class="tip no" data-tip="Host-level gauges in the menu bar; no per-entity grouping or scoring.">—</span></td>
-      <td><span class="tip part" data-tip="Short rolling graph history per gauge; no per-app playback.">◐</span></td>
-      <td><span class="tip no" data-tip="No agent or session concept.">—</span></td>
+      <td><span class="tip yes" data-tip="Menu-bar gauges for every host metric, beautifully done.">✓</span></td>
       <td><span class="tip no" data-tip="Disk usage gauges only.">—</span></td>
-      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
-      <td><span class="tip no" data-tip="No public automation surface.">—</span></td>
-      <td><span class="tip" data-tip="v1.0 May 2007 (Bjango); v7.3 June 2026.">2007</span></td>
-      <td><span class="tip" data-tip="v1.0 May 2007 (Bjango); v7.3 June 2026.">2026</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip no" data-tip="No security or automation surface.">—</span></td>
+      <td><span class="tip" data-tip="v1.0 May 2007.">2007</span></td>
+      <td><span class="tip" data-tip="v7.3, June 2026.">2026</span></td>
     </tr>
     <tr>
       <td>Stats</td>
       <td><span class="tip" data-tip="Open source (exelban/stats), free.">$0</span></td>
-      <td><span class="tip no" data-tip="Host-level menu-bar gauges.">—</span></td>
-      <td><span class="tip part" data-tip="Rolling graphs; no per-app playback.">◐</span></td>
-      <td><span class="tip no" data-tip="No agent or session concept.">—</span></td>
+      <td><span class="tip yes" data-tip="Free menu-bar gauges; the open-source iStat.">✓</span></td>
       <td><span class="tip no" data-tip="Disk gauge only.">—</span></td>
-      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
-      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
-      <td><span class="tip" data-tip="Started 2019; v3.0.8 July 2026. Actively maintained.">2019</span></td>
-      <td><span class="tip" data-tip="Started 2019; v3.0.8 July 2026. Actively maintained.">2026</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip no" data-tip="No security or automation surface.">—</span></td>
+      <td><span class="tip" data-tip="Started 2019.">2019</span></td>
+      <td><span class="tip" data-tip="v3.0.8, July 2026.">2026</span></td>
     </tr>
     <tr>
       <td>Sensei</td>
       <td><span class="tip" data-tip="Cindori; $29/year subscription or $59 one-time, as listed.">$29/yr</span></td>
-      <td><span class="tip part" data-tip="Hardware dashboard with per-app energy hints; no entity grouping.">◐</span></td>
-      <td><span class="tip no" data-tip="No system-state history.">—</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip part" data-tip="Hardware dashboard with per-app energy hints.">◐</span></td>
       <td><span class="tip yes" data-tip="Cleanup suite: caches, uninstaller, storage overview.">✓</span></td>
-      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
-      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
-      <td><span class="tip" data-tip="Launched around 2019 (Catalina era); v2.1.1 June 2026.">2019</span></td>
-      <td><span class="tip" data-tip="Launched around 2019 (Catalina era); v2.1.1 June 2026.">2026</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip no" data-tip="No security or automation surface.">—</span></td>
+      <td><span class="tip" data-tip="Launched around 2019 (Catalina era).">2019</span></td>
+      <td><span class="tip" data-tip="v2.1.1, June 2026.">2026</span></td>
     </tr>
     <tr>
       <td>App Tamer</td>
       <td><span class="tip" data-tip="St. Clair Software; one-time license, $14.95.">$14.95</span></td>
-      <td><span class="tip part" data-tip="Per-app CPU view — and uniquely, it can throttle or pause CPU hogs automatically.">◐</span></td>
-      <td><span class="tip no" data-tip="No history.">—</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip yes" data-tip="Per-app CPU view that can throttle or pause hogs automatically.">✓</span></td>
       <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
-      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
-      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
-      <td><span class="tip" data-tip="v1.0 September 2010; v2.8.4 current, v3.0 public beta April 2026.">2010</span></td>
-      <td><span class="tip" data-tip="v1.0 September 2010; v2.8.4 current, v3.0 public beta April 2026.">2026</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip no" data-tip="No security or automation surface.">—</span></td>
+      <td><span class="tip" data-tip="v1.0 September 2010.">2010</span></td>
+      <td><span class="tip" data-tip="v2.8.4 current; v3.0 public beta April 2026.">2026</span></td>
     </tr>
     <tr>
       <td>htop / btop</td>
       <td><span class="tip" data-tip="Open source, free; install via Homebrew.">$0</span></td>
-      <td><span class="tip no" data-tip="Process trees with sorting — powerful, but no entity grouping or scoring.">—</span></td>
-      <td><span class="tip no" data-tip="Live view only.">—</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
-      <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
-      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
-      <td><span class="tip part" data-tip="Terminal-native, scriptable environment; no structured output API.">◐</span></td>
-      <td><span class="tip" data-tip="htop since 2004, btop since 2021; both released updates in spring 2026 (btop v1.4.6 May 2026).">2004</span></td>
-      <td><span class="tip" data-tip="htop since 2004, btop since 2021; both released updates in spring 2026 (btop v1.4.6 May 2026).">2026</span></td>
+      <td><span class="tip yes" data-tip="Terminal process trees with kill/renice; no scoring or history.">✓</span></td>
+      <td><span class="tip no" data-tip="Not storage tools.">—</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip part" data-tip="Terminal-native and scriptable around, but no structured output API.">◐</span></td>
+      <td><span class="tip" data-tip="htop since 2004; btop since 2021.">2004</span></td>
+      <td><span class="tip" data-tip="btop v1.4.6 May 2026; htop v3.5.1 April 2026.">2026</span></td>
     </tr>
     <tr>
       <td>asitop / macmon</td>
       <td><span class="tip" data-tip="Open source, free.">$0</span></td>
-      <td><span class="tip no" data-tip="Host-level power view.">—</span></td>
-      <td><span class="tip no" data-tip="Live view only.">—</span></td>
-      <td><span class="tip part" data-tip="The closest terminal tools to Aetower's energy story: Apple-silicon CPU/GPU/ANE power — but host-level, not per-agent.">◐</span></td>
-      <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
-      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
-      <td><span class="tip part" data-tip="Terminal-native; macmon offers JSON output.">◐</span></td>
-      <td><span class="tip" data-tip="asitop (2021) appears dormant; macmon (2024) is active — v0.7.2 May 2026.">2021</span></td>
-      <td><span class="tip" data-tip="asitop (2021) appears dormant; macmon (2024) is active — v0.7.2 May 2026.">2026</span></td>
+      <td><span class="tip yes" data-tip="Apple-silicon CPU/GPU/ANE power in the terminal — host-level.">✓</span></td>
+      <td><span class="tip no" data-tip="Not storage tools.">—</span></td>
+      <td><span class="tip no" data-tip="No agent concept despite the power focus.">—</span></td>
+      <td><span class="tip part" data-tip="macmon offers JSON output.">◐</span></td>
+      <td><span class="tip" data-tip="asitop 2021; macmon 2024.">2021</span></td>
+      <td><span class="tip" data-tip="macmon v0.7.2 May 2026; asitop appears dormant.">2026</span></td>
     </tr>
     <tr>
       <td>Glances</td>
       <td><span class="tip" data-tip="Open source, free.">$0</span></td>
-      <td><span class="tip no" data-tip="Cross-platform process list.">—</span></td>
-      <td><span class="tip part" data-tip="Optional history export to files/databases.">◐</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip yes" data-tip="Cross-platform monitor with optional history export.">✓</span></td>
       <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
-      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
-      <td><span class="tip yes" data-tip="REST/JSON API and web UI — genuinely machine-readable.">✓</span></td>
-      <td><span class="tip" data-tip="Since December 2011; v4.5.5 June 2026.">2011</span></td>
-      <td><span class="tip" data-tip="Since December 2011; v4.5.5 June 2026.">2026</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip part" data-tip="REST/JSON API and web UI — genuinely machine-readable.">◐</span></td>
+      <td><span class="tip" data-tip="Since December 2011.">2011</span></td>
+      <td><span class="tip" data-tip="v4.5.5, June 2026.">2026</span></td>
     </tr>
     <tr>
       <td>DaisyDisk</td>
       <td><span class="tip" data-tip="One-time license, $9.99; also on Setapp and the App Store.">$9.99</span></td>
       <td><span class="tip no" data-tip="Not a process tool.">—</span></td>
-      <td><span class="tip no" data-tip="Point-in-time scans.">—</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
-      <td><span class="tip yes" data-tip="The best pure disk-space visualization on macOS; deletes are manual, no rebuild-cost awareness.">✓</span></td>
-      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
-      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
-      <td><span class="tip" data-tip="First sold March 2009; v4.34.2 July 2026.">2009</span></td>
-      <td><span class="tip" data-tip="First sold March 2009; v4.34.2 July 2026.">2026</span></td>
+      <td><span class="tip yes" data-tip="The best pure disk-space visualization on macOS.">✓</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip no" data-tip="No security or automation surface.">—</span></td>
+      <td><span class="tip" data-tip="First sold March 2009.">2009</span></td>
+      <td><span class="tip" data-tip="v4.34.2, July 2026.">2026</span></td>
     </tr>
     <tr>
       <td>GrandPerspective / OmniDiskSweeper</td>
       <td><span class="tip" data-tip="Free (GrandPerspective ~$3 on the App Store to support development).">$0</span></td>
       <td><span class="tip no" data-tip="Not process tools.">—</span></td>
-      <td><span class="tip no" data-tip="Point-in-time scans.">—</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
-      <td><span class="tip part" data-tip="Scan and inspect; no safety tiers, growth attribution, or staged cleanup.">◐</span></td>
-      <td><span class="tip no" data-tip="Not security tools.">—</span></td>
-      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
-      <td><span class="tip" data-tip="GrandPerspective since 2005 (v3.7.2 current); OmniDiskSweeper v1.16 September 2025.">2005</span></td>
-      <td><span class="tip" data-tip="GrandPerspective since 2005 (v3.7.2 current); OmniDiskSweeper v1.16 September 2025.">2025+</span></td>
+      <td><span class="tip yes" data-tip="Free treemap and size-sorted scanning.">✓</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip no" data-tip="No security or automation surface.">—</span></td>
+      <td><span class="tip" data-tip="GrandPerspective v0.90, September 2005.">2005</span></td>
+      <td><span class="tip" data-tip="GrandPerspective v3.7.2; OmniDiskSweeper v1.16 September 2025.">2025+</span></td>
     </tr>
     <tr>
       <td>CleanMyMac</td>
       <td><span class="tip" data-tip="MacPaw; advertised from $3.33/month billed annually (~$40/yr); one-time and Setapp options exist.">~$40/yr</span></td>
       <td><span class="tip part" data-tip="Menu-bar monitor with basic per-app info.">◐</span></td>
-      <td><span class="tip no" data-tip="No system-state history.">—</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
-      <td><span class="tip yes" data-tip="Broad consumer cleanup: caches, uninstaller, large files, photo junk.">✓</span></td>
-      <td><span class="tip part" data-tip="Malware removal module; not persistence-audit depth.">◐</span></td>
-      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
-      <td><span class="tip" data-tip="Since July 2008 (MacPaw); v5.5.6 July 2026.">2008</span></td>
-      <td><span class="tip" data-tip="Since July 2008 (MacPaw); v5.5.6 July 2026.">2026</span></td>
+      <td><span class="tip yes" data-tip="Broad consumer cleanup: caches, uninstaller, large files.">✓</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip part" data-tip="Malware removal module; no automation surface.">◐</span></td>
+      <td><span class="tip" data-tip="Since July 2008.">2008</span></td>
+      <td><span class="tip" data-tip="v5.5.6, July 2026.">2026</span></td>
     </tr>
     <tr>
       <td>Objective-See</td>
-      <td><span class="tip" data-tip="KnockKnock, TaskExplorer, LuLu, BlockBlock — free and open source, supported by donations/Patreon.">$0</span></td>
-      <td><span class="tip part" data-tip="TaskExplorer is a capable process explorer with signing info.">◐</span></td>
-      <td><span class="tip no" data-tip="Point-in-time scans.">—</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip" data-tip="KnockKnock, TaskExplorer, LuLu, BlockBlock — free and open source, donation-supported.">$0</span></td>
+      <td><span class="tip part" data-tip="TaskExplorer is a capable process explorer.">◐</span></td>
       <td><span class="tip no" data-tip="Not storage tools.">—</span></td>
-      <td><span class="tip yes" data-tip="The security community's reference for persistence enumeration, code signing, and VirusTotal checks.">✓</span></td>
-      <td><span class="tip part" data-tip="Some tools offer command-line modes.">◐</span></td>
-      <td><span class="tip" data-tip="KnockKnock public 2015; LuLu v4.3.2 May 2026. Battle-tested by the macOS security community.">2015</span></td>
-      <td><span class="tip" data-tip="KnockKnock public 2015; LuLu v4.3.2 May 2026. Battle-tested by the macOS security community.">2026</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip yes" data-tip="The reference for persistence, signing, VirusTotal checks, and outbound firewalling (LuLu).">✓</span></td>
+      <td><span class="tip" data-tip="KnockKnock public 2015.">2015</span></td>
+      <td><span class="tip" data-tip="LuLu v4.3.2, May 2026.">2026</span></td>
     </tr>
     <tr>
       <td>Little Snitch</td>
       <td><span class="tip" data-tip="Objective Development; $59 single license as listed. Free read-only Mini variant exists.">$59</span></td>
-      <td><span class="tip part" data-tip="Per-process network connections, not general resource grouping.">◐</span></td>
-      <td><span class="tip part" data-tip="Network traffic history and statistics.">◐</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip part" data-tip="Per-process network view, not general resource monitoring.">◐</span></td>
       <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
-      <td><span class="tip part" data-tip="Outbound-connection visibility and rules — the network slice of trust, done definitively.">◐</span></td>
-      <td><span class="tip part" data-tip="Rule scripting and a CLI exist for management.">◐</span></td>
-      <td><span class="tip" data-tip="v1.0 February 2003 (Objective Development); v6.4.1 current in 2026. Category-defining.">2003</span></td>
-      <td><span class="tip" data-tip="v1.0 February 2003 (Objective Development); v6.4.1 current in 2026. Category-defining.">2026</span></td>
+      <td><span class="tip no" data-tip="No agent or repo concept.">—</span></td>
+      <td><span class="tip yes" data-tip="The network slice of trust, done definitively: outbound visibility and rules.">✓</span></td>
+      <td><span class="tip" data-tip="v1.0 February 2003.">2003</span></td>
+      <td><span class="tip" data-tip="v6.4.1 current in 2026.">2026</span></td>
     </tr>
     <tr>
       <td>osquery / FleetDM</td>
-      <td><span class="tip" data-tip="osquery is free/open source; Fleet has a free tier and paid Premium for enterprises.">$0</span></td>
-      <td><span class="tip part" data-tip="SQL over live system state — enormously flexible, no scoring or UI-first triage.">◐</span></td>
-      <td><span class="tip part" data-tip="Scheduled query results logged over time via Fleet.">◐</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip" data-tip="osquery is free/open source; Fleet has a free tier and paid Premium.">$0</span></td>
+      <td><span class="tip part" data-tip="SQL over live system state; no scoring or UI-first triage.">◐</span></td>
       <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
-      <td><span class="tip yes" data-tip="Deep system and persistence tables; compliance-grade auditing.">✓</span></td>
-      <td><span class="tip yes" data-tip="SQL API, fleet-scale orchestration — the machine-readable reference.">✓</span></td>
-      <td><span class="tip" data-tip="osquery open-sourced by Facebook 2014 (v5.23 June 2026); Fleet since 2017 as Kolide Fleet (v4.88 July 2026).">2014</span></td>
-      <td><span class="tip" data-tip="osquery open-sourced by Facebook 2014 (v5.23 June 2026); Fleet since 2017 as Kolide Fleet (v4.88 July 2026).">2026</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip yes" data-tip="Compliance-grade persistence tables and a SQL API at fleet scale.">✓</span></td>
+      <td><span class="tip" data-tip="osquery open-sourced by Facebook 2014; Fleet since 2017 as Kolide Fleet.">2014</span></td>
+      <td><span class="tip" data-tip="osquery v5.23 June 2026; Fleet v4.88 July 2026.">2026</span></td>
     </tr>
     <tr>
       <td>Netdata</td>
       <td><span class="tip" data-tip="Open source agent is free; paid cloud tiers per node.">$0</span></td>
-      <td><span class="tip no" data-tip="Per-host metrics; per-process apps plugin without entity grouping.">—</span></td>
-      <td><span class="tip yes" data-tip="Long metric retention with dashboards.">✓</span></td>
-      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip yes" data-tip="Per-host metrics with long retention and dashboards.">✓</span></td>
       <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
-      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
-      <td><span class="tip yes" data-tip="APIs, dashboards, alerting integrations.">✓</span></td>
-      <td><span class="tip" data-tip="Public v1.0 March 2016; v2.10.3 April 2026.">2016</span></td>
-      <td><span class="tip" data-tip="Public v1.0 March 2016; v2.10.3 April 2026.">2026</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip part" data-tip="APIs, dashboards, alerting integrations.">◐</span></td>
+      <td><span class="tip" data-tip="Public v1.0 March 2016.">2016</span></td>
+      <td><span class="tip" data-tip="v2.10.3, April 2026.">2026</span></td>
     </tr>
     <tr>
       <td>Datadog / New Relic</td>
       <td><span class="tip" data-tip="Usage-based enterprise pricing; infrastructure monitoring from roughly $15/host/month.">~$15/host/mo</span></td>
-      <td><span class="tip part" data-tip="Host and process metrics with tagging; built for servers, not personal Macs.">◐</span></td>
-      <td><span class="tip yes" data-tip="Full retention per plan.">✓</span></td>
-      <td><span class="tip part" data-tip="LLM observability products exist — at the API/tracing layer, not the machine layer.">◐</span></td>
+      <td><span class="tip yes" data-tip="Host and process metrics with full retention; built for servers.">✓</span></td>
       <td><span class="tip no" data-tip="Not storage tools.">—</span></td>
-      <td><span class="tip part" data-tip="Security products exist as separate paid SKUs.">◐</span></td>
-      <td><span class="tip yes" data-tip="Full platform APIs.">✓</span></td>
-      <td><span class="tip" data-tip="New Relic founded 2008, Datadog 2010; Datadog agent v7.80.4 July 2026, weekly release cadence.">2008</span></td>
-      <td><span class="tip" data-tip="New Relic founded 2008, Datadog 2010; Datadog agent v7.80.4 July 2026, weekly release cadence.">2026</span></td>
+      <td><span class="tip part" data-tip="LLM observability products at the API/tracing layer.">◐</span></td>
+      <td><span class="tip part" data-tip="Security products as separate paid SKUs; full platform APIs.">◐</span></td>
+      <td><span class="tip" data-tip="New Relic founded 2008; Datadog 2010.">2008</span></td>
+      <td><span class="tip" data-tip="Datadog agent v7.80.4 July 2026, weekly cadence.">2026</span></td>
     </tr>
     <tr>
       <td>ccusage / <code>/cost</code></td>
       <td><span class="tip" data-tip="Free; ccusage is open source, /cost ships with Claude Code.">$0</span></td>
-      <td><span class="tip no" data-tip="No system view at all.">—</span></td>
-      <td><span class="tip part" data-tip="Usage logs over time.">◐</span></td>
-      <td><span class="tip part" data-tip="Tokens and dollars per session for Claude Code — no energy, GPU, or system context.">◐</span></td>
+      <td><span class="tip no" data-tip="No system view.">—</span></td>
       <td><span class="tip no" data-tip="Not storage tools.">—</span></td>
-      <td><span class="tip no" data-tip="Not security tools.">—</span></td>
-      <td><span class="tip part" data-tip="CLI with JSON output.">◐</span></td>
-      <td><span class="tip" data-tip="First npm release May 2025; v20.x by mid-2026 with a very active release cadence.">2025</span></td>
-      <td><span class="tip" data-tip="First npm release May 2025; v20.x by mid-2026 with a very active release cadence.">2026</span></td>
+      <td><span class="tip part" data-tip="Tokens and dollars per Claude Code session — no energy, GPU, or repo fleet.">◐</span></td>
+      <td><span class="tip no" data-tip="Not security tools; CLI with JSON output.">—</span></td>
+      <td><span class="tip" data-tip="First npm release May 2025.">2025</span></td>
+      <td><span class="tip" data-tip="v20.x by mid-2026, very active cadence.">2026</span></td>
     </tr>
     <tr>
       <td>Langfuse / Helicone / LangSmith</td>
       <td><span class="tip" data-tip="Free tiers; paid cloud plans typically start in the tens of dollars per month. Langfuse is also self-hostable.">$0+</span></td>
       <td><span class="tip no" data-tip="No machine view.">—</span></td>
-      <td><span class="tip yes" data-tip="Trace retention and analytics.">✓</span></td>
-      <td><span class="tip yes" data-tip="LLM calls, costs, and traces at the API layer — complementary to Aetower's machine layer, not overlapping.">✓</span></td>
       <td><span class="tip no" data-tip="Not storage tools.">—</span></td>
+      <td><span class="tip yes" data-tip="LLM calls, costs, and traces at the API layer — complementary to the machine layer.">✓</span></td>
+      <td><span class="tip part" data-tip="Full APIs and SDKs.">◐</span></td>
+      <td><span class="tip" data-tip="All launched 2023.">2023</span></td>
+      <td><span class="tip" data-tip="All active in 2026; Langfuse acquired by ClickHouse (Jan 2026), Helicone by Mintlify (Mar 2026).">2026</span></td>
+    </tr>
+  </tbody>
+</table></div>
+
+<h2 id="performance">Performance monitoring &amp; management</h2>
+<p>
+  The crowded arena. Everyone shows you CPU; the differences are grouping, memory of the
+  past, energy attribution, and whether the tool can <em>act</em>.
+</p>
+<div class="table-scroll"><table class="matrix">
+  <thead><tr>
+    <th>Tool</th>
+    <th><span class="tip" data-tip="Groups processes into app/session/agent entities with a single burden score.">Grouping &amp; scoring</span></th>
+    <th><span class="tip" data-tip="Stored history you can scrub or query after the fact.">History</span></th>
+    <th><span class="tip" data-tip="Energy, power, and GPU attribution.">Energy &amp; GPU</span></th>
+    <th><span class="tip" data-tip="Can the tool act: quit, throttle, or guarded process actions.">Interventions</span></th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Aetower</strong></td>
+      <td><span class="tip yes" data-tip="Entities (app + helpers + sessions) with a 0–100 friction score; loudest thing on top.">✓</span></td>
+      <td><span class="tip part" data-tip="Bounded local history with entity-level playback and a narrated timeline; 12h of raw snapshots by default with 30-day rollups.">◐</span></td>
+      <td><span class="tip yes" data-tip="Kernel-measured energy per entity, inferred GPU share, unified-memory pressure — labeled estimates.">✓</span></td>
+      <td><span class="tip part" data-tip="Guarded process actions with previews, approval gating, and follow-up verification.">◐</span></td>
+    </tr>
+    <tr>
+      <td><a href="/vs/activity-monitor/">Activity Monitor</a></td>
+      <td><span class="tip no" data-tip="Flat process list; helpers appear as unrelated rows.">—</span></td>
+      <td><span class="tip no" data-tip="No history.">—</span></td>
+      <td><span class="tip part" data-tip="Energy Impact pane — live-only, not attributed to sessions.">◐</span></td>
+      <td><span class="tip yes" data-tip="Force-quit in two clicks; always there.">✓</span></td>
+    </tr>
+    <tr>
+      <td>iStat Menus</td>
+      <td><span class="tip no" data-tip="Host gauges, not entities.">—</span></td>
+      <td><span class="tip part" data-tip="Short rolling graph history per gauge.">◐</span></td>
+      <td><span class="tip part" data-tip="Power and sensor gauges, host-level.">◐</span></td>
+      <td><span class="tip no" data-tip="Observes only.">—</span></td>
+    </tr>
+    <tr>
+      <td>Stats</td>
+      <td><span class="tip no" data-tip="Host gauges, not entities.">—</span></td>
+      <td><span class="tip part" data-tip="Rolling graphs.">◐</span></td>
+      <td><span class="tip part" data-tip="Sensor and battery gauges, host-level.">◐</span></td>
+      <td><span class="tip no" data-tip="Observes only.">—</span></td>
+    </tr>
+    <tr>
+      <td>Sensei</td>
+      <td><span class="tip part" data-tip="Hardware dashboard with per-app energy hints.">◐</span></td>
+      <td><span class="tip no" data-tip="No system-state history.">—</span></td>
+      <td><span class="tip part" data-tip="Per-app energy hints and hardware health.">◐</span></td>
+      <td><span class="tip no" data-tip="Cleanup yes, process control no.">—</span></td>
+    </tr>
+    <tr>
+      <td>App Tamer</td>
+      <td><span class="tip part" data-tip="Per-app CPU view.">◐</span></td>
+      <td><span class="tip no" data-tip="No history.">—</span></td>
+      <td><span class="tip no" data-tip="CPU-focused.">—</span></td>
+      <td><span class="tip yes" data-tip="The intervention specialist: automatically throttles or pauses CPU hogs.">✓</span></td>
+    </tr>
+    <tr>
+      <td>htop / btop</td>
+      <td><span class="tip no" data-tip="Process trees, no scoring.">—</span></td>
+      <td><span class="tip no" data-tip="Live view only.">—</span></td>
+      <td><span class="tip no" data-tip="CPU/memory focus.">—</span></td>
+      <td><span class="tip yes" data-tip="Kill and renice from the keyboard.">✓</span></td>
+    </tr>
+    <tr>
+      <td>asitop / macmon</td>
+      <td><span class="tip no" data-tip="Host power view.">—</span></td>
+      <td><span class="tip no" data-tip="Live view only.">—</span></td>
+      <td><span class="tip yes" data-tip="The terminal reference for Apple-silicon CPU/GPU/ANE power — host-level, not per-process.">✓</span></td>
+      <td><span class="tip no" data-tip="Observes only.">—</span></td>
+    </tr>
+    <tr>
+      <td>Glances</td>
+      <td><span class="tip no" data-tip="Cross-platform process list.">—</span></td>
+      <td><span class="tip part" data-tip="Optional history export to files/databases.">◐</span></td>
+      <td><span class="tip no" data-tip="No macOS energy attribution.">—</span></td>
+      <td><span class="tip no" data-tip="Observes only.">—</span></td>
+    </tr>
+    <tr>
+      <td>Netdata</td>
+      <td><span class="tip no" data-tip="Per-host metrics; apps plugin without entity grouping.">—</span></td>
+      <td><span class="tip yes" data-tip="Long metric retention with dashboards.">✓</span></td>
+      <td><span class="tip no" data-tip="No macOS energy attribution.">—</span></td>
+      <td><span class="tip no" data-tip="Observes and alerts.">—</span></td>
+    </tr>
+    <tr>
+      <td>Datadog / New Relic</td>
+      <td><span class="tip part" data-tip="Host and process metrics with tagging; built for servers.">◐</span></td>
+      <td><span class="tip yes" data-tip="Full retention per plan.">✓</span></td>
+      <td><span class="tip no" data-tip="No macOS energy attribution.">—</span></td>
+      <td><span class="tip no" data-tip="Alerting and runbooks, not local process control.">—</span></td>
+    </tr>
+  </tbody>
+</table></div>
+
+<h2 id="storage">Storage</h2>
+<p>
+  Aetower's storage angle is developer-shaped: what grew, why, and what's safe to reclaim
+  given rebuild cost. The incumbents are general-purpose — and DaisyDisk in particular is
+  a beautifully executed product.
+</p>
+<div class="table-scroll"><table class="matrix">
+  <thead><tr>
+    <th>Tool</th>
+    <th><span class="tip" data-tip="Treemaps, sunbursts, explorers.">Visualization</span></th>
+    <th><span class="tip" data-tip="What grew over time, and what wrote it.">Growth attribution</span></th>
+    <th><span class="tip" data-tip="Cleanup that understands safe vs rebuildable vs risky, staged rather than deleted.">Safety-tiered cleanup</span></th>
+    <th><span class="tip" data-tip="node_modules, build targets, caches — and the rebuild cost of removing them.">Dev-artifact awareness</span></th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Aetower</strong></td>
+      <td><span class="tip yes" data-tip="Treemap, cube explorer, full-index item list.">✓</span></td>
+      <td><span class="tip yes" data-tip="Persistent index with growth insights and filesystem-event evidence. APFS caveats (clones, sparse files, purgeable space) are documented — estimates, not forensics.">✓</span></td>
+      <td><span class="tip yes" data-tip="Safe / rebuildable / risky tiers, staged through the Trash with per-path outcomes.">✓</span></td>
+      <td><span class="tip yes" data-tip="Recognizes build artifacts and weighs rebuild cost per repository.">✓</span></td>
+    </tr>
+    <tr>
+      <td>DaisyDisk</td>
+      <td><span class="tip yes" data-tip="The best pure disk-space visualization on macOS.">✓</span></td>
+      <td><span class="tip no" data-tip="Point-in-time scans.">—</span></td>
+      <td><span class="tip part" data-tip="Collector basket before deleting, but no safety classification.">◐</span></td>
+      <td><span class="tip no" data-tip="Treats all bytes equally.">—</span></td>
+    </tr>
+    <tr>
+      <td>GrandPerspective / OmniDiskSweeper</td>
+      <td><span class="tip yes" data-tip="Treemap (GrandPerspective) and size-sorted lists (ODS).">✓</span></td>
+      <td><span class="tip no" data-tip="Point-in-time scans.">—</span></td>
+      <td><span class="tip no" data-tip="Direct deletes, no staging or tiers.">—</span></td>
+      <td><span class="tip no" data-tip="Treats all bytes equally.">—</span></td>
+    </tr>
+    <tr>
+      <td>CleanMyMac</td>
+      <td><span class="tip part" data-tip="Space lens visualization.">◐</span></td>
+      <td><span class="tip no" data-tip="No growth history.">—</span></td>
+      <td><span class="tip part" data-tip="Curated &quot;safe to remove&quot; categories; consumer-shaped, not rebuild-cost aware.">◐</span></td>
+      <td><span class="tip part" data-tip="Xcode-junk and developer categories exist, without per-repo rebuild context.">◐</span></td>
+    </tr>
+    <tr>
+      <td>Sensei</td>
+      <td><span class="tip part" data-tip="Storage overview.">◐</span></td>
+      <td><span class="tip no" data-tip="No growth history.">—</span></td>
+      <td><span class="tip part" data-tip="Cleanup suite without safety tiers.">◐</span></td>
+      <td><span class="tip no" data-tip="General-purpose cleanup.">—</span></td>
+    </tr>
+  </tbody>
+</table></div>
+
+<h2 id="repos-agents">Repos &amp; agent operations</h2>
+<p>
+  The youngest arena, and the one Aetower exists for. The API-layer tools are complementary
+  rather than competing — they see your LLM calls everywhere; Aetower sees what those calls
+  do to <em>this machine</em> and its repositories.
+</p>
+<div class="table-scroll"><table class="matrix">
+  <thead><tr>
+    <th>Tool</th>
+    <th><span class="tip" data-tip="Live agent sessions: which agent, which repo, what state.">Agent sessions</span></th>
+    <th><span class="tip" data-tip="Tokens and dollars, attributed to something useful.">Cost tracking</span></th>
+    <th><span class="tip" data-tip="Energy and GPU attributed per agent on the machine.">Energy &amp; GPU per agent</span></th>
+    <th><span class="tip" data-tip="Local repository inventory: git state, clones, agent-contract readiness.">Repo fleet view</span></th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Aetower</strong></td>
+      <td><span class="tip yes" data-tip="Sessions with repo, branch, and prompt/approval state via the Chau7 adapter.">✓</span></td>
+      <td><span class="tip yes" data-tip="Per-repo cost rollups — dollars, tokens, and, when attribution is strong enough, estimated energy and carbon.">✓</span></td>
+      <td><span class="tip yes" data-tip="Kernel-measured energy and inferred GPU share per agent — labeled estimates, not exact metering.">✓</span></td>
+      <td><span class="tip yes" data-tip="Every local Git root: branch, dirty state, duplicate clones, AGENTS.md readiness.">✓</span></td>
+    </tr>
+    <tr>
+      <td>ccusage / <code>/cost</code></td>
+      <td><span class="tip part" data-tip="Claude Code sessions from its logs.">◐</span></td>
+      <td><span class="tip yes" data-tip="Tokens and dollars per session/day for Claude Code — focused and useful.">✓</span></td>
+      <td><span class="tip no" data-tip="No system measurement.">—</span></td>
+      <td><span class="tip no" data-tip="No repo inventory.">—</span></td>
+    </tr>
+    <tr>
+      <td>Langfuse / Helicone / LangSmith</td>
+      <td><span class="tip yes" data-tip="Traces of every LLM call at the API layer, across all machines.">✓</span></td>
+      <td><span class="tip yes" data-tip="Token and dollar analytics per trace/project.">✓</span></td>
+      <td><span class="tip no" data-tip="The machine layer is invisible from the API layer.">—</span></td>
+      <td><span class="tip no" data-tip="No local repo concept.">—</span></td>
+    </tr>
+    <tr>
+      <td>Datadog / New Relic (LLM obs)</td>
+      <td><span class="tip part" data-tip="LLM tracing products at the API layer.">◐</span></td>
+      <td><span class="tip part" data-tip="Cost dashboards per service.">◐</span></td>
+      <td><span class="tip no" data-tip="No machine-layer attribution.">—</span></td>
+      <td><span class="tip no" data-tip="No local repo concept.">—</span></td>
+    </tr>
+  </tbody>
+</table></div>
+
+<h2 id="security-automation">Security &amp; automation</h2>
+<p>
+  Where Aetower is honestly the junior partner. The security incumbents are excellent and
+  battle-tested; Aetower's contribution to this arena is being machine-readable by design.
+</p>
+<div class="table-scroll"><table class="matrix">
+  <thead><tr>
+    <th>Tool</th>
+    <th><span class="tip" data-tip="Login items, launch agents/daemons, cron — what persists.">Persistence audit</span></th>
+    <th><span class="tip" data-tip="Code-signing status and binary reputation.">Signing &amp; reputation</span></th>
+    <th><span class="tip" data-tip="Which processes talk to the network, and control over it.">Outbound visibility</span></th>
+    <th><span class="tip" data-tip="CLI, API, SQL, or MCP — can scripts and agents use it.">Scriptable surface</span></th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Aetower</strong></td>
+      <td><span class="tip part" data-tip="Persistence view in the System workspace; not audit-depth.">◐</span></td>
+      <td><span class="tip part" data-tip="Signing labels per entity; optional hash-only VirusTotal lookups (off by default).">◐</span></td>
+      <td><span class="tip no" data-tip="Shows its own outbound channels (Privacy → Outbound Data) — not a network monitor for other apps.">—</span></td>
+      <td><span class="tip yes" data-tip="aetower CLI, local MCP server (45 tools, operator actions preview- and approval-gated), aetower:// URL scheme, stable accessibility IDs.">✓</span></td>
+    </tr>
+    <tr>
+      <td>Objective-See</td>
+      <td><span class="tip yes" data-tip="KnockKnock is the reference persistence enumerator.">✓</span></td>
+      <td><span class="tip yes" data-tip="Signing analysis and VirusTotal checks throughout the suite.">✓</span></td>
+      <td><span class="tip yes" data-tip="LuLu is a full outbound firewall.">✓</span></td>
+      <td><span class="tip part" data-tip="Some tools offer command-line modes.">◐</span></td>
+    </tr>
+    <tr>
+      <td>Little Snitch</td>
+      <td><span class="tip no" data-tip="Not a persistence tool.">—</span></td>
+      <td><span class="tip no" data-tip="Not a signing tool.">—</span></td>
+      <td><span class="tip yes" data-tip="The category-defining outbound monitor and firewall since 2003.">✓</span></td>
+      <td><span class="tip part" data-tip="Rule scripting and a CLI for management.">◐</span></td>
+    </tr>
+    <tr>
+      <td>osquery / FleetDM</td>
+      <td><span class="tip yes" data-tip="Deep persistence tables, compliance-grade.">✓</span></td>
+      <td><span class="tip part" data-tip="Signature tables exist; reputation via integrations.">◐</span></td>
+      <td><span class="tip part" data-tip="Socket and process tables; visibility, not control.">◐</span></td>
+      <td><span class="tip yes" data-tip="SQL API at fleet scale — the machine-readable reference.">✓</span></td>
+    </tr>
+    <tr>
+      <td>CleanMyMac</td>
+      <td><span class="tip part" data-tip="Login-items management.">◐</span></td>
+      <td><span class="tip part" data-tip="Malware removal module.">◐</span></td>
+      <td><span class="tip no" data-tip="Not a network tool.">—</span></td>
+      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
+    </tr>
+    <tr>
+      <td>Glances / Netdata</td>
       <td><span class="tip no" data-tip="Not security tools.">—</span></td>
-      <td><span class="tip yes" data-tip="Full APIs and SDKs.">✓</span></td>
-      <td><span class="tip" data-tip="All launched 2023. Langfuse acquired by ClickHouse (Jan 2026), Helicone by Mintlify (Mar 2026); LangSmith shipping major updates in 2026. All active.">2023</span></td>
-      <td><span class="tip" data-tip="All launched 2023. Langfuse acquired by ClickHouse (Jan 2026), Helicone by Mintlify (Mar 2026); LangSmith shipping major updates in 2026. All active.">2026</span></td>
+      <td><span class="tip no" data-tip="Not security tools.">—</span></td>
+      <td><span class="tip no" data-tip="Traffic totals, not per-connection control.">—</span></td>
+      <td><span class="tip yes" data-tip="REST/JSON APIs and dashboards.">✓</span></td>
     </tr>
   </tbody>
 </table></div>
@@ -272,10 +490,10 @@
 
 <h2>Where Aetower is trying to be different</h2>
 <p>
-  The column no incumbent fills: <strong>AI-agent awareness at the machine layer</strong> —
+  The arena no incumbent fills: <strong>repos &amp; agent operations at the machine layer</strong> —
   which agent sessions run, what they cost in kernel-measured energy and inferred GPU share,
   attributed to the repository they work on, and readable by the agents themselves over MCP.
   Everything in that sentence is labeled an estimate where it is one, and all of it is an
-  early alpha. If the incumbents add an agents pane before Aetower matures, this table will
-  say so.
+  early alpha. If the incumbents add an agents pane before Aetower matures, these tables
+  will say so.
 </p>
