@@ -6,6 +6,52 @@ All notable public changes to Aetower should be documented here.
 
 ## 0.8.1 (build 801) - 2026-07-14
 
+Aetower 0.8.1 is a fast follow-up to 0.8 focused on making the operator
+surface faster, more transparent, and easier to verify. Storage and Repos now
+open from cached state first, history retention moves to a seven-day default,
+privacy/outbound state is visible in-app, MCP operator actions are controllable
+from Settings, resource-cost rollups use one shared model, and the release
+pipeline now checks public claims before the website ships.
+
+Selected commits:
+
+- History retention and claim alignment:
+  [656387c](https://github.com/schiste/Aetower/commit/656387c),
+  [ec78bf7](https://github.com/schiste/Aetower/commit/ec78bf7)
+- MCP, first-run registration, and outbound-data controls:
+  [5ae5d9a](https://github.com/schiste/Aetower/commit/5ae5d9a),
+  [0e6b563](https://github.com/schiste/Aetower/commit/0e6b563),
+  [12f8f12](https://github.com/schiste/Aetower/commit/12f8f12),
+  [badb20b](https://github.com/schiste/Aetower/commit/badb20b)
+- Shared resource-cost rollups and attribution-gated repo energy/carbon:
+  [86ed516](https://github.com/schiste/Aetower/commit/86ed516),
+  [c92e735](https://github.com/schiste/Aetower/commit/c92e735)
+- GPU/memory source badges and Fleet opt-in confidence:
+  [628dd63](https://github.com/schiste/Aetower/commit/628dd63),
+  [5808882](https://github.com/schiste/Aetower/commit/5808882),
+  [5e65239](https://github.com/schiste/Aetower/commit/5e65239)
+- CLI/Homebrew distribution consistency:
+  [6aad93c](https://github.com/schiste/Aetower/commit/6aad93c),
+  [e16b53c](https://github.com/schiste/Aetower/commit/e16b53c)
+- APFS estimates, Repos operator truth, and public-claims validation:
+  [83a71c9](https://github.com/schiste/Aetower/commit/83a71c9),
+  [237dfda](https://github.com/schiste/Aetower/commit/237dfda),
+  [32c4530](https://github.com/schiste/Aetower/commit/32c4530)
+- Storage/Reclaim scan reliability and cache-first responsiveness:
+  [03fdae7](https://github.com/schiste/Aetower/commit/03fdae7),
+  [f8881f7](https://github.com/schiste/Aetower/commit/f8881f7),
+  [f2ed3c2](https://github.com/schiste/Aetower/commit/f2ed3c2),
+  [5051ade](https://github.com/schiste/Aetower/commit/5051ade),
+  [5f3fbd1](https://github.com/schiste/Aetower/commit/5f3fbd1),
+  [46d21c2](https://github.com/schiste/Aetower/commit/46d21c2),
+  [95de895](https://github.com/schiste/Aetower/commit/95de895),
+  [338810f](https://github.com/schiste/Aetower/commit/338810f)
+- Website/docs release surface:
+  [5842a5a](https://github.com/schiste/Aetower/commit/5842a5a),
+  [597d0da](https://github.com/schiste/Aetower/commit/597d0da),
+  [ae85d0d](https://github.com/schiste/Aetower/commit/ae85d0d),
+  [ea567b3](https://github.com/schiste/Aetower/commit/ea567b3)
+
 Cost model:
 
 - Added unified resource-cost rollups for repositories, sessions, entities,
