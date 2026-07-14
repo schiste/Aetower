@@ -107,7 +107,7 @@ final class MonitorListCoreTests: XCTestCase {
         XCTAssertEqual(expandedProcessComponents(for: group, by: .cpu).map(\.pid), [101, 100, 102])
     }
 
-    func testChau7ParentProxyGroupsTerminalChildrenWithoutSharedWorkspaceContext() throws {
+    func testChau7ParentProxyGroupsAgentGrandchildrenWithoutSharedWorkspaceContext() throws {
         let chau7 = entity(
             id: "chau7",
             name: "Chau7",
@@ -131,7 +131,7 @@ final class MonitorListCoreTests: XCTestCase {
                 component(
                     title: "codex",
                     pid: 701,
-                    parentSummary: "Chau7 pid 700",
+                    parentSummary: "zsh pid 702",
                     executablePath: "/opt/homebrew/bin/codex",
                     cwd: "/Users/me/ProjectA"
                 ),

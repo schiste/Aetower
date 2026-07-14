@@ -398,18 +398,24 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
         return roots
     }()
 
-    func firstParentEntityID(for entity: EntitySnapshot) -> String? {
-        let parentCandidates = entity.components.compactMap { component -> String? in
+    func parentEntityIDCandidates(for entity: EntitySnapshot) -> [String] {
+        var seen = Set<String>()
+        return entity.components.compactMap { component -> String? in
             guard
                 let parentSummary = component.parentSummary,
                 let parentPID = extractParentPIDForGrouping(from: parentSummary),
                 let ownerID = pidToEntityID[parentPID],
-                ownerID != entity.entityId
+                ownerID != entity.entityId,
+                seen.insert(ownerID).inserted
             else {
                 return nil
             }
             return ownerID
         }
+    }
+
+    func firstParentEntityID(for entity: EntitySnapshot) -> String? {
+        let parentCandidates = parentEntityIDCandidates(for: entity)
         for ownerID in parentCandidates {
             guard let owner = entityByID[ownerID] else { continue }
             if isGenericSystemRoot(owner) {
@@ -422,12 +428,39 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
         return nil
     }
 
+    func nearestChau7AncestorEntityID(for entity: EntitySnapshot) -> String? {
+        var visited = Set([entity.entityId])
+        var queue = parentEntityIDCandidates(for: entity)
+
+        while !queue.isEmpty {
+            let ownerID = queue.removeFirst()
+            guard visited.insert(ownerID).inserted,
+                  let owner = entityByID[ownerID],
+                  !isGenericSystemRoot(owner)
+            else {
+                continue
+            }
+
+            if isChau7ProxyRoot(owner) {
+                return ownerID
+            }
+
+            queue.append(contentsOf: parentEntityIDCandidates(for: owner))
+        }
+
+        return nil
+    }
+
     func rootID(for entity: EntitySnapshot) -> String {
         let ids = sessionIDs(for: entity)
         for id in ids {
             if let root = sessionRoots[id] {
                 return root
             }
+        }
+
+        if let chau7AncestorID = nearestChau7AncestorEntityID(for: entity) {
+            return chau7AncestorID
         }
 
         var visited = Set<String>()
