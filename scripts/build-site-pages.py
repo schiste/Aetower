@@ -160,6 +160,27 @@ PAGE_FAQS: dict[str, list[tuple[str, str]]] = {
             "publicly before coordination.",
         ),
     ],
+    "/vs/": [
+        (
+            "What is the best Activity Monitor alternative for Mac?",
+            "It depends on the slice: iStat Menus or Stats for polished host gauges, DaisyDisk "
+            "for disk visualization, Objective-See's tools for security auditing, and Aetower "
+            "(early alpha) if you want entity grouping, history, and AI-agent awareness in one "
+            "local-first app.",
+        ),
+        (
+            "Is Aetower free?",
+            "Yes — free and open source under AGPL-3.0, for macOS 14+ on Apple silicon. It is "
+            "an early alpha, and several tools in its comparison table are more mature at "
+            "their individual slices.",
+        ),
+        (
+            "What does no tool on the market do yet?",
+            "Per-agent resource attribution at the machine layer: which AI agent sessions run "
+            "on a Mac, their kernel-measured energy and inferred GPU share, attributed to the "
+            "repository they work on. That is the gap Aetower targets.",
+        ),
+    ],
     "/vs/activity-monitor/": [
         (
             "Is there an Activity Monitor alternative with history?",
@@ -493,6 +514,15 @@ def build(output_dir: pathlib.Path) -> None:
             "The aetower command line tool: live friction, storage, and repository state from a running Aetower app, with --json for pipelines.",
             "Docs",
             markdown_to_html(SITE / "pages" / "cli.md"),
+        )
+    )
+    pages.append(
+        (
+            "/vs/",
+            "Aetower vs the field · an honest capability matrix",
+            "How Aetower compares to Activity Monitor, iStat Menus, DaisyDisk, osquery, Objective-See, Langfuse, and 15+ other tools — gaps marked on all sides, including ours.",
+            "Comparison",
+            (SITE / "pages" / "comparisons.html").read_text(),
         )
     )
     pages.append(

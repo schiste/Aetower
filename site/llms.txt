@@ -27,6 +27,7 @@ answers questions like "what is straining this machine", with tools such as
 - [Home](https://aetower.dev/): what Aetower is, with real screenshots
 - [Changelog](https://aetower.dev/changelog/): every notable public change
 - [AI agent monitoring](https://aetower.dev/ai-agent-monitoring/): the agent-operator use case
+- [vs the field](https://aetower.dev/vs/): honest capability matrix across 18 tools
 - [vs Activity Monitor](https://aetower.dev/vs/activity-monitor/): honest comparison
 
 ## Downloads

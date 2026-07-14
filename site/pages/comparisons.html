@@ -1,0 +1,259 @@
+<h1>Aetower vs the field</h1>
+<p>
+  An honest capability matrix. Aetower overlaps five different tool categories, and in most
+  of them the incumbent is excellent at its slice — several of these tools are more mature,
+  more polished, or simply the right choice for what they do. The matrix marks Aetower's
+  gaps as plainly as everyone else's, starting with the one that matters most:
+  <strong>Aetower is an early alpha; everything else here is shipped, stable software.</strong>
+</p>
+<p>
+  Legend: ✓ has it · ◐ partially / different scope · — doesn't do it. Pricing is
+  categorized, not quoted — check each vendor for current prices.
+</p>
+
+<div class="table-scroll"><table>
+  <thead><tr>
+    <th>Tool</th>
+    <th>Price</th>
+    <th>Entity grouping + burden score</th>
+    <th>History / playback</th>
+    <th>AI-agent awareness</th>
+    <th>Storage reclaim</th>
+    <th>Persistence / signing audit</th>
+    <th>Automation surface</th>
+    <th>Maturity</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Aetower</strong></td>
+      <td>Free, AGPL</td>
+      <td>✓ entities + 0–100 friction</td>
+      <td>◐ bounded local history + timeline</td>
+      <td>✓ sessions, inferred GPU, kernel energy, per-repo spend (estimates)</td>
+      <td>✓ safety-tiered, staged via Trash</td>
+      <td>◐ signing labels + persistence view</td>
+      <td>✓ CLI, read-only MCP, URL scheme</td>
+      <td><strong>Early alpha</strong></td>
+    </tr>
+    <tr>
+      <td><a href="/vs/activity-monitor/">Activity Monitor</a> (Apple)</td>
+      <td>Free, built-in</td>
+      <td>— flat process list</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Mature</td>
+    </tr>
+    <tr>
+      <td>iStat Menus (Bjango)</td>
+      <td>Paid, one-time</td>
+      <td>— host gauges</td>
+      <td>◐ short graph history</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Mature, very polished</td>
+    </tr>
+    <tr>
+      <td>Stats (open source)</td>
+      <td>Free</td>
+      <td>— host gauges</td>
+      <td>◐ graphs</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Mature</td>
+    </tr>
+    <tr>
+      <td>Sensei (Cindori)</td>
+      <td>Paid, subscription</td>
+      <td>◐ hardware dashboard</td>
+      <td>—</td>
+      <td>—</td>
+      <td>✓ cleanup suite</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Mature</td>
+    </tr>
+    <tr>
+      <td>App Tamer (St. Clair)</td>
+      <td>Paid, one-time</td>
+      <td>◐ per-app CPU, and it can throttle</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Mature</td>
+    </tr>
+    <tr>
+      <td>htop / btop / bottom</td>
+      <td>Free, open source</td>
+      <td>— process trees, no scoring</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>◐ terminal-native</td>
+      <td>Mature</td>
+    </tr>
+    <tr>
+      <td>asitop / macmon</td>
+      <td>Free, open source</td>
+      <td>— host power view</td>
+      <td>—</td>
+      <td>◐ Apple-silicon GPU/ANE power, host-level only</td>
+      <td>—</td>
+      <td>—</td>
+      <td>◐ terminal-native</td>
+      <td>Solid niche tools</td>
+    </tr>
+    <tr>
+      <td>Glances</td>
+      <td>Free, open source</td>
+      <td>— process list</td>
+      <td>◐</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>✓ REST/JSON API</td>
+      <td>Mature</td>
+    </tr>
+    <tr>
+      <td>DaisyDisk</td>
+      <td>Paid, one-time</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>✓ the best disk treemap on macOS; manual deletes</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Mature, very polished</td>
+    </tr>
+    <tr>
+      <td>GrandPerspective / OmniDiskSweeper</td>
+      <td>Free</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>◐ scan and inspect, no safety tiers</td>
+      <td>—</td>
+      <td>—</td>
+      <td>Mature</td>
+    </tr>
+    <tr>
+      <td>CleanMyMac (MacPaw)</td>
+      <td>Paid, subscription</td>
+      <td>◐ menu-bar monitor</td>
+      <td>—</td>
+      <td>—</td>
+      <td>✓ broad consumer cleanup</td>
+      <td>◐ malware removal</td>
+      <td>—</td>
+      <td>Mature, mass market</td>
+    </tr>
+    <tr>
+      <td>Objective-See (KnockKnock, TaskExplorer, LuLu)</td>
+      <td>Free</td>
+      <td>◐ process explorer</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>✓ the reference for persistence, signing, and VirusTotal checks</td>
+      <td>◐</td>
+      <td>Mature, security-community standard</td>
+    </tr>
+    <tr>
+      <td>Little Snitch</td>
+      <td>Paid, one-time</td>
+      <td>◐ per-process network</td>
+      <td>◐ traffic history</td>
+      <td>—</td>
+      <td>—</td>
+      <td>◐ outbound-connection visibility</td>
+      <td>◐</td>
+      <td>Mature, category-defining</td>
+    </tr>
+    <tr>
+      <td>osquery / FleetDM</td>
+      <td>Free / open core</td>
+      <td>◐ SQL over live system state</td>
+      <td>◐ scheduled query logs</td>
+      <td>—</td>
+      <td>—</td>
+      <td>✓ deep system + persistence tables</td>
+      <td>✓ SQL API, fleet-scale</td>
+      <td>Mature, enterprise-proven</td>
+    </tr>
+    <tr>
+      <td>Netdata</td>
+      <td>Free / open core + cloud</td>
+      <td>— per-host metrics</td>
+      <td>✓ long metric retention</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>✓ API + dashboards</td>
+      <td>Mature</td>
+    </tr>
+    <tr>
+      <td>Datadog / New Relic agents</td>
+      <td>Enterprise subscription</td>
+      <td>◐ host + process metrics</td>
+      <td>✓ full retention</td>
+      <td>◐ LLM observability products, at the API layer</td>
+      <td>—</td>
+      <td>—</td>
+      <td>✓ full platform APIs</td>
+      <td>Mature</td>
+    </tr>
+    <tr>
+      <td>ccusage / Claude Code <code>/cost</code></td>
+      <td>Free</td>
+      <td>—</td>
+      <td>◐ usage logs</td>
+      <td>◐ tokens and dollars per session, no system view</td>
+      <td>—</td>
+      <td>—</td>
+      <td>◐ CLI</td>
+      <td>Young but focused</td>
+    </tr>
+    <tr>
+      <td>Langfuse / Helicone / LangSmith</td>
+      <td>Free tier / SaaS</td>
+      <td>—</td>
+      <td>✓ trace retention</td>
+      <td>✓ LLM calls, costs, and traces — at the API layer, not the machine</td>
+      <td>—</td>
+      <td>—</td>
+      <td>✓ APIs</td>
+      <td>Mature</td>
+    </tr>
+  </tbody>
+</table></div>
+
+<h2>When to choose them instead</h2>
+<ul>
+  <li><strong>Activity Monitor</strong> — you want to force-quit something right now. It's already there. <a href="/vs/activity-monitor/">Full comparison →</a></li>
+  <li><strong>iStat Menus or Stats</strong> — you want polished, glanceable host gauges from software that has been stable for a decade.</li>
+  <li><strong>DaisyDisk</strong> — you want the best pure disk-space visualization, full stop.</li>
+  <li><strong>App Tamer</strong> — you want a proven tool that automatically throttles CPU hogs today.</li>
+  <li><strong>Objective-See tools</strong> — you want security-grade persistence and signing analysis from the community's reference implementation.</li>
+  <li><strong>osquery / FleetDM</strong> — you manage a fleet and want SQL-queryable, compliance-grade system state.</li>
+  <li><strong>Langfuse / Helicone / LangSmith</strong> — you want LLM tracing at the API layer across all machines, not per-machine runtime cost.</li>
+  <li><strong>Datadog / New Relic</strong> — you're monitoring servers with a budget to match.</li>
+</ul>
+
+<h2>Where Aetower is trying to be different</h2>
+<p>
+  The column no incumbent fills: <strong>AI-agent awareness at the machine layer</strong> —
+  which agent sessions run, what they cost in kernel-measured energy and inferred GPU share,
+  attributed to the repository they work on, and readable by the agents themselves over MCP.
+  Everything in that sentence is labeled an estimate where it is one, and all of it is an
+  early alpha. If the incumbents add an agents pane before Aetower matures, this table will
+  say so.
+</p>
