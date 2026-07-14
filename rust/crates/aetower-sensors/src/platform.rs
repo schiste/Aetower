@@ -473,8 +473,7 @@ fn probe_keys(smc: &SmcConnection, keys: &[(&str, [u8; 4])]) -> Vec<TemperatureR
     keys.iter()
         .filter_map(|(label, key)| {
             let celsius = smc.read_key(*key)?.as_f32()?;
-            // Sanity: ignore nonsensical temperatures
-            if !(-40.0..=150.0).contains(&celsius) {
+            if !plausible_temperature_celsius(celsius) {
                 return None;
             }
             Some(TemperatureReading {
@@ -483,6 +482,12 @@ fn probe_keys(smc: &SmcConnection, keys: &[(&str, [u8; 4])]) -> Vec<TemperatureR
             })
         })
         .collect()
+}
+
+fn plausible_temperature_celsius(value: f32) -> bool {
+    // SMC can return a zero payload for unsupported keys; internal Mac
+    // temperature sensors should never report exactly freezing in normal use.
+    value.is_finite() && value > 0.0 && value <= 150.0
 }
 
 fn read_power(smc: &SmcConnection) -> Vec<PowerReading> {
@@ -526,5 +531,16 @@ mod tests {
         assert!((sp78_to_f32([0x19, 0x00]) - 25.0).abs() < 0.01);
         // -10.0°C = -10 * 256 = -2560 = 0xF600
         assert!((sp78_to_f32([0xF6, 0x00]) - (-10.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn temperature_sanity_rejects_zero_and_invalid_readings() {
+        assert!(plausible_temperature_celsius(25.0));
+        assert!(plausible_temperature_celsius(99.9));
+        assert!(!plausible_temperature_celsius(0.0));
+        assert!(!plausible_temperature_celsius(-10.0));
+        assert!(!plausible_temperature_celsius(151.0));
+        assert!(!plausible_temperature_celsius(f32::NAN));
+        assert!(!plausible_temperature_celsius(f32::INFINITY));
     }
 }
