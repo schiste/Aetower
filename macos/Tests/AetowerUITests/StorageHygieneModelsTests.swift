@@ -3,6 +3,29 @@ import XCTest
 
 final class StorageHygieneModelsTests: XCTestCase {
     @MainActor
+    func testStorageOpenWithMissingCacheDoesNotStartImplicitLoad() throws {
+        let temporarySupportURL = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("aetower-cache-miss-\(UUID().uuidString)", isDirectory: true)
+        StorageSupportDirectoryOverride.applicationSupportURL = temporarySupportURL
+        defer {
+            StorageSupportDirectoryOverride.applicationSupportURL = nil
+            try? FileManager.default.removeItem(at: temporarySupportURL)
+        }
+
+        let root = temporarySupportURL.appendingPathComponent("Repositories", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let state = AppState()
+        state.ensureStorageHygieneScan(roots: [root.path])
+
+        XCTAssertNil(state.storageHygieneReport)
+        XCTAssertFalse(state.storageHygieneIsLoading)
+        XCTAssertFalse(state.storageHygieneIsVerifyingCache)
+        XCTAssertEqual(state.storageEstimateStatus.title, "Scan Needed")
+    }
+
+    @MainActor
     func testMovedTrashReconciliationPreservesStartupCache() throws {
         let temporarySupportURL = FileManager.default
             .temporaryDirectory

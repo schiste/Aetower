@@ -2659,46 +2659,8 @@ public final class AppState {
             return
         case let .miss(reason):
             publishStorageHygieneCacheStale(reason: reason)
-        }
-
-        // If the UI snapshot is missing, recover it from the persistent index
-        // once and save it for future launches. Do not call
-        // storageHygieneOverviewJSON here: that projection path may fall back to
-        // scan-shaped work and is not a startup first-paint primitive.
-        configureStorageHygieneLoadWatchdog(mode: "instant_cached")
-        storageHygieneIsLoading = true
-        storageHygieneIsVerifyingCache = false
-        storageHygieneError = nil
-        let bridge = self.bridge
-        let publisher = StorageHygieneMainActorPublisher(self)
-        storageHygieneTask = Task.detached(priority: .utility) {
-            let maxDepth: UInt32 = 5
-            let limit: UInt32 = 200
-            guard !Task.isCancelled else { return }
-            let indexed = bridge.storageHygieneIndexedJSON(
-                roots: roots,
-                maxDepth: maxDepth,
-                limit: limit
-            )
-            let indexedPrepared = StorageHygieneDecodePipeline.prepare(
-                indexed,
-                roots: roots,
-                maxDepth: maxDepth,
-                limit: limit,
-                mode: "instant_cached",
-                // Persist the authoritative indexed report so the NEXT launch
-                // paints instantly from the synchronous cache read. Previously
-                // only the manual full-scan button saved the cache, so every
-                // launch missed and paid the multi-second index query with a
-                // "Starting storage scan" flash.
-                saveCache: true,
-                saveBaseline: true
-            )
-            if indexedPrepared.report != nil {
-                await publisher.publishPrepared(indexedPrepared)
-            } else {
-                await publisher.publishVerificationFinished(message: indexedPrepared.errorMessage)
-            }
+            publishStorageHygieneCacheMissAwaitingScan(reason: reason)
+            return
         }
     }
 
@@ -3954,6 +3916,36 @@ public final class AppState {
             eventType: "storage-hygiene-cache-stale",
             message: "Cached repository/storage hygiene report needs refresh.",
             fields: [DiagnosticsField(key: "reason", value: reason)]
+        )
+    }
+
+    fileprivate func publishStorageHygieneCacheMissAwaitingScan(reason: String) {
+        guard !Task.isCancelled else { return }
+        storageHygieneIsLoading = false
+        storageHygieneIsVerifyingCache = false
+        storageHygieneTask = nil
+        storageScanJob = nil
+        repositoryInventoryRefreshState = nil
+        storageHygieneError = nil
+
+        let summary = StorageRootChangeJournal.summary()
+        storageEstimateStatus = StorageEstimateStatus(
+            confidence: .needsFullScan,
+            title: "Scan Needed",
+            detail: "No cached storage snapshot is available. Run a scan to build one.",
+            dirtyPathCount: summary.dirtyPathCount,
+            lastChangeMillis: summary.lastChangeMillis,
+            lastRefreshMillis: lastStorageEstimateRefreshMillis == 0 ? nil : lastStorageEstimateRefreshMillis
+        )
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-hygiene-cache-miss-awaiting-scan",
+            message: "Storage opened without a display cache; waiting for an explicit scan instead of querying the persistent index.",
+            fields: [
+                DiagnosticsField(key: "reason", value: reason),
+                DiagnosticsField(key: "dirty_path_count", value: String(summary.dirtyPathCount)),
+            ]
         )
     }
 
