@@ -7,7 +7,7 @@ technical user, developer, or AI agent understand what is making a Mac slow,
 hot, noisy, memory pressured, storage constrained, or expensive to run.
 
 Updated: 2026-07-14
-Applies to: Developer Preview 0.8.1
+Applies to: Developer Preview 0.9.0
 
 This document is the product feature inventory. For product direction and
 priorities, read [Product Direction](product-direction.md). For navigation, read

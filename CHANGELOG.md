@@ -4,6 +4,60 @@ All notable public changes to Aetower should be documented here.
 
 ## Unreleased
 
+## 0.9.0 (build 900) - 2026-07-14
+
+Aetower 0.9.0 makes Monitor's process view structurally reliable. The app now
+keeps a real process-lineage graph through the core snapshot and FFI layer, so
+grouping no longer depends on parsing truncated component display strings.
+Grouped Monitor rows render one unified operator list: burden leaders are
+badges on the group row, per-PID expansion is inline, and search keeps the
+ancestor chain needed to explain matching children.
+
+Selected commits:
+
+- Public website comparison and claim-copy cleanup:
+  [3d9a2d5](https://github.com/schiste/Aetower/commit/3d9a2d5),
+  [235ae69](https://github.com/schiste/Aetower/commit/235ae69),
+  [56f7f45](https://github.com/schiste/Aetower/commit/56f7f45),
+  [49a9546](https://github.com/schiste/Aetower/commit/49a9546)
+- Changelog, docs, and public-claims validation alignment:
+  [486c461](https://github.com/schiste/Aetower/commit/486c461),
+  [1f750b3](https://github.com/schiste/Aetower/commit/1f750b3),
+  [916ce36](https://github.com/schiste/Aetower/commit/916ce36),
+  [c7341c0](https://github.com/schiste/Aetower/commit/c7341c0)
+- Monitor list decomposition, inline process expansion, and grouped-session
+  behavior:
+  [8ccccf5](https://github.com/schiste/Aetower/commit/8ccccf5),
+  [d5d0211](https://github.com/schiste/Aetower/commit/d5d0211),
+  [ed13dc6](https://github.com/schiste/Aetower/commit/ed13dc6),
+  [56b8b66](https://github.com/schiste/Aetower/commit/56b8b66)
+- Core process-lineage snapshots and graph-backed Monitor grouping:
+  [8df618c](https://github.com/schiste/Aetower/commit/8df618c),
+  [905902a](https://github.com/schiste/Aetower/commit/905902a)
+
+Monitor:
+
+- Added `ProcessLineageNode` to the core model and Swift FFI binding so the UI
+  receives PID, parent PID, owning entity, workspace/cwd, source, confidence,
+  and per-process resource fields before component truncation.
+- Reworked grouped Monitor mode to prefer lineage graph edges, while keeping
+  component parent-summary parsing as a fallback for older/capped snapshots.
+- Changed burden leaders from a separate flat section into design-system badges
+  on grouped rows, so a high-burden root no longer disappears from its group.
+- Expanded grouped rows show the concrete PIDs inline and sort those PIDs by
+  the same key as the parent group.
+- Search and filters now decide which grouped rows are visible after grouping,
+  preserving parent/ancestor entities needed to explain visible children.
+
+Website and docs:
+
+- Expanded the public comparison pages into a surfaces overview plus four
+  richer comparison arenas.
+- Aligned MCP, retention, and published tool-count claims with the code and
+  public descriptors.
+- Refreshed product direction, feature inventory, tab guide, and release copy
+  for the current operator-surface direction.
+
 ## 0.8.1 (build 801) - 2026-07-14
 
 Aetower 0.8.1 is a fast follow-up to 0.8 focused on making the operator

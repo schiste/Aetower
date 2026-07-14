@@ -4,7 +4,7 @@ PRD-style direction, priorities, invariants, and source map for Aetower.
 
 Status: Living product direction
 Updated: 2026-07-14
-Release context: Developer Preview 0.8.1
+Release context: Developer Preview 0.9.0
 
 This document is the PRD-style index for Aetower. It does not replace the
 architecture record, feature list, or release checklist. It explains the

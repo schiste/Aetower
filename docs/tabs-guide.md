@@ -7,7 +7,7 @@ workspaces with nested sections for Activity, Storage, Repos, Agents, System,
 and Settings.
 
 Updated: 2026-07-14
-Applies to: Developer Preview 0.8.1
+Applies to: Developer Preview 0.9.0
 
 ## 1. Monitor
 

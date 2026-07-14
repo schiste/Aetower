@@ -37,7 +37,7 @@ Do not present Developer Preview builds as production-ready or App Store-ready.
 
 ## Install and first run
 
-Latest Developer Preview: **0.8.1 build 801**.
+Latest Developer Preview: **0.9.0 build 900**.
 
 Download the release from
 [aetower.dev](https://aetower.dev/).
