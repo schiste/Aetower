@@ -215,7 +215,7 @@ PAGE_FAQS: dict[str, list[tuple[str, str]]] = {
         ),
         (
             "Can my AI agent check what is straining my Mac?",
-            "Yes — Aetower's local MCP server exposes 45 tools; one "
+            "Yes — Aetower's local MCP server exposes 46 tools; one "
             "aetower_top_findings or aetower_investigation_bundle call gives an agent the "
             "ranked answer.",
         ),

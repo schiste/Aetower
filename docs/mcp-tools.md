@@ -2,7 +2,7 @@
 
 > Generated from the running app with `aetower tools --json` (`scripts/generate-mcp-tools-doc.py`). Do not edit by hand.
 
-Aetower's local MCP server currently exposes **45 tools**. Guarded operator actions are visible to trusted local clients by default, every action stays preview- and approval-gated, and Settings can hide operator actions to force a read-only surface. See [Local MCP](local-mcp.md) for the runtime model and client registration.
+Aetower's local MCP server exposes **46 tools** — 45 read-only tools plus one guarded operator action. Operator actions are visible to trusted local clients by default, every action stays preview- and approval-gated, and Settings can hide operator actions to force a read-only surface. This reference documents the 45 read-only tools; the operator action `aetower_process_action` is covered in [Local MCP](local-mcp.md).
 
 Call any tool from the shell with `aetower call <name> [--json]`, or from any MCP client over the bundled `aetower-mcp` helper.
 

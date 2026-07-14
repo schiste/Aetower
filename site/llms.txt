@@ -19,7 +19,7 @@ answers questions like "what is straining this machine", with tools such as
 - [Getting started](https://aetower.dev/docs/): install, first-run checklist, safe defaults
 - [Local MCP server](https://aetower.dev/docs/mcp/): tools, runtime model, client registration
 - [CLI reference](https://aetower.dev/docs/cli/): `aetower top/storage/repos/tab/call`, `--json`, exit codes
-- [MCP tool reference](https://aetower.dev/docs/mcp-tools/): all 45 tools with parameters, generated from the running app
+- [MCP tool reference](https://aetower.dev/docs/mcp-tools/): all 46 tools with parameters, generated from the running app
 - [All documentation](https://aetower.dev/docs/): the full docs/ directory, rendered on every deploy
 
 ## Product
@@ -27,7 +27,7 @@ answers questions like "what is straining this machine", with tools such as
 - [Home](https://aetower.dev/): what Aetower is, with real screenshots
 - [Changelog](https://aetower.dev/changelog/): every notable public change
 - [AI agent monitoring](https://aetower.dev/ai-agent-monitoring/): the agent-operator use case
-- [vs the field](https://aetower.dev/vs/): honest capability matrix across 18 tools
+- [vs the field](https://aetower.dev/vs/): honest capability matrix — Aetower and 18 competitors across four arenas
 - [vs Activity Monitor](https://aetower.dev/vs/activity-monitor/): honest comparison
 
 ## Downloads

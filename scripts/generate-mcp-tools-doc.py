@@ -43,6 +43,7 @@ TOOL_QUESTIONS = {
     "aetower_host_summary": "How loaded is this Mac right now — CPU, memory, energy, thermal?",
     "aetower_investigation_bundle": "My Mac froze or crashed — what happened in that window?",
     "aetower_memory_breakdown": "Where is this process's memory actually going?",
+    "aetower_process_action": "How do I suspend, resume, or quit a runaway process — with a preview first and verification after?",
     "aetower_process_action_history": "Which process actions ran recently, and what were their outcomes?",
     "aetower_process_inspect": "What is this PID — provenance, code signing, and context?",
     "aetower_process_open_resources": "Which files, sockets, and ports does this process hold open?",
@@ -103,8 +104,13 @@ def schema_rows(schema: dict) -> list[str]:
 
 
 
+# The single approval-gated operator tool; absent from `aetower tools` when
+# operator actions are hidden in Settings on the generating machine.
+OPERATOR_TOOL = "aetower_process_action"
+
 # Tools whose example call would be heavy or destructive to run casually.
 EXAMPLE_SKIP = {
+    OPERATOR_TOOL,
     "aetower_storage_hygiene_deep_scan",
     "aetower_storage_hygiene",
 }
@@ -269,18 +275,36 @@ def main() -> None:
         print(f"collecting example seeds… ({len(missing)} examples missing)", file=sys.stderr)
         seeds = seed_values()
 
+    # The one guarded operator tool disappears from `aetower tools` when the
+    # generating machine has operator actions hidden in Settings. The published
+    # count must reflect the full registered surface either way.
+    served_names = {t["name"] for t in tools}
+    operator_hidden = OPERATOR_TOOL not in served_names
+    total = len(tools) + (1 if operator_hidden else 0)
+    if operator_hidden:
+        operator_note = (
+            f"This reference documents the {len(tools)} read-only tools; the "
+            f"operator action `{OPERATOR_TOOL}` is covered in "
+            "[Local MCP](local-mcp.md)."
+        )
+    else:
+        operator_note = (
+            "See [Local MCP](local-mcp.md) for the runtime model and client "
+            "registration."
+        )
+
     lines = [
         "# MCP tool reference",
         "",
         "> Generated from the running app with `aetower tools --json` "
         "(`scripts/generate-mcp-tools-doc.py`). Do not edit by hand.",
         "",
-        f"Aetower's local MCP server currently exposes **{len(tools)} tools**. "
-        "Guarded operator actions are visible to trusted local clients by "
+        f"Aetower's local MCP server exposes **{total} tools** — "
+        f"{total - 1} read-only tools plus one guarded operator action. "
+        "Operator actions are visible to trusted local clients by "
         "default, every action stays preview- and approval-gated, and Settings "
-        "can hide operator actions to force a read-only surface. See "
-        "[Local MCP](local-mcp.md) for the runtime model and client "
-        "registration.",
+        "can hide operator actions to force a read-only surface. "
+        f"{operator_note}",
         "",
         "Call any tool from the shell with "
         "`aetower call <name> [--json]`, or from any MCP client over the "
@@ -317,7 +341,11 @@ def main() -> None:
     OUT.write_text("\n".join(lines).rstrip() + "\n")
     sidecar = OUT.with_suffix(".faq.json")
     sidecar.write_text(json.dumps(faq_entries, indent=1, ensure_ascii=False) + "\n")
-    print(f"wrote {OUT} ({len(tools)} tools) and {sidecar.name}")
+    print(
+        f"wrote {OUT} ({total} tools, {len(tools)} documented"
+        f"{', operator tool hidden on this machine' if operator_hidden else ''})"
+        f" and {sidecar.name}"
+    )
 
 
 if __name__ == "__main__":

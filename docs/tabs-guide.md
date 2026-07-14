@@ -35,7 +35,7 @@ The primary triage surface. When the Mac feels slow, open this tab. The highest-
 
 **What it does**
 
-Time-travel for your machine. Loads stored snapshots from the local SQLite database (12 hours of raw snapshots by default, with 30-day aggregated rollups) and lets you scrub through historical system state. Every entity's friction, CPU, memory, and disk activity are preserved at the tick cadence they were captured.
+Time-travel for your machine. Loads stored snapshots from the local SQLite database (seven days of raw snapshots by default, with 30-day aggregated rollups) and lets you scrub through historical system state. Every entity's friction, CPU, memory, and disk activity are preserved at the tick cadence they were captured.
 
 **Its role**
 
