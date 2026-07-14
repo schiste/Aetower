@@ -503,6 +503,7 @@ mod tests {
             metrics,
             friction: FrictionBreakdown::default(),
             components: Vec::new(),
+            process_lineage: Vec::new(),
             trend: MetricTrend::default(),
             badges: Vec::new(),
             active_window_title: None,

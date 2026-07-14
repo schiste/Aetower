@@ -592,6 +592,27 @@ pub struct SessionMarker {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct ProcessLineageNode {
+    pub pid: u32,
+    pub parent_pid: Option<u32>,
+    pub entity_id: String,
+    pub title: String,
+    pub start_time_millis: u64,
+    pub executable_path: Option<String>,
+    pub command_line: Option<String>,
+    pub cwd: Option<String>,
+    pub user: Option<String>,
+    pub session_id: Option<String>,
+    pub workspace: Option<String>,
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+    pub memory_physical_footprint_bytes: u64,
+    pub thread_count: u32,
+    pub source: String,
+    pub confidence: f32,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct EntitySnapshot {
     pub entity_id: String,
     pub display_name: String,
@@ -606,6 +627,7 @@ pub struct EntitySnapshot {
     pub metrics: AggregateMetrics,
     pub friction: FrictionBreakdown,
     pub components: Vec<ComponentSnapshot>,
+    pub process_lineage: Vec<ProcessLineageNode>,
     pub trend: MetricTrend,
     pub badges: Vec<String>,
     pub active_window_title: Option<String>,
@@ -3794,6 +3816,30 @@ impl From<model::Recommendation> for Recommendation {
     }
 }
 
+impl From<model::ProcessLineageNode> for ProcessLineageNode {
+    fn from(value: model::ProcessLineageNode) -> Self {
+        Self {
+            pid: value.pid,
+            parent_pid: value.parent_pid,
+            entity_id: value.entity_id,
+            title: value.title,
+            start_time_millis: value.start_time_millis,
+            executable_path: value.executable_path,
+            command_line: value.command_line,
+            cwd: value.cwd,
+            user: value.user,
+            session_id: value.session_id,
+            workspace: value.workspace,
+            cpu_percent: value.cpu_percent,
+            memory_bytes: value.memory_bytes,
+            memory_physical_footprint_bytes: value.memory_physical_footprint_bytes,
+            thread_count: value.thread_count,
+            source: value.source,
+            confidence: value.confidence,
+        }
+    }
+}
+
 impl From<model::EntitySnapshot> for EntitySnapshot {
     fn from(value: model::EntitySnapshot) -> Self {
         Self {
@@ -3810,6 +3856,7 @@ impl From<model::EntitySnapshot> for EntitySnapshot {
             metrics: value.metrics.into(),
             friction: value.friction.into(),
             components: value.components.into_iter().map(Into::into).collect(),
+            process_lineage: value.process_lineage.into_iter().map(Into::into).collect(),
             trend: value.trend.into(),
             badges: value.badges,
             active_window_title: value.active_window_title,

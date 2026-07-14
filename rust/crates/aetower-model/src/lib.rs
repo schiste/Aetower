@@ -676,6 +676,39 @@ pub struct SessionMarker {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProcessLineageNode {
+    pub pid: u32,
+    #[serde(default)]
+    pub parent_pid: Option<u32>,
+    pub entity_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub start_time_millis: u64,
+    #[serde(default)]
+    pub executable_path: Option<String>,
+    #[serde(default)]
+    pub command_line: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub workspace: Option<String>,
+    #[serde(default)]
+    pub cpu_percent: f32,
+    #[serde(default)]
+    pub memory_bytes: u64,
+    #[serde(default)]
+    pub memory_physical_footprint_bytes: u64,
+    #[serde(default)]
+    pub thread_count: u32,
+    pub source: String,
+    pub confidence: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EntitySnapshot {
     pub entity_id: String,
     pub display_name: String,
@@ -692,6 +725,8 @@ pub struct EntitySnapshot {
     pub metrics: AggregateMetrics,
     pub friction: FrictionBreakdown,
     pub components: Vec<ComponentSnapshot>,
+    #[serde(default)]
+    pub process_lineage: Vec<ProcessLineageNode>,
     pub trend: MetricTrend,
     pub badges: Vec<String>,
     pub active_window_title: Option<String>,

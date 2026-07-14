@@ -4,7 +4,7 @@ use aetower_collector::{RawProcessSample, index_processes};
 use aetower_identity::{EntitySeed, IdentityMap};
 use aetower_model::{
     AggregateMetrics, AttributionConfidence, ComponentKind, ComponentSnapshot, EntityKind,
-    EntitySnapshot, FrontmostAppState, ProvenanceKind, ProvenanceSnapshot,
+    EntitySnapshot, FrontmostAppState, ProcessLineageNode, ProvenanceKind, ProvenanceSnapshot,
 };
 
 const MAX_COMPONENT_DETAIL_CHARS: usize = 160;
@@ -99,6 +99,26 @@ pub fn build_entities(
             user: process.identity.user.clone(),
             thread_count: process.thread_count,
         });
+
+        entry.process_lineage.push(ProcessLineageNode {
+            pid: process.pid,
+            parent_pid: process.parent_pid,
+            entity_id: seed.entity_id.clone(),
+            title: process.identity.name.clone(),
+            start_time_millis: process.start_time_millis,
+            executable_path: process.identity.exe.clone(),
+            command_line: command_line(process),
+            cwd: process.cwd.clone(),
+            user: process.identity.user.clone(),
+            session_id: None,
+            workspace: process.cwd.clone(),
+            cpu_percent: process.cpu_percent,
+            memory_bytes: process.memory_bytes,
+            memory_physical_footprint_bytes: process.memory_physical_footprint_bytes,
+            thread_count: process.thread_count,
+            source: "collector-parent-pid".to_owned(),
+            confidence: 0.95,
+        });
     }
 
     let mut entities: Vec<_> = grouped.into_values().collect();
@@ -132,6 +152,7 @@ fn entity_from_seed(seed: &EntitySeed) -> EntitySnapshot {
         metrics: AggregateMetrics::default(),
         friction: Default::default(),
         components: Vec::new(),
+        process_lineage: Vec::new(),
         trend: Default::default(),
         badges: seed.badges.clone(),
         active_window_title: None,

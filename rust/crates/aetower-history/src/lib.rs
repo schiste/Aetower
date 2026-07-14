@@ -2067,6 +2067,25 @@ mod tests {
                 user: None,
                 thread_count: 0,
             }],
+            process_lineage: vec![aetower_model::ProcessLineageNode {
+                pid,
+                parent_pid: None,
+                entity_id: id.to_owned(),
+                title: format!("{name} Helper"),
+                start_time_millis,
+                executable_path: Some(format!("/Applications/{name}.app/Helper")),
+                command_line: None,
+                cwd: None,
+                user: None,
+                session_id: None,
+                workspace: None,
+                cpu_percent: 45.0,
+                memory_bytes: 128 * 1024 * 1024,
+                memory_physical_footprint_bytes: 0,
+                thread_count: 0,
+                source: "test-fixture".to_owned(),
+                confidence: 1.0,
+            }],
             trend: MetricTrend::default(),
             badges: Vec::new(),
             active_window_title: None,
@@ -2113,6 +2132,30 @@ mod tests {
                 user: None,
                 thread_count: 0,
             })
+            .collect();
+        entity.process_lineage = processes
+            .iter()
+            .map(
+                |(pid, start_time_millis)| aetower_model::ProcessLineageNode {
+                    pid: *pid,
+                    parent_pid: None,
+                    entity_id: id.to_owned(),
+                    title: format!("{name} Helper {pid}"),
+                    start_time_millis: *start_time_millis,
+                    executable_path: Some(format!("/Applications/{name}.app/Helper")),
+                    command_line: None,
+                    cwd: None,
+                    user: None,
+                    session_id: None,
+                    workspace: None,
+                    cpu_percent: 45.0,
+                    memory_bytes: 128 * 1024 * 1024,
+                    memory_physical_footprint_bytes: 0,
+                    thread_count: 0,
+                    source: "test-fixture".to_owned(),
+                    confidence: 1.0,
+                },
+            )
             .collect();
         entity.oldest_process_start_millis = processes
             .iter()

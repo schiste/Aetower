@@ -70,6 +70,7 @@ final class ProcessOriginTests: XCTestCase {
                 contributors: []
             ),
             components: [component],
+            processLineage: [],
             trend: MetricTrend(
                 friction: [],
                 cpuPercent: [],

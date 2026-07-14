@@ -3800,6 +3800,7 @@ public struct EntitySnapshot {
     public var metrics: AggregateMetrics
     public var friction: FrictionBreakdown
     public var components: [ComponentSnapshot]
+    public var processLineage: [ProcessLineageNode]
     public var trend: MetricTrend
     public var badges: [String]
     public var activeWindowTitle: String?
@@ -3818,7 +3819,7 @@ public struct EntitySnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation], networkConnections: [NetworkConnection], signingClassification: String, isAdhoc: Bool, binaryReputation: BinaryReputation?, appVersion: String?) {
+    public init(entityId: String, displayName: String, primaryProvenance: ProvenanceSnapshot?, launcherSummary: String?, attributionNotes: [String], bundleId: String?, executablePath: String?, oldestProcessStartMillis: UInt64, newestProcessStartMillis: UInt64, entityKind: EntityKind, metrics: AggregateMetrics, friction: FrictionBreakdown, components: [ComponentSnapshot], processLineage: [ProcessLineageNode], trend: MetricTrend, badges: [String], activeWindowTitle: String?, recentChangeSummary: String?, anomalyDetected: Bool, thermalContribution: String?, groupingSuggestion: String?, agentCost: AgentCostSummary?, sessionMarkers: [SessionMarker], recommendations: [Recommendation], networkConnections: [NetworkConnection], signingClassification: String, isAdhoc: Bool, binaryReputation: BinaryReputation?, appVersion: String?) {
         self.entityId = entityId
         self.displayName = displayName
         self.primaryProvenance = primaryProvenance
@@ -3832,6 +3833,7 @@ public struct EntitySnapshot {
         self.metrics = metrics
         self.friction = friction
         self.components = components
+        self.processLineage = processLineage
         self.trend = trend
         self.badges = badges
         self.activeWindowTitle = activeWindowTitle
@@ -3896,6 +3898,9 @@ extension EntitySnapshot: Equatable, Hashable {
         if lhs.components != rhs.components {
             return false
         }
+        if lhs.processLineage != rhs.processLineage {
+            return false
+        }
         if lhs.trend != rhs.trend {
             return false
         }
@@ -3958,6 +3963,7 @@ extension EntitySnapshot: Equatable, Hashable {
         hasher.combine(metrics)
         hasher.combine(friction)
         hasher.combine(components)
+        hasher.combine(processLineage)
         hasher.combine(trend)
         hasher.combine(badges)
         hasher.combine(activeWindowTitle)
@@ -3998,6 +4004,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
                 metrics: FfiConverterTypeAggregateMetrics.read(from: &buf),
                 friction: FfiConverterTypeFrictionBreakdown.read(from: &buf),
                 components: FfiConverterSequenceTypeComponentSnapshot.read(from: &buf),
+                processLineage: FfiConverterSequenceTypeProcessLineageNode.read(from: &buf),
                 trend: FfiConverterTypeMetricTrend.read(from: &buf),
                 badges: FfiConverterSequenceString.read(from: &buf),
                 activeWindowTitle: FfiConverterOptionString.read(from: &buf),
@@ -4030,6 +4037,7 @@ public struct FfiConverterTypeEntitySnapshot: FfiConverterRustBuffer {
         FfiConverterTypeAggregateMetrics.write(value.metrics, into: &buf)
         FfiConverterTypeFrictionBreakdown.write(value.friction, into: &buf)
         FfiConverterSequenceTypeComponentSnapshot.write(value.components, into: &buf)
+        FfiConverterSequenceTypeProcessLineageNode.write(value.processLineage, into: &buf)
         FfiConverterTypeMetricTrend.write(value.trend, into: &buf)
         FfiConverterSequenceString.write(value.badges, into: &buf)
         FfiConverterOptionString.write(value.activeWindowTitle, into: &buf)
@@ -5758,6 +5766,196 @@ public func FfiConverterTypePowerReading_lift(_ buf: RustBuffer) throws -> Power
 #endif
 public func FfiConverterTypePowerReading_lower(_ value: PowerReading) -> RustBuffer {
     return FfiConverterTypePowerReading.lower(value)
+}
+
+
+public struct ProcessLineageNode {
+    public var pid: UInt32
+    public var parentPid: UInt32?
+    public var entityId: String
+    public var title: String
+    public var startTimeMillis: UInt64
+    public var executablePath: String?
+    public var commandLine: String?
+    public var cwd: String?
+    public var user: String?
+    public var sessionId: String?
+    public var workspace: String?
+    public var cpuPercent: Float
+    public var memoryBytes: UInt64
+    public var memoryPhysicalFootprintBytes: UInt64
+    public var threadCount: UInt32
+    public var source: String
+    public var confidence: Float
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(pid: UInt32, parentPid: UInt32?, entityId: String, title: String, startTimeMillis: UInt64, executablePath: String?, commandLine: String?, cwd: String?, user: String?, sessionId: String?, workspace: String?, cpuPercent: Float, memoryBytes: UInt64, memoryPhysicalFootprintBytes: UInt64, threadCount: UInt32, source: String, confidence: Float) {
+        self.pid = pid
+        self.parentPid = parentPid
+        self.entityId = entityId
+        self.title = title
+        self.startTimeMillis = startTimeMillis
+        self.executablePath = executablePath
+        self.commandLine = commandLine
+        self.cwd = cwd
+        self.user = user
+        self.sessionId = sessionId
+        self.workspace = workspace
+        self.cpuPercent = cpuPercent
+        self.memoryBytes = memoryBytes
+        self.memoryPhysicalFootprintBytes = memoryPhysicalFootprintBytes
+        self.threadCount = threadCount
+        self.source = source
+        self.confidence = confidence
+    }
+}
+
+#if compiler(>=6)
+extension ProcessLineageNode: Sendable {}
+#endif
+
+
+extension ProcessLineageNode: Equatable, Hashable {
+    public static func ==(lhs: ProcessLineageNode, rhs: ProcessLineageNode) -> Bool {
+        if lhs.pid != rhs.pid {
+            return false
+        }
+        if lhs.parentPid != rhs.parentPid {
+            return false
+        }
+        if lhs.entityId != rhs.entityId {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.startTimeMillis != rhs.startTimeMillis {
+            return false
+        }
+        if lhs.executablePath != rhs.executablePath {
+            return false
+        }
+        if lhs.commandLine != rhs.commandLine {
+            return false
+        }
+        if lhs.cwd != rhs.cwd {
+            return false
+        }
+        if lhs.user != rhs.user {
+            return false
+        }
+        if lhs.sessionId != rhs.sessionId {
+            return false
+        }
+        if lhs.workspace != rhs.workspace {
+            return false
+        }
+        if lhs.cpuPercent != rhs.cpuPercent {
+            return false
+        }
+        if lhs.memoryBytes != rhs.memoryBytes {
+            return false
+        }
+        if lhs.memoryPhysicalFootprintBytes != rhs.memoryPhysicalFootprintBytes {
+            return false
+        }
+        if lhs.threadCount != rhs.threadCount {
+            return false
+        }
+        if lhs.source != rhs.source {
+            return false
+        }
+        if lhs.confidence != rhs.confidence {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(pid)
+        hasher.combine(parentPid)
+        hasher.combine(entityId)
+        hasher.combine(title)
+        hasher.combine(startTimeMillis)
+        hasher.combine(executablePath)
+        hasher.combine(commandLine)
+        hasher.combine(cwd)
+        hasher.combine(user)
+        hasher.combine(sessionId)
+        hasher.combine(workspace)
+        hasher.combine(cpuPercent)
+        hasher.combine(memoryBytes)
+        hasher.combine(memoryPhysicalFootprintBytes)
+        hasher.combine(threadCount)
+        hasher.combine(source)
+        hasher.combine(confidence)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProcessLineageNode: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProcessLineageNode {
+        return
+            try ProcessLineageNode(
+                pid: FfiConverterUInt32.read(from: &buf),
+                parentPid: FfiConverterOptionUInt32.read(from: &buf),
+                entityId: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                startTimeMillis: FfiConverterUInt64.read(from: &buf),
+                executablePath: FfiConverterOptionString.read(from: &buf),
+                commandLine: FfiConverterOptionString.read(from: &buf),
+                cwd: FfiConverterOptionString.read(from: &buf),
+                user: FfiConverterOptionString.read(from: &buf),
+                sessionId: FfiConverterOptionString.read(from: &buf),
+                workspace: FfiConverterOptionString.read(from: &buf),
+                cpuPercent: FfiConverterFloat.read(from: &buf),
+                memoryBytes: FfiConverterUInt64.read(from: &buf),
+                memoryPhysicalFootprintBytes: FfiConverterUInt64.read(from: &buf),
+                threadCount: FfiConverterUInt32.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                confidence: FfiConverterFloat.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ProcessLineageNode, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.pid, into: &buf)
+        FfiConverterOptionUInt32.write(value.parentPid, into: &buf)
+        FfiConverterString.write(value.entityId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterUInt64.write(value.startTimeMillis, into: &buf)
+        FfiConverterOptionString.write(value.executablePath, into: &buf)
+        FfiConverterOptionString.write(value.commandLine, into: &buf)
+        FfiConverterOptionString.write(value.cwd, into: &buf)
+        FfiConverterOptionString.write(value.user, into: &buf)
+        FfiConverterOptionString.write(value.sessionId, into: &buf)
+        FfiConverterOptionString.write(value.workspace, into: &buf)
+        FfiConverterFloat.write(value.cpuPercent, into: &buf)
+        FfiConverterUInt64.write(value.memoryBytes, into: &buf)
+        FfiConverterUInt64.write(value.memoryPhysicalFootprintBytes, into: &buf)
+        FfiConverterUInt32.write(value.threadCount, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterFloat.write(value.confidence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProcessLineageNode_lift(_ buf: RustBuffer) throws -> ProcessLineageNode {
+    return try FfiConverterTypeProcessLineageNode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProcessLineageNode_lower(_ value: ProcessLineageNode) -> RustBuffer {
+    return FfiConverterTypeProcessLineageNode.lower(value)
 }
 
 
@@ -11893,6 +12091,31 @@ fileprivate struct FfiConverterSequenceTypePowerReading: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePowerReading.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeProcessLineageNode: FfiConverterRustBuffer {
+    typealias SwiftType = [ProcessLineageNode]
+
+    public static func write(_ value: [ProcessLineageNode], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeProcessLineageNode.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ProcessLineageNode] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ProcessLineageNode]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeProcessLineageNode.read(from: &buf))
         }
         return seq
     }
