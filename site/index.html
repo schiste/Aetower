@@ -169,6 +169,8 @@
         font-weight: 650;
         font-size: 17px;
         letter-spacing: -0.01em;
+        color: var(--ink);
+        text-decoration: none;
       }
 
       .wordmark img {
@@ -1159,10 +1161,11 @@
       </p>
 
       <header class="topbar">
-        <span class="wordmark">
+        <a class="wordmark" href="/">
           <img src="/assets/aetower-app-icon-preview.png" alt="" />
           Aetower
-        </span>
+        </a>
+        <!-- Keep identical to the topbar nav in site/templates/shell.html -->
         <nav class="topbar-links" aria-label="Site and project links">
           <a class="textlink" href="/docs/">Docs</a>
           <a class="textlink" href="/docs/mcp-tools/">MCP tools</a>
