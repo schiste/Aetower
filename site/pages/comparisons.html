@@ -7,230 +7,231 @@
   <strong>Aetower is an early alpha; everything else here is shipped, stable software.</strong>
 </p>
 <p>
-  Legend: ✓ has it · ◐ partially / different scope · — doesn't do it. Pricing is
-  categorized, not quoted — check each vendor for current prices.
+  <strong>✓</strong> has it · <strong>◐</strong> partial or different scope ·
+  <strong>—</strong> doesn't do it. Hover (or focus) any mark for the detail. Starting
+  prices are as noted in 2026 and drift — check each vendor.
 </p>
 
-<div class="table-scroll"><table>
+<div class="table-scroll"><table class="matrix">
   <thead><tr>
     <th>Tool</th>
-    <th>Price</th>
-    <th>Entity grouping + burden score</th>
-    <th>History / playback</th>
-    <th>AI-agent awareness</th>
-    <th>Storage reclaim</th>
-    <th>Persistence / signing audit</th>
-    <th>Automation surface</th>
+    <th>From</th>
+    <th><span class="tip" data-tip="Groups processes into app/session/agent entities with a single burden score, instead of a flat process list.">Grouping</span></th>
+    <th><span class="tip" data-tip="Stored history you can scrub or query after the fact.">History</span></th>
+    <th><span class="tip" data-tip="Awareness of AI agents and model runtimes: sessions, resource attribution, cost.">AI&nbsp;agents</span></th>
+    <th><span class="tip" data-tip="Finding and reclaiming disk space.">Storage</span></th>
+    <th><span class="tip" data-tip="Persistence items, code signing, and security auditing.">Security</span></th>
+    <th><span class="tip" data-tip="CLI, API, or other machine-readable surface for scripts and agents.">Automation</span></th>
     <th>Maturity</th>
   </tr></thead>
   <tbody>
     <tr>
       <td><strong>Aetower</strong></td>
-      <td>Free, AGPL</td>
-      <td>✓ entities + 0–100 friction</td>
-      <td>◐ bounded local history + timeline</td>
-      <td>✓ sessions, inferred GPU, kernel energy, per-repo spend (estimates)</td>
-      <td>✓ safety-tiered, staged via Trash</td>
-      <td>◐ signing labels + persistence view</td>
-      <td>✓ CLI, read-only MCP, URL scheme</td>
-      <td><strong>Early alpha</strong></td>
+      <td><span class="tip" data-tip="Free and open source, AGPL-3.0. macOS 14+, Apple silicon.">$0</span></td>
+      <td><span class="tip yes" data-tip="Entities (app + helpers + sessions) with a 0–100 friction score; loudest thing on top.">✓</span></td>
+      <td><span class="tip part" data-tip="Bounded local history with entity-level playback and a narrated timeline; 12h of raw snapshots by default with 30-day rollups.">◐</span></td>
+      <td><span class="tip yes" data-tip="Agent sessions with inferred GPU share, unified-memory pressure, kernel-measured energy, and per-repo spend — labeled estimates.">✓</span></td>
+      <td><span class="tip yes" data-tip="Safety-tiered reclaim staged through the Trash, growth attribution, treemap and full-index explorer.">✓</span></td>
+      <td><span class="tip part" data-tip="Code-signing labels and a persistence view — not a security product; Objective-See goes deeper.">◐</span></td>
+      <td><span class="tip yes" data-tip="aetower CLI, read-only local MCP server (45 tools), aetower:// URL scheme, stable accessibility IDs.">✓</span></td>
+      <td><strong>Early&nbsp;alpha</strong></td>
     </tr>
     <tr>
-      <td><a href="/vs/activity-monitor/">Activity Monitor</a> (Apple)</td>
-      <td>Free, built-in</td>
-      <td>— flat process list</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
+      <td><a href="/vs/activity-monitor/">Activity Monitor</a></td>
+      <td><span class="tip" data-tip="Ships with every Mac.">$0</span></td>
+      <td><span class="tip no" data-tip="Flat process list sorted by columns; helpers appear as unrelated rows.">—</span></td>
+      <td><span class="tip no" data-tip="No history: if you didn't see it happen, it's gone.">—</span></td>
+      <td><span class="tip no" data-tip="Energy Impact is live-only and not attributed to sessions or projects.">—</span></td>
+      <td><span class="tip no" data-tip="Storage tab in About This Mac is separate and minimal.">—</span></td>
+      <td><span class="tip no" data-tip="No signing or persistence surface.">—</span></td>
+      <td><span class="tip no" data-tip="No API, no CLI, no automation surface.">—</span></td>
       <td>Mature</td>
     </tr>
     <tr>
-      <td>iStat Menus (Bjango)</td>
-      <td>Paid, one-time</td>
-      <td>— host gauges</td>
-      <td>◐ short graph history</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>Mature, very polished</td>
+      <td>iStat Menus</td>
+      <td><span class="tip" data-tip="Bjango; one-time license, around $11.99. Also on Setapp.">~$12</span></td>
+      <td><span class="tip no" data-tip="Host-level gauges in the menu bar; no per-entity grouping or scoring.">—</span></td>
+      <td><span class="tip part" data-tip="Short rolling graph history per gauge; no per-app playback.">◐</span></td>
+      <td><span class="tip no" data-tip="No agent or session concept.">—</span></td>
+      <td><span class="tip no" data-tip="Disk usage gauges only.">—</span></td>
+      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
+      <td><span class="tip no" data-tip="No public automation surface.">—</span></td>
+      <td><span class="tip" data-tip="A decade-plus of polish; the category leader.">Mature</span></td>
     </tr>
     <tr>
-      <td>Stats (open source)</td>
-      <td>Free</td>
-      <td>— host gauges</td>
-      <td>◐ graphs</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
+      <td>Stats</td>
+      <td><span class="tip" data-tip="Open source (exelban/stats), free.">$0</span></td>
+      <td><span class="tip no" data-tip="Host-level menu-bar gauges.">—</span></td>
+      <td><span class="tip part" data-tip="Rolling graphs; no per-app playback.">◐</span></td>
+      <td><span class="tip no" data-tip="No agent or session concept.">—</span></td>
+      <td><span class="tip no" data-tip="Disk gauge only.">—</span></td>
+      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
+      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
       <td>Mature</td>
     </tr>
     <tr>
-      <td>Sensei (Cindori)</td>
-      <td>Paid, subscription</td>
-      <td>◐ hardware dashboard</td>
-      <td>—</td>
-      <td>—</td>
-      <td>✓ cleanup suite</td>
-      <td>—</td>
-      <td>—</td>
+      <td>Sensei</td>
+      <td><span class="tip" data-tip="Cindori; subscription, around $29/year.">~$29/yr</span></td>
+      <td><span class="tip part" data-tip="Hardware dashboard with per-app energy hints; no entity grouping.">◐</span></td>
+      <td><span class="tip no" data-tip="No system-state history.">—</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip yes" data-tip="Cleanup suite: caches, uninstaller, storage overview.">✓</span></td>
+      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
+      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
       <td>Mature</td>
     </tr>
     <tr>
-      <td>App Tamer (St. Clair)</td>
-      <td>Paid, one-time</td>
-      <td>◐ per-app CPU, and it can throttle</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
+      <td>App Tamer</td>
+      <td><span class="tip" data-tip="St. Clair Software; one-time license, $14.95.">$14.95</span></td>
+      <td><span class="tip part" data-tip="Per-app CPU view — and uniquely, it can throttle or pause CPU hogs automatically.">◐</span></td>
+      <td><span class="tip no" data-tip="No history.">—</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
+      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
+      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
       <td>Mature</td>
     </tr>
     <tr>
-      <td>htop / btop / bottom</td>
-      <td>Free, open source</td>
-      <td>— process trees, no scoring</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>◐ terminal-native</td>
+      <td>htop / btop</td>
+      <td><span class="tip" data-tip="Open source, free; install via Homebrew.">$0</span></td>
+      <td><span class="tip no" data-tip="Process trees with sorting — powerful, but no entity grouping or scoring.">—</span></td>
+      <td><span class="tip no" data-tip="Live view only.">—</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
+      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
+      <td><span class="tip part" data-tip="Terminal-native, scriptable environment; no structured output API.">◐</span></td>
       <td>Mature</td>
     </tr>
     <tr>
       <td>asitop / macmon</td>
-      <td>Free, open source</td>
-      <td>— host power view</td>
-      <td>—</td>
-      <td>◐ Apple-silicon GPU/ANE power, host-level only</td>
-      <td>—</td>
-      <td>—</td>
-      <td>◐ terminal-native</td>
-      <td>Solid niche tools</td>
+      <td><span class="tip" data-tip="Open source, free.">$0</span></td>
+      <td><span class="tip no" data-tip="Host-level power view.">—</span></td>
+      <td><span class="tip no" data-tip="Live view only.">—</span></td>
+      <td><span class="tip part" data-tip="The closest terminal tools to Aetower's energy story: Apple-silicon CPU/GPU/ANE power — but host-level, not per-agent.">◐</span></td>
+      <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
+      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
+      <td><span class="tip part" data-tip="Terminal-native; macmon offers JSON output.">◐</span></td>
+      <td><span class="tip" data-tip="Solid, focused niche tools.">Mature</span></td>
     </tr>
     <tr>
       <td>Glances</td>
-      <td>Free, open source</td>
-      <td>— process list</td>
-      <td>◐</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>✓ REST/JSON API</td>
+      <td><span class="tip" data-tip="Open source, free.">$0</span></td>
+      <td><span class="tip no" data-tip="Cross-platform process list.">—</span></td>
+      <td><span class="tip part" data-tip="Optional history export to files/databases.">◐</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
+      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
+      <td><span class="tip yes" data-tip="REST/JSON API and web UI — genuinely machine-readable.">✓</span></td>
       <td>Mature</td>
     </tr>
     <tr>
       <td>DaisyDisk</td>
-      <td>Paid, one-time</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>✓ the best disk treemap on macOS; manual deletes</td>
-      <td>—</td>
-      <td>—</td>
-      <td>Mature, very polished</td>
+      <td><span class="tip" data-tip="One-time license, $9.99; also on Setapp and the App Store.">$9.99</span></td>
+      <td><span class="tip no" data-tip="Not a process tool.">—</span></td>
+      <td><span class="tip no" data-tip="Point-in-time scans.">—</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip yes" data-tip="The best pure disk-space visualization on macOS; deletes are manual, no rebuild-cost awareness.">✓</span></td>
+      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
+      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
+      <td><span class="tip" data-tip="Very polished; the category reference.">Mature</span></td>
     </tr>
     <tr>
       <td>GrandPerspective / OmniDiskSweeper</td>
-      <td>Free</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>◐ scan and inspect, no safety tiers</td>
-      <td>—</td>
-      <td>—</td>
+      <td><span class="tip" data-tip="Free (GrandPerspective ~$3 on the App Store to support development).">$0</span></td>
+      <td><span class="tip no" data-tip="Not process tools.">—</span></td>
+      <td><span class="tip no" data-tip="Point-in-time scans.">—</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip part" data-tip="Scan and inspect; no safety tiers, growth attribution, or staged cleanup.">◐</span></td>
+      <td><span class="tip no" data-tip="Not security tools.">—</span></td>
+      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
       <td>Mature</td>
     </tr>
     <tr>
-      <td>CleanMyMac (MacPaw)</td>
-      <td>Paid, subscription</td>
-      <td>◐ menu-bar monitor</td>
-      <td>—</td>
-      <td>—</td>
-      <td>✓ broad consumer cleanup</td>
-      <td>◐ malware removal</td>
-      <td>—</td>
-      <td>Mature, mass market</td>
+      <td>CleanMyMac</td>
+      <td><span class="tip" data-tip="MacPaw; subscription from about $39.95/year for one Mac; one-time and Setapp options exist.">~$40/yr</span></td>
+      <td><span class="tip part" data-tip="Menu-bar monitor with basic per-app info.">◐</span></td>
+      <td><span class="tip no" data-tip="No system-state history.">—</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip yes" data-tip="Broad consumer cleanup: caches, uninstaller, large files, photo junk.">✓</span></td>
+      <td><span class="tip part" data-tip="Malware removal module; not persistence-audit depth.">◐</span></td>
+      <td><span class="tip no" data-tip="No automation surface.">—</span></td>
+      <td><span class="tip" data-tip="Mass-market, heavily marketed, mature.">Mature</span></td>
     </tr>
     <tr>
-      <td>Objective-See (KnockKnock, TaskExplorer, LuLu)</td>
-      <td>Free</td>
-      <td>◐ process explorer</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>✓ the reference for persistence, signing, and VirusTotal checks</td>
-      <td>◐</td>
-      <td>Mature, security-community standard</td>
+      <td>Objective-See</td>
+      <td><span class="tip" data-tip="KnockKnock, TaskExplorer, LuLu, BlockBlock — free and open source, supported by donations/Patreon.">$0</span></td>
+      <td><span class="tip part" data-tip="TaskExplorer is a capable process explorer with signing info.">◐</span></td>
+      <td><span class="tip no" data-tip="Point-in-time scans.">—</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip no" data-tip="Not storage tools.">—</span></td>
+      <td><span class="tip yes" data-tip="The security community's reference for persistence enumeration, code signing, and VirusTotal checks.">✓</span></td>
+      <td><span class="tip part" data-tip="Some tools offer command-line modes.">◐</span></td>
+      <td><span class="tip" data-tip="Battle-tested by the macOS security community.">Mature</span></td>
     </tr>
     <tr>
       <td>Little Snitch</td>
-      <td>Paid, one-time</td>
-      <td>◐ per-process network</td>
-      <td>◐ traffic history</td>
-      <td>—</td>
-      <td>—</td>
-      <td>◐ outbound-connection visibility</td>
-      <td>◐</td>
-      <td>Mature, category-defining</td>
+      <td><span class="tip" data-tip="Objective Development; one-time license, around $59 (Little Snitch 6). Free read-only Mini variant exists.">~$59</span></td>
+      <td><span class="tip part" data-tip="Per-process network connections, not general resource grouping.">◐</span></td>
+      <td><span class="tip part" data-tip="Network traffic history and statistics.">◐</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
+      <td><span class="tip part" data-tip="Outbound-connection visibility and rules — the network slice of trust, done definitively.">◐</span></td>
+      <td><span class="tip part" data-tip="Rule scripting and a CLI exist for management.">◐</span></td>
+      <td><span class="tip" data-tip="Category-defining since the 2000s.">Mature</span></td>
     </tr>
     <tr>
       <td>osquery / FleetDM</td>
-      <td>Free / open core</td>
-      <td>◐ SQL over live system state</td>
-      <td>◐ scheduled query logs</td>
-      <td>—</td>
-      <td>—</td>
-      <td>✓ deep system + persistence tables</td>
-      <td>✓ SQL API, fleet-scale</td>
-      <td>Mature, enterprise-proven</td>
+      <td><span class="tip" data-tip="osquery is free/open source; Fleet has a free tier and paid Premium for enterprises.">$0</span></td>
+      <td><span class="tip part" data-tip="SQL over live system state — enormously flexible, no scoring or UI-first triage.">◐</span></td>
+      <td><span class="tip part" data-tip="Scheduled query results logged over time via Fleet.">◐</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
+      <td><span class="tip yes" data-tip="Deep system and persistence tables; compliance-grade auditing.">✓</span></td>
+      <td><span class="tip yes" data-tip="SQL API, fleet-scale orchestration — the machine-readable reference.">✓</span></td>
+      <td><span class="tip" data-tip="Enterprise-proven at large fleets.">Mature</span></td>
     </tr>
     <tr>
       <td>Netdata</td>
-      <td>Free / open core + cloud</td>
-      <td>— per-host metrics</td>
-      <td>✓ long metric retention</td>
-      <td>—</td>
-      <td>—</td>
-      <td>—</td>
-      <td>✓ API + dashboards</td>
+      <td><span class="tip" data-tip="Open source agent is free; paid cloud tiers per node.">$0</span></td>
+      <td><span class="tip no" data-tip="Per-host metrics; per-process apps plugin without entity grouping.">—</span></td>
+      <td><span class="tip yes" data-tip="Long metric retention with dashboards.">✓</span></td>
+      <td><span class="tip no" data-tip="No agent concept.">—</span></td>
+      <td><span class="tip no" data-tip="Not a storage tool.">—</span></td>
+      <td><span class="tip no" data-tip="Not a security tool.">—</span></td>
+      <td><span class="tip yes" data-tip="APIs, dashboards, alerting integrations.">✓</span></td>
       <td>Mature</td>
     </tr>
     <tr>
-      <td>Datadog / New Relic agents</td>
-      <td>Enterprise subscription</td>
-      <td>◐ host + process metrics</td>
-      <td>✓ full retention</td>
-      <td>◐ LLM observability products, at the API layer</td>
-      <td>—</td>
-      <td>—</td>
-      <td>✓ full platform APIs</td>
+      <td>Datadog / New Relic</td>
+      <td><span class="tip" data-tip="Usage-based enterprise pricing; infrastructure monitoring from roughly $15/host/month.">~$15/host/mo</span></td>
+      <td><span class="tip part" data-tip="Host and process metrics with tagging; built for servers, not personal Macs.">◐</span></td>
+      <td><span class="tip yes" data-tip="Full retention per plan.">✓</span></td>
+      <td><span class="tip part" data-tip="LLM observability products exist — at the API/tracing layer, not the machine layer.">◐</span></td>
+      <td><span class="tip no" data-tip="Not storage tools.">—</span></td>
+      <td><span class="tip part" data-tip="Security products exist as separate paid SKUs.">◐</span></td>
+      <td><span class="tip yes" data-tip="Full platform APIs.">✓</span></td>
       <td>Mature</td>
     </tr>
     <tr>
-      <td>ccusage / Claude Code <code>/cost</code></td>
-      <td>Free</td>
-      <td>—</td>
-      <td>◐ usage logs</td>
-      <td>◐ tokens and dollars per session, no system view</td>
-      <td>—</td>
-      <td>—</td>
-      <td>◐ CLI</td>
-      <td>Young but focused</td>
+      <td>ccusage / <code>/cost</code></td>
+      <td><span class="tip" data-tip="Free; ccusage is open source, /cost ships with Claude Code.">$0</span></td>
+      <td><span class="tip no" data-tip="No system view at all.">—</span></td>
+      <td><span class="tip part" data-tip="Usage logs over time.">◐</span></td>
+      <td><span class="tip part" data-tip="Tokens and dollars per session for Claude Code — no energy, GPU, or system context.">◐</span></td>
+      <td><span class="tip no" data-tip="Not storage tools.">—</span></td>
+      <td><span class="tip no" data-tip="Not security tools.">—</span></td>
+      <td><span class="tip part" data-tip="CLI with JSON output.">◐</span></td>
+      <td><span class="tip" data-tip="Young but focused and useful.">Young</span></td>
     </tr>
     <tr>
       <td>Langfuse / Helicone / LangSmith</td>
-      <td>Free tier / SaaS</td>
-      <td>—</td>
-      <td>✓ trace retention</td>
-      <td>✓ LLM calls, costs, and traces — at the API layer, not the machine</td>
-      <td>—</td>
-      <td>—</td>
-      <td>✓ APIs</td>
+      <td><span class="tip" data-tip="Free tiers; paid cloud plans typically start in the tens of dollars per month. Langfuse is also self-hostable.">$0+</span></td>
+      <td><span class="tip no" data-tip="No machine view.">—</span></td>
+      <td><span class="tip yes" data-tip="Trace retention and analytics.">✓</span></td>
+      <td><span class="tip yes" data-tip="LLM calls, costs, and traces at the API layer — complementary to Aetower's machine layer, not overlapping.">✓</span></td>
+      <td><span class="tip no" data-tip="Not storage tools.">—</span></td>
+      <td><span class="tip no" data-tip="Not security tools.">—</span></td>
+      <td><span class="tip yes" data-tip="Full APIs and SDKs.">✓</span></td>
       <td>Mature</td>
     </tr>
   </tbody>

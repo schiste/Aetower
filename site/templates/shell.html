@@ -285,6 +285,80 @@
         border-bottom: none;
       }
 
+      /* Compact capability matrix: symbol cells with tooltip detail. */
+      table.matrix th,
+      table.matrix td {
+        text-align: center;
+        padding: 9px 8px;
+      }
+
+      table.matrix th:first-child,
+      table.matrix td:first-child,
+      table.matrix th:nth-child(2),
+      table.matrix td:nth-child(2) {
+        text-align: left;
+        white-space: normal;
+      }
+
+      table.matrix td:first-child {
+        color: var(--ink);
+        font-weight: 550;
+      }
+
+      .tip {
+        position: relative;
+        cursor: help;
+        border-bottom: 1px dotted var(--line-strong);
+        outline: none;
+      }
+
+      .tip:hover::after,
+      .tip:focus::after {
+        content: attr(data-tip);
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 8px);
+        transform: translateX(-50%);
+        width: max-content;
+        max-width: 260px;
+        padding: 8px 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        background: var(--panel);
+        color: var(--ink);
+        font-size: 12.5px;
+        font-weight: 450;
+        line-height: 1.45;
+        text-align: left;
+        white-space: normal;
+        box-shadow: 0 10px 28px -12px rgba(20, 16, 40, 0.5);
+        z-index: 10;
+      }
+
+      .tip:hover::before,
+      .tip:focus::before {
+        content: "";
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 3px);
+        transform: translateX(-50%) rotate(45deg);
+        width: 9px;
+        height: 9px;
+        background: var(--panel);
+        border-right: 1px solid var(--line-strong);
+        border-bottom: 1px solid var(--line-strong);
+        z-index: 11;
+      }
+
+      table.matrix .yes { color: var(--green-deep, #1f9d57); font-weight: 650; }
+      table.matrix .part { color: #b45309; font-weight: 650; }
+      table.matrix .no { color: var(--faint); }
+
+      @media (prefers-color-scheme: dark) {
+        table.matrix .yes { color: #36d683; }
+        table.matrix .part { color: #fbbf24; }
+      }
+
       main blockquote {
         margin: 14px 0;
         padding: 4px 18px;
