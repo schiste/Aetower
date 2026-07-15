@@ -380,6 +380,9 @@ public final class AppState {
     public private(set) var timelineState: [TimelineEvent] = []
     public private(set) var capabilitiesState: [CapabilitySnapshot] = []
     public private(set) var agentContextState = AgentContextSlice()
+    private(set) var repositoryRuntimeContextState = RepositoryRuntimeContextSlice()
+    private(set) var repositoryRuntimeContextGeneration: UInt64 = 0
+    private(set) var sensorDashboardPayload: SensorDashboardPayload
     public private(set) var thermalForecastState: ThermalForecast?
     public private(set) var snapshotSequence: UInt64 = 0
     public private(set) var snapshotCapturedAtMillis: UInt64 = 0
@@ -828,6 +831,7 @@ public final class AppState {
         self.snapshot = initialSnapshot
         self.hostState = initialSnapshot.host
         self.hostTrendState = initialSnapshot.hostTrend
+        self.sensorDashboardPayload = SensorDashboardPayload(snapshot: initialSnapshot)
         self.lastObservedSequence = initialSnapshot.sequence
         self.storageScanController.attach(self)
     }
@@ -899,6 +903,11 @@ public final class AppState {
 
     public var localMcpSocketPathDisplay: String {
         localMcpController.socketPathDisplay
+    }
+
+    public var compactMachineFriction: Float {
+        monitorViewModel.host?.machineFriction
+            ?? Float(monitorViewModel.hostTrend?.machineFriction.last ?? Double(hostTrendState.machineFriction.last ?? 0))
     }
 
     public func startLocalMcpServer(
@@ -5215,6 +5224,10 @@ public final class AppState {
         entitiesState = snapshot.entities
         snapshotSequence = snapshot.sequence
         snapshotCapturedAtMillis = snapshot.capturedAtMillis
+        let sensorPayload = SensorDashboardPayload(snapshot: snapshot)
+        if sensorDashboardPayload != sensorPayload {
+            sensorDashboardPayload = sensorPayload
+        }
         if timelineState != snapshot.timeline {
             timelineState = snapshot.timeline
         }
@@ -5228,6 +5241,16 @@ public final class AppState {
         )
         if agentContextState != agentContext {
             agentContextState = agentContext
+        }
+        let repositoryRuntimeContext = RepositoryRuntimeContextSlice(
+            chau7Sessions: snapshot.chau7Sessions,
+            entities: snapshot.entities.compactMap(RepositoryRuntimeEntityContext.init(entity:)),
+            aiRepoSummaries: snapshot.aiRepoSummaries,
+            resourceCostRollups: snapshot.resourceCostRollups
+        )
+        if repositoryRuntimeContextState != repositoryRuntimeContext {
+            repositoryRuntimeContextState = repositoryRuntimeContext
+            repositoryRuntimeContextGeneration &+= 1
         }
         if thermalForecastState != snapshot.thermalForecast {
             thermalForecastState = snapshot.thermalForecast

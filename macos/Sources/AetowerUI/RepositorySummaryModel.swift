@@ -299,7 +299,7 @@ enum RepositorySummaryBuilder {
     static func liveContexts(
         roots: some Collection<String>,
         sessions: [Chau7SessionSummary],
-        entities: [EntitySnapshot]
+        entities: [RepositoryRuntimeEntityContext]
     ) -> [String: RepositoryLiveContext] {
         let rootSet = Set(roots)
         var contexts: [String: RepositoryLiveContext] = [:]
@@ -314,23 +314,15 @@ enum RepositorySummaryBuilder {
         }
 
         for entity in entities {
-            var matchedRoots: Set<String> = []
-            for component in entity.components {
-                if let repoRoot = component.adapterContext?.repoRoot, rootSet.contains(repoRoot) {
-                    matchedRoots.insert(repoRoot)
-                }
-                if let cwd = component.cwd, rootSet.contains(cwd) {
-                    matchedRoots.insert(cwd)
-                }
-            }
+            let matchedRoots = Set(entity.candidateRoots.filter { rootSet.contains($0) })
             guard !matchedRoots.isEmpty else { continue }
-            let memory = entityEffectiveMemoryBytes(entity)
-            let cpu = entity.metrics.cpuPercent
             for root in matchedRoots {
                 var context = contexts[root, default: RepositoryLiveContext()]
                 context.entityCount += 1
-                context.memoryBytes = context.memoryBytes.addingReportingOverflow(memory).partialValue
-                context.cpuPercent += cpu
+                context.memoryBytes = context.memoryBytes
+                    .addingReportingOverflow(entity.memoryBytes)
+                    .partialValue
+                context.cpuPercent += entity.cpuPercent
                 contexts[root] = context
             }
         }
@@ -576,8 +568,8 @@ enum RepositorySummaryBuilder {
 // MARK: - Cache
 
 /// Single-slot cache: the static (report-derived) join recomputes only when a
-/// summary input generation moves; the live overlay recomputes per snapshot
-/// sequence, as one pass over the entities slice.
+/// summary input generation moves; the live overlay recomputes only when the
+/// compact repository runtime context generation moves.
 @MainActor
 final class RepositorySummaryCacheStore {
     private var staticKey: UInt64?
@@ -587,7 +579,7 @@ final class RepositorySummaryCacheStore {
 
     func summaries(
         inputsGeneration: UInt64,
-        snapshotSequence: UInt64,
+        runtimeGeneration: UInt64,
         buildStatic: () -> [RepositorySummary],
         buildLive: ([RepositorySummary]) -> [RepositorySummary]
     ) -> [RepositorySummary] {
@@ -596,9 +588,9 @@ final class RepositorySummaryCacheStore {
             staticKey = inputsGeneration
             liveKey = nil
         }
-        if liveKey != snapshotSequence {
+        if liveKey != runtimeGeneration {
             liveSummaries = buildLive(staticSummaries)
-            liveKey = snapshotSequence
+            liveKey = runtimeGeneration
         }
         return liveSummaries
     }

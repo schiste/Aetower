@@ -3909,7 +3909,7 @@ public struct RepositoryView: View {
     private func repositorySummaries(from report: StorageHygieneReportModel) -> [RepositorySummary] {
         summaryCache.summaries(
             inputsGeneration: state.repositorySummaryInputsGeneration,
-            snapshotSequence: state.snapshotSequence
+            runtimeGeneration: state.repositoryRuntimeContextGeneration
         ) {
             let previousSizeByRoot = Dictionary(
                 uniqueKeysWithValues: (state.previousStorageHygieneReport?.repoFootprints ?? [])
@@ -3930,14 +3930,18 @@ public struct RepositoryView: View {
         } buildLive: { staticSummaries in
             let live = RepositorySummaryBuilder.liveContexts(
                 roots: staticSummaries.map(\.root),
-                sessions: state.agentContextState.chau7Sessions,
-                entities: state.entitiesState
+                sessions: state.repositoryRuntimeContextState.chau7Sessions,
+                entities: state.repositoryRuntimeContextState.entities
             )
             return RepositorySummaryBuilder.applyingLive(
                 staticSummaries,
                 live: live,
-                aiUsageByRoot: RepositorySummaryBuilder.aiUsage(byRoot: state.agentContextState.aiRepoSummaries),
-                resourceCostByRoot: RepositorySummaryBuilder.resourceCost(byRoot: state.agentContextState.resourceCostRollups)
+                aiUsageByRoot: RepositorySummaryBuilder.aiUsage(
+                    byRoot: state.repositoryRuntimeContextState.aiRepoSummaries
+                ),
+                resourceCostByRoot: RepositorySummaryBuilder.resourceCost(
+                    byRoot: state.repositoryRuntimeContextState.resourceCostRollups
+                )
             )
         }
     }

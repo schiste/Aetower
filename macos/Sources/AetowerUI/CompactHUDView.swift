@@ -7,6 +7,8 @@ public struct CompactHUDView: View {
     public init(state: AppState) { self.state = state }
 
     public var body: some View {
+        let host = state.monitorViewModel.host
+        let rows = state.monitorViewModel.processRows
         VStack(alignment: .leading, spacing: 6) {
             // Machine friction header
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -20,13 +22,13 @@ public struct CompactHUDView: View {
 
                 Spacer()
 
-                Text(String(format: "CPU %.0f%%", state.hostState.cpuPercent))
+                Text(String(format: "CPU %.0f%%", host?.cpuPercent ?? state.hostState.cpuPercent))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
             // Top entities with friction bars
-            ForEach(Array(state.entitiesState.prefix(5).enumerated()), id: \.offset) { _, entity in
+            ForEach(Array(rows.prefix(5).enumerated()), id: \.offset) { _, entity in
                 HStack(spacing: 6) {
                     // Mini friction bar
                     ZStack(alignment: .leading) {
@@ -34,8 +36,8 @@ public struct CompactHUDView: View {
                             .fill(Color.secondary.opacity(0.1))
                             .frame(width: 40, height: 4)
                         RoundedRectangle(cornerRadius: 2)
-                            .fill(AetowerDesign.frictionColor(entity.friction.totalScore))
-                            .frame(width: AetowerDesign.frictionBarWidth(entity.friction.totalScore, maxWidth: 40), height: 4)
+                            .fill(AetowerDesign.frictionColor(entity.frictionScore))
+                            .frame(width: AetowerDesign.frictionBarWidth(entity.frictionScore, maxWidth: 40), height: 4)
                     }
 
                     if entity.entityKind == .aiAgent {
@@ -50,17 +52,18 @@ public struct CompactHUDView: View {
 
                     Spacer()
 
-                    Text(String(format: "%.0f", entity.friction.totalScore))
+                    Text(String(format: "%.0f", entity.frictionScore))
                         .font(.system(size: 11, weight: .medium, design: .rounded).monospacedDigit())
-                        .foregroundStyle(AetowerDesign.frictionColor(entity.friction.totalScore))
+                        .foregroundStyle(AetowerDesign.frictionColor(entity.frictionScore))
                 }
             }
 
-            if state.hostState.aiAgentCount > 0 {
+            let aiAgentCount = Int(host?.aiAgentCount ?? state.hostState.aiAgentCount)
+            if aiAgentCount > 0 {
                 Divider()
                 HStack(spacing: 4) {
                     Circle().fill(.blue).frame(width: 5, height: 5)
-                    Text("\(state.hostState.aiAgentCount) AI agent\(state.hostState.aiAgentCount == 1 ? "" : "s")")
+                    Text("\(aiAgentCount) AI agent\(aiAgentCount == 1 ? "" : "s")")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
@@ -72,6 +75,6 @@ public struct CompactHUDView: View {
     }
 
     private var machineFriction: Float {
-        Float(state.hostTrendState.machineFriction.last ?? 0)
+        Float(state.monitorViewModel.hostTrend?.machineFriction.last ?? Double(state.hostTrendState.machineFriction.last ?? 0))
     }
 }

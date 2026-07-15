@@ -929,11 +929,11 @@ private struct SystemWorkspaceView: View {
     private var content: some View {
         switch nav.system {
         case .sensors:
-            SensorDashboardView(state: state, settings: settings).demandsFullSnapshot(from: state)
+            SensorDashboardView(state: state, settings: settings)
         case .persistence:
-            PersistenceScannerView(state: state, settings: settings).demandsFullSnapshot(from: state)
+            PersistenceScannerView(state: state, settings: settings)
         case .diagnostics:
-            DiagnosticsView(state: state, settings: settings).demandsFullSnapshot(from: state)
+            DiagnosticsView(state: state, settings: settings)
         case .fleet:
             FleetView(state: state, settings: settings)
         }
@@ -1120,10 +1120,11 @@ struct AetowerApp: App {
     }
 
     private var computedMenuBarTitle: String {
-        let entities = state.entitiesState
-        if entities.isEmpty { return "Aetower" }
-        let topFriction = entities.first?.friction.totalScore ?? 0
-        return String(format: "%.0f", topFriction)
+        let friction = state.compactMachineFriction
+        if friction > 0 {
+            return String(format: "%.0f", friction)
+        }
+        return "Aetower"
     }
 
     init() {
@@ -1155,7 +1156,7 @@ struct AetowerApp: App {
                     .tag(WorkspaceTab.storage)
                     .accessibilityIdentifier(WorkspaceTab.storage.accessibilityIdentifier)
 
-                RepositoryView(state: state, settings: settings).demandsFullSnapshot(from: state)
+                RepositoryView(state: state, settings: settings)
                     .tabItem {
                         Label(WorkspaceTab.repos.title, systemImage: WorkspaceTab.repos.systemImage)
                     }
@@ -1290,7 +1291,7 @@ struct AetowerApp: App {
             }
         }
         MenuBarExtra(menuBarDisplayTitle, systemImage: "bolt.fill", isInserted: $menuBarExtraInserted) {
-            MenuBarSummaryView(state: state).demandsFullSnapshot(from: state)
+            MenuBarSummaryView(state: state)
         }
         .onChange(of: menuBarExtraInserted) { _, newValue in
             if settings.showMenuBarExtra != newValue {

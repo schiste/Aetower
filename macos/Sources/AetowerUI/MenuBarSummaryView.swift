@@ -9,6 +9,8 @@ public struct MenuBarSummaryView: View {
     }
 
     public var body: some View {
+        let host = state.monitorViewModel.host
+        let rows = state.monitorViewModel.processRows
         VStack(alignment: .leading, spacing: 12) {
             Text("Aetower")
                 .font(.headline)
@@ -18,15 +20,15 @@ public struct MenuBarSummaryView: View {
             HStack {
                 Text("Host CPU")
                 Spacer()
-                Text(String(format: "%.1f%%", state.hostState.cpuPercent))
+                Text(String(format: "%.1f%%", host?.cpuPercent ?? state.hostState.cpuPercent))
                     .monospacedDigit()
-                    .foregroundStyle(cpuColor(state.hostState.cpuPercent))
+                    .foregroundStyle(cpuColor(host?.cpuPercent ?? state.hostState.cpuPercent))
             }
 
             HStack {
                 Text("Frontmost")
                 Spacer()
-                Text(state.hostState.frontmostAppName ?? "n/a")
+                Text(host?.frontmostAppName ?? state.hostState.frontmostAppName ?? "n/a")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -34,7 +36,7 @@ public struct MenuBarSummaryView: View {
             HStack {
                 Text("Power")
                 Spacer()
-                Text(menuBarPowerSummary(state.hostState))
+                Text(host.map(menuBarPowerSummary) ?? menuBarPowerSummary(state.hostState))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -43,9 +45,9 @@ public struct MenuBarSummaryView: View {
                 Text("Thermal")
                 Spacer()
                 HStack(spacing: 4) {
-                    Image(systemName: thermalIcon(state.hostState.thermalState))
-                        .foregroundStyle(thermalColor(state.hostState.thermalState))
-                    Text(menuBarThermalSummary(state.hostState.thermalState))
+                    Image(systemName: thermalIcon(host?.thermalState ?? state.hostState.thermalState))
+                        .foregroundStyle(thermalColor(host?.thermalState ?? state.hostState.thermalState))
+                    Text(menuBarThermalSummary(host?.thermalState ?? state.hostState.thermalState))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -55,20 +57,20 @@ public struct MenuBarSummaryView: View {
                 Text("GPU")
                 Spacer()
                 Text(
-                    state.hostState.gpuPercent > 0 || state.hostState.gpuMemoryBytes > 0
-                        ? "\(String(format: "%.1f%%", state.hostState.gpuPercent)) · \(formatBytes(state.hostState.gpuMemoryBytes))"
+                    (host?.gpuPercent ?? state.hostState.gpuPercent) > 0
+                        || (host?.gpuMemoryBytes ?? state.hostState.gpuMemoryBytes) > 0
+                        ? "\(String(format: "%.1f%%", host?.gpuPercent ?? state.hostState.gpuPercent)) · \(formatBytes(host?.gpuMemoryBytes ?? state.hostState.gpuMemoryBytes))"
                         : "idle"
                 )
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
 
-            let agentEntities = state.entitiesState.filter { $0.entityKind == .aiAgent }
-            if !agentEntities.isEmpty {
-                let running = agentEntities.filter { $0.badges.contains(where: { $0 == "running" }) }.count
-                let agentSummary = running > 0
-                    ? "\(agentEntities.count) (\(running) active)"
-                    : "\(agentEntities.count) idle"
+            let agentRows = rows.filter { $0.entityKind == .aiAgent }
+            let agentCount = Int(host?.aiAgentCount ?? UInt32(agentRows.count))
+            if agentCount > 0 {
+                let running = agentRows.filter { $0.cpuPercent > 0.1 || $0.wakeupsPerSecond > 0.1 }.count
+                let agentSummary = running > 0 ? "\(agentCount) (\(running) active)" : "\(agentCount) idle"
                 HStack {
                     Text("AI agents")
                     Spacer()
@@ -77,14 +79,14 @@ public struct MenuBarSummaryView: View {
                 }
             }
 
-            if let top = state.entitiesState.first {
+            if let top = rows.first {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Top friction")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(top.displayName)
                         .font(.subheadline.weight(.medium))
-                    Text(top.friction.reasons.first ?? "No dominant reason")
+                    Text(top.recentChangeSummary ?? "No dominant reason")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -118,25 +120,26 @@ public struct MenuBarSummaryView: View {
     }
 
     private var sparklineRow: some View {
-        let trend = state.hostTrendState
-        let host = state.hostState
+        let trend = state.monitorViewModel.hostTrend
+        let host = state.monitorViewModel.host
         return HStack(spacing: 8) {
             menuSparkline(
                 "CPU",
-                samples: trend.cpuPercent.map { Double($0) },
-                value: String(format: "%.0f%%", host.cpuPercent),
+                samples: trend?.cpuPercent ?? state.hostTrendState.cpuPercent.map { Double($0) },
+                value: String(format: "%.0f%%", host?.cpuPercent ?? state.hostState.cpuPercent),
                 tone: AetowerDesign.Tone.cpu
             )
             menuSparkline(
                 "Memory",
-                samples: trend.memoryUsedBytes.map { Double($0) },
-                value: formatBytes(host.memoryUsedBytes),
+                samples: trend?.memoryUsedBytes ?? state.hostTrendState.memoryUsedBytes.map { Double($0) },
+                value: formatBytes(host?.memoryUsedBytes ?? state.hostState.memoryUsedBytes),
                 tone: AetowerDesign.Tone.memory
             )
             menuSparkline(
                 "Network",
-                samples: trend.networkActivityBps.map { Double($0) },
-                value: "\(formatBytes(host.networkReceiveBps + host.networkSendBps))/s",
+                samples: trend?.networkActivityBps
+                    ?? state.hostTrendState.networkActivityBps.map { Double($0) },
+                value: "\(formatBytes((host?.networkReceiveBps ?? state.hostState.networkReceiveBps) + (host?.networkSendBps ?? state.hostState.networkSendBps)))/s",
                 tone: AetowerDesign.Tone.network
             )
         }
@@ -189,6 +192,13 @@ private func menuBarPowerSummary(_ host: HostSnapshot) -> String {
         if let batteryChargePercent = host.batteryChargePercent {
             return host.lowPowerMode ? "Battery \(batteryChargePercent)% · Low Power" : "Battery \(batteryChargePercent)%"
         }
+        return host.lowPowerMode ? "Battery · Low Power" : "Battery"
+    }
+    return host.lowPowerMode ? "AC Power · Low Power" : "AC Power"
+}
+
+private func menuBarPowerSummary(_ host: UiHostSummary) -> String {
+    if host.onBattery {
         return host.lowPowerMode ? "Battery · Low Power" : "Battery"
     }
     return host.lowPowerMode ? "AC Power · Low Power" : "AC Power"

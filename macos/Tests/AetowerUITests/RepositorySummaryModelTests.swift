@@ -386,6 +386,24 @@ final class RepositorySummaryModelTests: XCTestCase {
         XCTAssertNil(contexts["/tmp/other"])
     }
 
+    func testLiveContextsAggregateCompactRuntimeEntityContext() {
+        let contexts = RepositorySummaryBuilder.liveContexts(
+            roots: ["/tmp/repo"],
+            sessions: [],
+            entities: [
+                RepositoryRuntimeEntityContext(
+                    entityId: "entity-1",
+                    candidateRoots: ["/tmp/repo", "/tmp/other"],
+                    memoryBytes: 42,
+                    cpuPercent: 3.5
+                )
+            ]
+        )
+        XCTAssertEqual(contexts["/tmp/repo"]?.entityCount, 1)
+        XCTAssertEqual(contexts["/tmp/repo"]?.memoryBytes, 42)
+        XCTAssertEqual(contexts["/tmp/repo"]?.cpuPercent ?? 0, 3.5, accuracy: 0.001)
+    }
+
     func testApplyingLiveOverlaysOnlyMatchedRoots() {
         let base = summary()
         let overlaid = RepositorySummaryBuilder.applyingLive(
@@ -406,10 +424,10 @@ final class RepositorySummaryModelTests: XCTestCase {
         var staticBuilds = 0
         var liveBuilds = 0
 
-        func fetch(generation: UInt64, sequence: UInt64) {
+        func fetch(generation: UInt64, runtimeGeneration: UInt64) {
             _ = store.summaries(
                 inputsGeneration: generation,
-                snapshotSequence: sequence,
+                runtimeGeneration: runtimeGeneration,
                 buildStatic: {
                     staticBuilds += 1
                     return [summary()]
@@ -421,16 +439,16 @@ final class RepositorySummaryModelTests: XCTestCase {
             )
         }
 
-        fetch(generation: 1, sequence: 1)
-        fetch(generation: 1, sequence: 1)
+        fetch(generation: 1, runtimeGeneration: 1)
+        fetch(generation: 1, runtimeGeneration: 1)
         XCTAssertEqual(staticBuilds, 1)
         XCTAssertEqual(liveBuilds, 1)
 
-        fetch(generation: 1, sequence: 2)
+        fetch(generation: 1, runtimeGeneration: 2)
         XCTAssertEqual(staticBuilds, 1)
         XCTAssertEqual(liveBuilds, 2)
 
-        fetch(generation: 2, sequence: 2)
+        fetch(generation: 2, runtimeGeneration: 2)
         XCTAssertEqual(staticBuilds, 2)
         XCTAssertEqual(liveBuilds, 3)
     }

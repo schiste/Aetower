@@ -25,7 +25,7 @@ public final class CompactHUDPanel {
 
     private func show() {
         if panel == nil {
-            let hosting = NSHostingView(rootView: CompactHUDView(state: state).demandsFullSnapshot(from: state))
+            let hosting = NSHostingView(rootView: CompactHUDView(state: state))
             hosting.frame = NSRect(x: 0, y: 0, width: 220, height: 300)
 
             let p = NSPanel(
