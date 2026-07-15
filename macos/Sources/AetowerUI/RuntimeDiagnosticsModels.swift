@@ -92,3 +92,35 @@ public struct UiPerformanceBudgetDiagnosticsSummary: Sendable {
         compactPayloadKind: "none"
     )
 }
+
+public struct UiRefreshTelemetrySummary: Sendable {
+    let updatedAt: Date?
+    let uiRefreshMillis: Double
+    let publishMillis: Double
+    let bridgeFetchMillis: Double
+    let fullSnapshotDemandCount: Int
+    let fullSnapshotDemandSummary: String
+    let fullSnapshotPublished: Bool
+    let evaluatorSnapshotApplied: Bool
+    let hotSlicesPublished: Bool
+    let monitorPayloadKind: String
+    let monitorReturnedRowCount: Int
+    let entityCount: Int
+    let repositoryRuntimeEntityCount: Int
+
+    static let empty = UiRefreshTelemetrySummary(
+        updatedAt: nil,
+        uiRefreshMillis: 0,
+        publishMillis: 0,
+        bridgeFetchMillis: 0,
+        fullSnapshotDemandCount: 0,
+        fullSnapshotDemandSummary: "none",
+        fullSnapshotPublished: false,
+        evaluatorSnapshotApplied: false,
+        hotSlicesPublished: false,
+        monitorPayloadKind: "none",
+        monitorReturnedRowCount: 0,
+        entityCount: 0,
+        repositoryRuntimeEntityCount: 0
+    )
+}

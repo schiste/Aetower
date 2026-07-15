@@ -87,9 +87,9 @@ private struct AgentsWorkspaceView: View {
         } else {
             switch nav.agents {
             case .chau7:
-                Chau7View(state: state).demandsFullSnapshot(from: state)
+                Chau7View(state: state).demandsFullSnapshot(from: state, reason: "agents.chau7")
             case .aiAgents:
-                AIAgentsView(state: state).demandsFullSnapshot(from: state)
+                AIAgentsView(state: state).demandsFullSnapshot(from: state, reason: "agents.ai")
             }
         }
     }
@@ -375,7 +375,8 @@ private struct ActivityWorkspaceView: View {
         case .history:
             HistoryView(state: state, settings: settings)
         case .timeline:
-            TimelineView(state: state, settings: settings).demandsFullSnapshot(from: state)
+            TimelineView(state: state, settings: settings)
+                .demandsFullSnapshot(from: state, reason: "activity.timeline")
         case .storage:
             storage
         }
@@ -1135,7 +1136,8 @@ struct AetowerApp: App {
     var body: some Scene {
         WindowGroup {
             TabView(selection: $nav.workspace) {
-                MainListView(state: state, settings: settings).demandsFullSnapshot(from: state)
+                MainListView(state: state, settings: settings)
+                    .demandsFullSnapshot(from: state, reason: "monitor")
                     .tabItem {
                         Label(WorkspaceTab.monitor.title, systemImage: WorkspaceTab.monitor.systemImage)
                     }

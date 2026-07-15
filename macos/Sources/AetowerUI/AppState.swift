@@ -510,6 +510,7 @@ public final class AppState {
     public private(set) var selfMemoryAttributionUpdatedAt: Date?
     public private(set) var timelinePayloadDiagnostics = TimelinePayloadDiagnosticsSummary.empty
     public private(set) var uiPerformanceBudgetDiagnostics = UiPerformanceBudgetDiagnosticsSummary.empty
+    public private(set) var uiRefreshTelemetry = UiRefreshTelemetrySummary.empty
     private(set) var processInspections: [UInt32: ProcessInspectionReportModel] = [:]
     private(set) var persistenceScanReport: PersistenceScanReportModel?
     private(set) var persistenceScanIsLoading = false
@@ -593,7 +594,7 @@ public final class AppState {
     /// While empty, the expensive full fetch drops to the evaluator floor
     /// cadence (every `fullSnapshotFloorTicks` refreshes) so automation,
     /// notification, and anomaly evaluators keep running on fresh data.
-    @ObservationIgnored private var fullSnapshotDemandTokens: Set<UUID> = []
+    @ObservationIgnored private var fullSnapshotDemandReasons: [UUID: String] = [:]
     @ObservationIgnored private var frontmostTitleProbeTask: Task<Void, Never>?
     @ObservationIgnored private var lastInventorySignalRefreshMillis: UInt64 = 0
     @ObservationIgnored private var lastRepositoryInventoryFingerprintAuditMillis: UInt64 = 0
@@ -814,6 +815,10 @@ public final class AppState {
     private let entityStaticAnalysisReloadInterval: TimeInterval = 15.0
     @ObservationIgnored
     private var lastPublishedHotSliceSignature: SnapshotHotSliceSignature?
+    @ObservationIgnored
+    private var lastUiRefreshTelemetryEventMillis: UInt64 = 0
+    @ObservationIgnored
+    private let uiRefreshTelemetryEventIntervalMillis: UInt64 = 120_000
 
     public init(
         bridge: EngineBridge = EngineBridge(),
@@ -1858,7 +1863,7 @@ public final class AppState {
         // telemetry mirror; skip it when neither is watching.
         let collectPayloadDiagnostics = diagnosticsVisible || telemetryEnabled
         let publishFullSnapshot = force
-            || !fullSnapshotDemandTokens.isEmpty
+            || !fullSnapshotDemandReasons.isEmpty
         let fetchEvaluatorSnapshot = force
             || ticksSinceFullSnapshot >= fullSnapshotFloorTicks
         let worker = snapshotRefreshWorker
@@ -1934,8 +1939,9 @@ public final class AppState {
             }
             let monitorDecodeMillis = (CFAbsoluteTimeGetCurrent() - decodeStartedAt) * 1000.0
             let publishStartedAt = CFAbsoluteTimeGetCurrent()
+            var didPublishHotSlices = false
             if let refreshedSnapshot = payload.snapshot {
-                let didPublishHotSlices = publishSnapshotSlices(
+                didPublishHotSlices = publishSnapshotSlices(
                     refreshedSnapshot,
                     publishHotSlices: true,
                     forceHotPublication: force
@@ -1996,6 +2002,15 @@ public final class AppState {
                 diffAnomalyStates(snapshot: evaluatorInput)
                 flushSuppressedAnomalySummaryIfNeeded()
             }
+            let publishMillis = (CFAbsoluteTimeGetCurrent() - publishStartedAt) * 1000.0
+            let uiRefreshMillis = (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1000.0
+            recordUiRefreshTelemetry(
+                payload: payload,
+                monitorFetchDiagnostics: monitorFetchDiagnostics,
+                publishMillis: publishMillis,
+                uiRefreshMillis: uiRefreshMillis,
+                hotSlicesPublished: didPublishHotSlices
+            )
             lastError = nil
             completeSnapshotRefresh()
         }
@@ -2015,10 +2030,10 @@ public final class AppState {
     /// Register a view's need for the full SystemSnapshot decode. The first
     /// live token forces an immediate refresh so a newly-shown tab never
     /// waits out the floor cadence on stale data.
-    public func beginFullSnapshotDemand() -> UUID {
+    public func beginFullSnapshotDemand(reason: String = "unspecified") -> UUID {
         let token = UUID()
-        let wasEmpty = fullSnapshotDemandTokens.isEmpty
-        fullSnapshotDemandTokens.insert(token)
+        let wasEmpty = fullSnapshotDemandReasons.isEmpty
+        fullSnapshotDemandReasons[token] = reason
         if wasEmpty {
             refresh(force: true)
         }
@@ -2026,7 +2041,7 @@ public final class AppState {
     }
 
     public func endFullSnapshotDemand(_ token: UUID) {
-        fullSnapshotDemandTokens.remove(token)
+        fullSnapshotDemandReasons.removeValue(forKey: token)
     }
 
     private func completeSnapshotRefresh() {
@@ -2610,6 +2625,79 @@ public final class AppState {
             snapshotBytes: fetchDiagnostics.snapshotBytes,
             compactPayloadKind: fetchDiagnostics.compactPayloadKind
         )
+    }
+
+    private func recordUiRefreshTelemetry(
+        payload: SnapshotRefreshPayload,
+        monitorFetchDiagnostics: MonitorUiPayloadFetchDiagnostics?,
+        publishMillis: Double,
+        uiRefreshMillis: Double,
+        hotSlicesPublished: Bool
+    ) {
+        let demandSummary = fullSnapshotDemandSummary()
+        uiRefreshTelemetry = UiRefreshTelemetrySummary(
+            updatedAt: Date(),
+            uiRefreshMillis: uiRefreshMillis,
+            publishMillis: publishMillis,
+            bridgeFetchMillis: payload.bridgeFetchMillis,
+            fullSnapshotDemandCount: fullSnapshotDemandReasons.count,
+            fullSnapshotDemandSummary: demandSummary,
+            fullSnapshotPublished: payload.snapshot != nil,
+            evaluatorSnapshotApplied: payload.evaluatorSnapshot != nil && payload.snapshot == nil,
+            hotSlicesPublished: hotSlicesPublished,
+            monitorPayloadKind: monitorFetchDiagnostics?.compactPayloadKind ?? "none",
+            monitorReturnedRowCount: monitorFetchDiagnostics?.returnedRowCount ?? 0,
+            entityCount: payload.snapshot?.entities.count ?? payload.evaluatorSnapshot?.entities.count ?? entitiesState.count,
+            repositoryRuntimeEntityCount: repositoryRuntimeContextState.entities.count
+        )
+
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        let slowUiPath = uiRefreshMillis >= 250 || publishMillis >= 120
+        let elapsedSinceTelemetryEvent = nowMillis >= lastUiRefreshTelemetryEventMillis
+            ? nowMillis - lastUiRefreshTelemetryEventMillis
+            : 0
+        let periodicDemandSample = !fullSnapshotDemandReasons.isEmpty
+            && elapsedSinceTelemetryEvent >= uiRefreshTelemetryEventIntervalMillis
+        guard slowUiPath || periodicDemandSample else { return }
+
+        lastUiRefreshTelemetryEventMillis = nowMillis
+        recordLocalDiagnosticsEvent(
+            level: slowUiPath ? .warn : .info,
+            subsystem: .ui,
+            eventType: slowUiPath ? "ui-refresh-slow" : "ui-refresh-demand-sample",
+            message: slowUiPath
+                ? "Applied a UI refresh slower than the local budget."
+                : "Sampled active full-snapshot UI demand.",
+            fields: [
+                DiagnosticsField(key: "ui_refresh_millis", value: String(format: "%.1f", uiRefreshMillis)),
+                DiagnosticsField(key: "publish_millis", value: String(format: "%.1f", publishMillis)),
+                DiagnosticsField(key: "bridge_fetch_millis", value: String(format: "%.1f", payload.bridgeFetchMillis)),
+                DiagnosticsField(key: "full_snapshot_demands", value: String(fullSnapshotDemandReasons.count)),
+                DiagnosticsField(key: "full_snapshot_demand_reasons", value: demandSummary),
+                DiagnosticsField(key: "full_snapshot_published", value: payload.snapshot == nil ? "false" : "true"),
+                DiagnosticsField(key: "evaluator_snapshot_applied", value: payload.evaluatorSnapshot == nil ? "false" : "true"),
+                DiagnosticsField(key: "hot_slices_published", value: hotSlicesPublished ? "true" : "false"),
+                DiagnosticsField(key: "monitor_payload_kind", value: monitorFetchDiagnostics?.compactPayloadKind ?? "none"),
+                DiagnosticsField(key: "monitor_rows", value: String(monitorFetchDiagnostics?.returnedRowCount ?? 0)),
+                DiagnosticsField(key: "entity_count", value: String(uiRefreshTelemetry.entityCount)),
+                DiagnosticsField(key: "repo_runtime_entities", value: String(repositoryRuntimeContextState.entities.count)),
+            ]
+        )
+    }
+
+    private func fullSnapshotDemandSummary() -> String {
+        guard !fullSnapshotDemandReasons.isEmpty else { return "none" }
+        let counts = Dictionary(grouping: fullSnapshotDemandReasons.values, by: { $0 })
+            .mapValues(\.count)
+        return counts
+            .sorted { left, right in
+                if left.value != right.value {
+                    return left.value > right.value
+                }
+                return left.key < right.key
+            }
+            .map { "\($0.key):\($0.value)" }
+            .joined(separator: ",")
     }
 
     /// Load the lightweight startup/persistence inventory once. The default tab

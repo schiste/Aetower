@@ -200,13 +200,14 @@ struct SnapshotHotSliceSignature: Equatable {
 /// entitiesState/timelineState/hostState-derived detail.
 private struct FullSnapshotDemandModifier: ViewModifier {
     let state: AppState
+    let reason: String
     @State private var token: UUID?
 
     func body(content: Content) -> some View {
         content
             .onAppear {
                 if token == nil {
-                    token = state.beginFullSnapshotDemand()
+                    token = state.beginFullSnapshotDemand(reason: reason)
                 }
             }
             .onDisappear {
@@ -219,7 +220,7 @@ private struct FullSnapshotDemandModifier: ViewModifier {
 }
 
 extension View {
-    public func demandsFullSnapshot(from state: AppState) -> some View {
-        modifier(FullSnapshotDemandModifier(state: state))
+    public func demandsFullSnapshot(from state: AppState, reason: String = "unspecified") -> some View {
+        modifier(FullSnapshotDemandModifier(state: state, reason: reason))
     }
 }
