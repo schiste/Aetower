@@ -192,7 +192,7 @@ impl SmcValue {
             b"sp78" => Some(sp78_to_f32([self.bytes[0], self.bytes[1]])),
             b"flt " => {
                 if self.data_size >= 4 {
-                    Some(f32::from_be_bytes([
+                    Some(f32::from_le_bytes([
                         self.bytes[0],
                         self.bytes[1],
                         self.bytes[2],
@@ -486,8 +486,8 @@ fn probe_keys(smc: &SmcConnection, keys: &[(&str, [u8; 4])]) -> Vec<TemperatureR
 
 fn plausible_temperature_celsius(value: f32) -> bool {
     // SMC can return a zero payload for unsupported keys; internal Mac
-    // temperature sensors should never report exactly freezing in normal use.
-    value.is_finite() && value > 0.0 && value <= 150.0
+    // temperature sensors should not report near-freezing values in normal use.
+    value.is_finite() && (1.0..=150.0).contains(&value)
 }
 
 fn read_power(smc: &SmcConnection) -> Vec<PowerReading> {
@@ -502,7 +502,7 @@ fn probe_power_keys(smc: &SmcConnection, keys: &[(&str, [u8; 4], PowerUnit)]) ->
     keys.iter()
         .filter_map(|(label, key, unit)| {
             let value = smc.read_key(*key)?.as_f32()?;
-            if !(0.0..=500.0).contains(&value) {
+            if !plausible_power_reading(value, unit) {
                 return None;
             }
             Some(PowerReading {
@@ -512,6 +512,17 @@ fn probe_power_keys(smc: &SmcConnection, keys: &[(&str, [u8; 4], PowerUnit)]) ->
             })
         })
         .collect()
+}
+
+fn plausible_power_reading(value: f32, unit: &PowerUnit) -> bool {
+    if !value.is_finite() {
+        return false;
+    }
+    match unit {
+        PowerUnit::Watts => (0.01..=500.0).contains(&value),
+        PowerUnit::Volts => (0.1..=500.0).contains(&value),
+        PowerUnit::Amps => (0.001..=500.0).contains(&value),
+    }
 }
 
 #[cfg(test)]
@@ -534,13 +545,38 @@ mod tests {
     }
 
     #[test]
-    fn temperature_sanity_rejects_zero_and_invalid_readings() {
+    fn flt_conversion_uses_smc_little_endian_payload() {
+        let mut bytes = [0u8; 32];
+        bytes[..4].copy_from_slice(&42.5f32.to_le_bytes());
+        let value = SmcValue {
+            data_type: u32::from_be_bytes(*b"flt "),
+            data_size: 4,
+            bytes,
+        };
+
+        assert_eq!(value.as_f32(), Some(42.5));
+    }
+
+    #[test]
+    fn temperature_sanity_rejects_near_zero_and_invalid_readings() {
         assert!(plausible_temperature_celsius(25.0));
         assert!(plausible_temperature_celsius(99.9));
+        assert!(!plausible_temperature_celsius(0.5));
         assert!(!plausible_temperature_celsius(0.0));
         assert!(!plausible_temperature_celsius(-10.0));
         assert!(!plausible_temperature_celsius(151.0));
         assert!(!plausible_temperature_celsius(f32::NAN));
         assert!(!plausible_temperature_celsius(f32::INFINITY));
+    }
+
+    #[test]
+    fn power_sanity_rejects_smc_sentinel_values() {
+        assert!(plausible_power_reading(8.5, &PowerUnit::Watts));
+        assert!(plausible_power_reading(12.1, &PowerUnit::Volts));
+        assert!(plausible_power_reading(0.42, &PowerUnit::Amps));
+        assert!(!plausible_power_reading(1.0e-28, &PowerUnit::Volts));
+        assert!(!plausible_power_reading(0.0, &PowerUnit::Watts));
+        assert!(!plausible_power_reading(f32::NAN, &PowerUnit::Watts));
+        assert!(!plausible_power_reading(501.0, &PowerUnit::Watts));
     }
 }
