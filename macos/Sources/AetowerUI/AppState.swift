@@ -1855,8 +1855,9 @@ public final class AppState {
         // The per-payload byte-count walk only feeds the Diagnostics tab and
         // telemetry mirror; skip it when neither is watching.
         let collectPayloadDiagnostics = diagnosticsVisible || telemetryEnabled
-        let fetchFullSnapshot = force
+        let publishFullSnapshot = force
             || !fullSnapshotDemandTokens.isEmpty
+        let fetchEvaluatorSnapshot = force
             || ticksSinceFullSnapshot >= fullSnapshotFloorTicks
         let worker = snapshotRefreshWorker
         refreshFetchTask = Task(priority: .utility) { [weak self] in
@@ -1865,7 +1866,8 @@ public final class AppState {
                     force: force,
                     includeOperatorState: includeOperatorState,
                     collectPayloadDiagnostics: collectPayloadDiagnostics,
-                    fetchFullSnapshot: fetchFullSnapshot
+                    publishFullSnapshot: publishFullSnapshot,
+                    fetchEvaluatorSnapshot: fetchEvaluatorSnapshot
                 )
                 let wasCancelled = Task.isCancelled
                 await MainActor.run {
@@ -1930,13 +1932,16 @@ public final class AppState {
             let publishStartedAt = CFAbsoluteTimeGetCurrent()
             if let refreshedSnapshot = payload.snapshot {
                 snapshot = refreshedSnapshot
-                publishSnapshotSlices(refreshedSnapshot)
+                publishSnapshotSlices(refreshedSnapshot, publishHotSlices: true)
                 lastObservedSequence = refreshedSnapshot.sequence
                 ticksSinceFullSnapshot = 0
                 applyLocalFrontmostState(
                     appName: lastPublishedFrontmostAppName,
                     windowTitle: lastPublishedWindowTitle
                 )
+            } else if let evaluatorSnapshot = payload.evaluatorSnapshot {
+                publishSnapshotSlices(evaluatorSnapshot, publishHotSlices: false)
+                ticksSinceFullSnapshot = 0
             } else {
                 ticksSinceFullSnapshot += 1
             }
@@ -1948,15 +1953,15 @@ public final class AppState {
                 localMcpController.refreshHealthSnapshot()
                 refreshRepositoryInventorySignalsIfQuiescent()
                 refreshStorageEstimateIfQuiescent()
-                if let refreshedSnapshot = payload.snapshot {
+                if let refreshedSnapshot = payload.snapshot ?? payload.evaluatorSnapshot {
                     pruneOnDemandReportCaches(snapshot: refreshedSnapshot)
                 }
             }
 
-            if let refreshedSnapshot = payload.snapshot {
-                evaluateAutomationRules(snapshot: refreshedSnapshot)
-                evaluateAgentBudgetRules(snapshot: refreshedSnapshot)
-                evaluateTimelineNotifications(snapshot: refreshedSnapshot)
+            if let evaluatorInput = payload.snapshot ?? payload.evaluatorSnapshot {
+                evaluateAutomationRules(snapshot: evaluatorInput)
+                evaluateAgentBudgetRules(snapshot: evaluatorInput)
+                evaluateTimelineNotifications(snapshot: evaluatorInput)
             }
 
             if lagMonitoringActive, let refreshedSnapshot = payload.snapshot {
@@ -1975,8 +1980,8 @@ public final class AppState {
                     renderPublishMillis: renderPublishMillis
                 )
             }
-            if payload.snapshot != nil {
-                diffAnomalyStates()
+            if let evaluatorInput = payload.snapshot ?? payload.evaluatorSnapshot {
+                diffAnomalyStates(snapshot: evaluatorInput)
                 flushSuppressedAnomalySummaryIfNeeded()
             }
             lastError = nil
@@ -5218,12 +5223,14 @@ public final class AppState {
     /// slices change every engine tick, so a deep == there would be an O(n)
     /// walk that almost always fails; rare-change slices are equality-gated,
     /// which is where the invalidation pruning comes from.
-    func publishSnapshotSlices(_ snapshot: SystemSnapshot) {
-        hostState = snapshot.host
-        hostTrendState = snapshot.hostTrend
-        entitiesState = snapshot.entities
-        snapshotSequence = snapshot.sequence
-        snapshotCapturedAtMillis = snapshot.capturedAtMillis
+    func publishSnapshotSlices(_ snapshot: SystemSnapshot, publishHotSlices: Bool = true) {
+        if publishHotSlices {
+            hostState = snapshot.host
+            hostTrendState = snapshot.hostTrend
+            entitiesState = snapshot.entities
+            snapshotSequence = snapshot.sequence
+            snapshotCapturedAtMillis = snapshot.capturedAtMillis
+        }
         let sensorPayload = SensorDashboardPayload(snapshot: snapshot)
         if sensorDashboardPayload != sensorPayload {
             sensorDashboardPayload = sensorPayload
@@ -5269,7 +5276,7 @@ public final class AppState {
         hostState.frontmostWindowTitle = windowTitle
     }
 
-    private func diffAnomalyStates() {
+    private func diffAnomalyStates(snapshot: SystemSnapshot) {
         var newStates: [String: Bool] = [:]
         for entity in snapshot.entities {
             let notificationKey = anomalyNotificationKey(for: entity)

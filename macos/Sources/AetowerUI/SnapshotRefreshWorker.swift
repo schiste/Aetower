@@ -9,12 +9,14 @@ private enum MonitorUiPayloadSizing {
 
 actor SnapshotRefreshWorker {
     private let bridge: EngineBridge
-    private var lastObservedSequence: UInt64
+    private var lastPublishedSnapshotSequence: UInt64
+    private var lastEvaluatorSnapshotSequence: UInt64
     private var lastMonitorUiSequence: UInt64
 
     init(bridge: EngineBridge, initialSequence: UInt64) {
         self.bridge = bridge
-        self.lastObservedSequence = initialSequence
+        self.lastPublishedSnapshotSequence = initialSequence
+        self.lastEvaluatorSnapshotSequence = initialSequence
         self.lastMonitorUiSequence = initialSequence
     }
 
@@ -22,24 +24,36 @@ actor SnapshotRefreshWorker {
         force: Bool,
         includeOperatorState: Bool,
         collectPayloadDiagnostics: Bool = true,
-        fetchFullSnapshot: Bool = true,
+        publishFullSnapshot: Bool = true,
+        fetchEvaluatorSnapshot: Bool = true,
         monitorSelectedEntityId: String? = nil,
         monitorProcessLimit: UInt32 = 160,
         monitorTrendPoints: UInt32 = MonitorUiPayloadSizing.graphPointCount
     ) throws -> SnapshotRefreshResult {
         let fetchStartedAt = CFAbsoluteTimeGetCurrent()
         // The full SystemSnapshot is the expensive deep FFI decode (every
-        // entity, component, connection, badge). It is demand-gated: the
-        // compact Monitor payload below is fetched independently every tick.
+        // entity, component, connection, badge). UI publication and evaluator
+        // refresh are separately gated so automation can stay fresh without
+        // forcing a broad SwiftUI invalidation.
         var refreshedSnapshot: SystemSnapshot?
-        if fetchFullSnapshot || force {
-            if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastObservedSequence) {
+        var evaluatorSnapshot: SystemSnapshot?
+        if publishFullSnapshot || force {
+            if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastPublishedSnapshotSequence) {
                 refreshedSnapshot = updatedSnapshot
             } else if force {
                 refreshedSnapshot = try bridge.latestSnapshot()
             }
             if let refreshedSnapshot {
-                lastObservedSequence = refreshedSnapshot.sequence
+                lastPublishedSnapshotSequence = refreshedSnapshot.sequence
+                if refreshedSnapshot.sequence > lastEvaluatorSnapshotSequence {
+                    evaluatorSnapshot = refreshedSnapshot
+                    lastEvaluatorSnapshotSequence = refreshedSnapshot.sequence
+                }
+            }
+        } else if fetchEvaluatorSnapshot {
+            if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastEvaluatorSnapshotSequence) {
+                evaluatorSnapshot = updatedSnapshot
+                lastEvaluatorSnapshotSequence = updatedSnapshot.sequence
             }
         }
 
@@ -52,7 +66,7 @@ actor SnapshotRefreshWorker {
             collectPayloadDiagnostics: collectPayloadDiagnostics
         )
 
-        if refreshedSnapshot == nil, monitorPayload == nil, !includeOperatorState {
+        if refreshedSnapshot == nil, evaluatorSnapshot == nil, monitorPayload == nil, !includeOperatorState {
             return .noChange
         }
 
@@ -64,6 +78,7 @@ actor SnapshotRefreshWorker {
                     startMillis: 0,
                     endMillis: max(
                         refreshedSnapshot?.capturedAtMillis ?? 0,
+                        evaluatorSnapshot?.capturedAtMillis ?? 0,
                         UInt64(Date().timeIntervalSince1970 * 1000)
                     )
                 )
@@ -72,6 +87,7 @@ actor SnapshotRefreshWorker {
 
         return .updated(SnapshotRefreshPayload(
             snapshot: refreshedSnapshot,
+            evaluatorSnapshot: evaluatorSnapshot,
             runtimeLagMetrics: runtimeLagMetrics,
             operatorState: operatorState,
             monitorPayload: monitorPayload,
@@ -163,6 +179,10 @@ struct SnapshotRefreshPayload: Sendable {
     /// nil when the full snapshot was not demanded this tick (monitor-only
     /// refresh) or when the engine sequence has not advanced.
     let snapshot: SystemSnapshot?
+    /// nil when no evaluator/rare-slice refresh was due. This snapshot is not
+    /// assigned to `AppState.snapshot`; it feeds automation and low-frequency
+    /// page projections without broad UI invalidation.
+    let evaluatorSnapshot: SystemSnapshot?
     let runtimeLagMetrics: RuntimeLagMetrics
     let operatorState: SnapshotOperatorRefreshPayload?
     let monitorPayload: MonitorUiRefreshPayload?

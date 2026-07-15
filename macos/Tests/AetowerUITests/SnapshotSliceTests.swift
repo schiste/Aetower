@@ -105,4 +105,26 @@ final class SnapshotSliceTests: XCTestCase {
         state.publishSnapshotSlices(snapshot(sequence: 2, cpuPercent: 10))
         XCTAssertTrue(hostInvalidated.value, "host slice must republish per tick")
     }
+
+    func testPassiveSnapshotUpdatesRareSlicesWithoutHotPublication() {
+        let state = makeState()
+        state.publishSnapshotSlices(snapshot(sequence: 1, cpuPercent: 10, timeline: [timelineEvent(id: "a")]))
+
+        let hostInvalidated = InvalidationFlag()
+        withObservationTracking {
+            _ = state.hostState
+        } onChange: {
+            hostInvalidated.raise()
+        }
+
+        state.publishSnapshotSlices(
+            snapshot(sequence: 2, cpuPercent: 50, timeline: [timelineEvent(id: "a"), timelineEvent(id: "b")]),
+            publishHotSlices: false
+        )
+
+        XCTAssertEqual(state.snapshotSequence, 1)
+        XCTAssertEqual(state.hostState.cpuPercent, 10)
+        XCTAssertEqual(state.timelineState.count, 2)
+        XCTAssertFalse(hostInvalidated.value, "passive evaluator snapshots must not republish hot host state")
+    }
 }
