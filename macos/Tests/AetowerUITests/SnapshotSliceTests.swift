@@ -5,8 +5,9 @@ import AetowerBridge
 @testable import AetowerUI
 
 /// Proves the change-gating contract of AppState's snapshot slices: hot
-/// slices republish every tick, while rare-change slices are only reassigned
-/// (and therefore only invalidate their observers) when content changed.
+/// slices publish only when material values move, while rare-change slices are
+/// only reassigned (and therefore only invalidate their observers) when content
+/// changed.
 /// Sendable flag for observing invalidation from the @Sendable onChange closure.
 private final class InvalidationFlag: @unchecked Sendable {
     private let lock = NSLock()
@@ -91,7 +92,7 @@ final class SnapshotSliceTests: XCTestCase {
         XCTAssertEqual(state.timelineState.count, 2)
     }
 
-    func testHotSlicesRepublishEveryTick() {
+    func testHotSlicesRepublishWhenMaterialValuesMove() {
         let state = makeState()
         state.publishSnapshotSlices(snapshot(sequence: 1))
 
@@ -103,7 +104,24 @@ final class SnapshotSliceTests: XCTestCase {
         }
 
         state.publishSnapshotSlices(snapshot(sequence: 2, cpuPercent: 10))
-        XCTAssertTrue(hostInvalidated.value, "host slice must republish per tick")
+        XCTAssertTrue(hostInvalidated.value, "host slice must republish when material values move")
+    }
+
+    func testHotSlicesSkipWhenOnlySequenceMoves() {
+        let state = makeState()
+        state.publishSnapshotSlices(snapshot(sequence: 1, cpuPercent: 10))
+
+        let hostInvalidated = InvalidationFlag()
+        withObservationTracking {
+            _ = state.hostState
+        } onChange: {
+            hostInvalidated.raise()
+        }
+
+        state.publishSnapshotSlices(snapshot(sequence: 2, cpuPercent: 10))
+        XCTAssertFalse(hostInvalidated.value, "host slice must stay quiet when material values are unchanged")
+        XCTAssertEqual(state.snapshotSequence, 1)
+        XCTAssertEqual(state.hostState.cpuPercent, 10)
     }
 
     func testPassiveSnapshotUpdatesRareSlicesWithoutHotPublication() {

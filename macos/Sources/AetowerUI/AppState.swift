@@ -812,6 +812,8 @@ public final class AppState {
     private let operatorStateRefreshInterval: TimeInterval = 30.0
     @ObservationIgnored
     private let entityStaticAnalysisReloadInterval: TimeInterval = 15.0
+    @ObservationIgnored
+    private var lastPublishedHotSliceSignature: SnapshotHotSliceSignature?
 
     public init(
         bridge: EngineBridge = EngineBridge(),
@@ -1877,7 +1879,8 @@ public final class AppState {
                     } else {
                         self.applySnapshotRefreshResult(
                             result,
-                            refreshStartedAt: refreshStartedAt
+                            refreshStartedAt: refreshStartedAt,
+                            force: force
                         )
                     }
                 }
@@ -1916,7 +1919,8 @@ public final class AppState {
 
     private func applySnapshotRefreshResult(
         _ result: SnapshotRefreshResult,
-        refreshStartedAt: CFAbsoluteTime
+        refreshStartedAt: CFAbsoluteTime,
+        force: Bool
     ) {
         switch result {
         case .noChange:
@@ -1931,14 +1935,22 @@ public final class AppState {
             let monitorDecodeMillis = (CFAbsoluteTimeGetCurrent() - decodeStartedAt) * 1000.0
             let publishStartedAt = CFAbsoluteTimeGetCurrent()
             if let refreshedSnapshot = payload.snapshot {
-                snapshot = refreshedSnapshot
-                publishSnapshotSlices(refreshedSnapshot, publishHotSlices: true)
+                let didPublishHotSlices = publishSnapshotSlices(
+                    refreshedSnapshot,
+                    publishHotSlices: true,
+                    forceHotPublication: force
+                )
+                if didPublishHotSlices {
+                    snapshot = refreshedSnapshot
+                }
                 lastObservedSequence = refreshedSnapshot.sequence
                 ticksSinceFullSnapshot = 0
-                applyLocalFrontmostState(
-                    appName: lastPublishedFrontmostAppName,
-                    windowTitle: lastPublishedWindowTitle
-                )
+                if didPublishHotSlices {
+                    applyLocalFrontmostState(
+                        appName: lastPublishedFrontmostAppName,
+                        windowTitle: lastPublishedWindowTitle
+                    )
+                }
             } else if let evaluatorSnapshot = payload.evaluatorSnapshot {
                 publishSnapshotSlices(evaluatorSnapshot, publishHotSlices: false)
                 ticksSinceFullSnapshot = 0
@@ -5220,11 +5232,18 @@ public final class AppState {
     }
 
     /// Publish the per-slice projections of a freshly-applied snapshot. Hot
-    /// slices change every engine tick, so a deep == there would be an O(n)
-    /// walk that almost always fails; rare-change slices are equality-gated,
-    /// which is where the invalidation pruning comes from.
-    func publishSnapshotSlices(_ snapshot: SystemSnapshot, publishHotSlices: Bool = true) {
-        if publishHotSlices {
+    /// slices are material-signature gated before this method is called, while
+    /// rare/page-specific slices are equality-gated here to prune invalidation
+    /// for views that do not need every process-row wobble.
+    @discardableResult
+    func publishSnapshotSlices(
+        _ snapshot: SystemSnapshot,
+        publishHotSlices: Bool = true,
+        forceHotPublication: Bool = false
+    ) -> Bool {
+        let didPublishHotSlices = publishHotSlices
+            && shouldPublishHotSlices(snapshot, force: forceHotPublication)
+        if didPublishHotSlices {
             hostState = snapshot.host
             hostTrendState = snapshot.hostTrend
             entitiesState = snapshot.entities
@@ -5262,6 +5281,16 @@ public final class AppState {
         if thermalForecastState != snapshot.thermalForecast {
             thermalForecastState = snapshot.thermalForecast
         }
+        return didPublishHotSlices
+    }
+
+    private func shouldPublishHotSlices(_ snapshot: SystemSnapshot, force: Bool) -> Bool {
+        let signature = SnapshotHotSliceSignature(snapshot: snapshot)
+        defer { lastPublishedHotSliceSignature = signature }
+        guard !force, let previous = lastPublishedHotSliceSignature else {
+            return true
+        }
+        return previous != signature
     }
 
     private func applyLocalFrontmostState(appName: String?, windowTitle: String?) {

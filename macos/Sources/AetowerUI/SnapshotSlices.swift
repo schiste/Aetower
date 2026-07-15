@@ -107,6 +107,92 @@ struct SensorDashboardPayload: Equatable, Sendable {
     }
 }
 
+struct SnapshotHotSliceSignature: Equatable {
+    let hostDigest: Int
+    let entityDigest: Int
+    let entityCount: Int
+
+    init(snapshot: SystemSnapshot) {
+        self.hostDigest = Self.digestHost(snapshot.host)
+        self.entityDigest = Self.digestEntities(snapshot.entities)
+        self.entityCount = snapshot.entities.count
+    }
+
+    private static func digestHost(_ host: HostSnapshot) -> Int {
+        var hasher = Hasher()
+        hasher.combine(bucket(host.cpuPercent, scale: 2))
+        hasher.combine(bytesBucket(host.memoryUsedBytes))
+        hasher.combine(bytesBucket(host.compressedMemoryBytes))
+        hasher.combine(bytesBucket(host.swapUsedBytes))
+        hasher.combine(bytesBucket(host.diskReadBps, quantum: 512 * 1_024))
+        hasher.combine(bytesBucket(host.diskWriteBps, quantum: 512 * 1_024))
+        hasher.combine(bytesBucket(host.networkReceiveBps, quantum: 512 * 1_024))
+        hasher.combine(bytesBucket(host.networkSendBps, quantum: 512 * 1_024))
+        hasher.combine(bucket(host.wakeupsPerSecond, scale: 1))
+        hasher.combine(host.thermalState)
+        hasher.combine(host.onBattery)
+        hasher.combine(host.lowPowerMode)
+        hasher.combine(host.frontmostAppName)
+        hasher.combine(host.frontmostWindowTitle)
+        hasher.combine(bucket(host.aiAgentFriction, scale: 2))
+        hasher.combine(host.aiAgentCount)
+        hasher.combine(bucket(host.gpuPercent, scale: 2))
+        hasher.combine(bytesBucket(host.gpuMemoryBytes))
+        hasher.combine(host.fans.count)
+        hasher.combine(host.cpuTemperatures.count)
+        hasher.combine(host.powerReadings.count)
+        hasher.combine(host.disks.count)
+        hasher.combine(host.bluetoothDevices.count)
+        hasher.combine(host.perCoreCpu.count)
+        return hasher.finalize()
+    }
+
+    private static func digestEntities(_ entities: [EntitySnapshot]) -> Int {
+        var hasher = Hasher()
+        for entity in entities {
+            hasher.combine(entity.entityId)
+            hasher.combine(entity.displayName)
+            hasher.combine(entity.entityKind)
+            hasher.combine(bucket(entity.metrics.cpuPercent, scale: 2))
+            hasher.combine(bytesBucket(entity.metrics.memoryResidentBytes))
+            hasher.combine(bytesBucket(entity.metrics.memoryPhysicalFootprintBytes))
+            hasher.combine(bytesBucket(entity.metrics.diskReadBps, quantum: 512 * 1_024))
+            hasher.combine(bytesBucket(entity.metrics.diskWriteBps, quantum: 512 * 1_024))
+            hasher.combine(bytesBucket(entity.metrics.networkReceiveBps, quantum: 512 * 1_024))
+            hasher.combine(bytesBucket(entity.metrics.networkSendBps, quantum: 512 * 1_024))
+            hasher.combine(bucket(entity.metrics.wakeupsPerSecond, scale: 1))
+            hasher.combine(bucket(Float(entity.metrics.energyNjPerS / 1_000_000_000), scale: 2))
+            hasher.combine(bucket(entity.metrics.estimatedGpuPercent, scale: 2))
+            hasher.combine(entity.metrics.processCount)
+            hasher.combine(entity.metrics.threadCount)
+            hasher.combine(entity.metrics.isForeground)
+            hasher.combine(bucket(entity.friction.totalScore, scale: 2))
+            hasher.combine(entity.components.count)
+            hasher.combine(entity.processLineage.count)
+            hasher.combine(entity.badges)
+            hasher.combine(entity.activeWindowTitle)
+            hasher.combine(entity.recentChangeSummary)
+            hasher.combine(entity.anomalyDetected)
+            hasher.combine(entity.groupingSuggestion)
+            hasher.combine(entity.sessionMarkers.count)
+            hasher.combine(entity.recommendations.count)
+            hasher.combine(entity.networkConnections.count)
+            hasher.combine(entity.signingClassification)
+            hasher.combine(entity.isAdhoc)
+            hasher.combine(entity.appVersion)
+        }
+        return hasher.finalize()
+    }
+
+    private static func bucket(_ value: Float, scale: Float) -> Int {
+        Int((value * scale).rounded())
+    }
+
+    private static func bytesBucket(_ bytes: UInt64, quantum: UInt64 = 1_024 * 1_024) -> UInt64 {
+        bytes / max(1, quantum)
+    }
+}
+
 /// Marks a view as a consumer of the full SystemSnapshot decode. While at
 /// least one such view is on screen, AppState fetches the full snapshot every
 /// tick; otherwise the expensive FFI decode drops to the evaluator floor
