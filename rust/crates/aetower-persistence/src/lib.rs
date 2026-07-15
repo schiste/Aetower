@@ -913,15 +913,16 @@ impl HistoryStore {
         // when `auto_vacuum=INCREMENTAL` is active (set by the migration in
         // `configure_connection`). It is a documented no-op when the database
         // is still in legacy `auto_vacuum=NONE` mode, so the call is safe to
-        // include unconditionally during the transition window. Running it on
-        // every maintenance pass keeps the on-disk freelist small enough that
-        // the heavier `VACUUM` gate below almost never fires after the initial
-        // migration.
-        let checkpoint_cancelled = self.execute_batch_cancellable(
-            "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize; PRAGMA incremental_vacuum;",
-            cancel,
-            "checkpoint history store",
-        )?;
+        // include during aggressive maintenance. Non-aggressive passes use a
+        // passive checkpoint so small background WAL cleanup does not truncate
+        // the file or run vacuum work while the UI is starting.
+        let checkpoint_sql = if aggressive {
+            "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize; PRAGMA incremental_vacuum;"
+        } else {
+            "PRAGMA wal_checkpoint(PASSIVE); PRAGMA optimize;"
+        };
+        let checkpoint_cancelled =
+            self.execute_batch_cancellable(checkpoint_sql, cancel, "checkpoint history store")?;
         if checkpoint_cancelled {
             let (store_bytes_after, wal_bytes_after) = self.store_file_sizes();
             return Ok(cancelled_maintenance_report(
@@ -1098,7 +1099,7 @@ impl HistoryStore {
         let hard_pressure = store_bytes_before >= policy.hard_max_store_bytes
             || snapshot_count > policy.hard_max_snapshot_count
             || quarantine_count > policy.hard_max_quarantine_rows;
-        let wal_checkpoint_due = wal_bytes_before > 0;
+        let wal_checkpoint_due = history_wal_checkpoint_due(wal_bytes_before, &policy);
         if pruned_rows == 0 && !threshold_aggressive && !hard_pressure && !wal_checkpoint_due {
             return Ok(HistoryMaintenanceReport {
                 store_bytes_before,
@@ -1562,6 +1563,10 @@ fn file_modified_millis(path: &Path) -> Option<u64> {
         .and_then(|meta| meta.modified().ok())
         .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+}
+
+fn history_wal_checkpoint_due(wal_bytes: u64, policy: &HistoryRetentionPolicy) -> bool {
+    wal_bytes >= (policy.max_wal_bytes / 2).max(1)
 }
 
 fn cancelled_maintenance_report(
@@ -2905,7 +2910,7 @@ mod tests {
     }
 
     #[test]
-    fn maintain_with_policy_checkpoints_nonempty_wal_without_prune() {
+    fn maintain_with_policy_tolerates_small_wal_without_prune() {
         let path = temp_db();
         let store =
             HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
@@ -2936,12 +2941,71 @@ mod tests {
             .unwrap_or_else(|error| panic!("maintain_with_policy: {error}"));
 
         assert!(!report.cancelled);
+        assert!(!report.checkpointed);
+        assert!(!report.vacuumed);
+        assert_eq!(report.pruned_rows, 0);
+        assert_eq!(report.wal_bytes_after, wal_bytes_before);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn maintain_with_policy_checkpoints_wal_at_policy_budget_without_prune() {
+        let path = temp_db();
+        let store =
+            HistoryStore::open(&path, 1).unwrap_or_else(|error| panic!("open store: {error}"));
+        store
+            .conn
+            .execute("CREATE TABLE wal_pressure(value INTEGER)", [])
+            .unwrap_or_else(|error| panic!("create wal pressure table: {error}"));
+        store
+            .conn
+            .execute("INSERT INTO wal_pressure(value) VALUES (1)", [])
+            .unwrap_or_else(|error| panic!("insert wal pressure row: {error}"));
+        let (_, wal_bytes_before) = store.store_file_sizes();
+        assert!(wal_bytes_before > 0, "test setup did not create a WAL");
+
+        let report = store
+            .maintain_with_policy(HistoryRetentionPolicy {
+                max_age_millis: u64::MAX,
+                emergency_max_age_millis: u64::MAX,
+                soft_max_store_bytes: u64::MAX,
+                hard_max_store_bytes: u64::MAX,
+                max_wal_bytes: wal_bytes_before,
+                target_snapshot_count: u64::MAX,
+                soft_max_snapshot_count: u64::MAX,
+                hard_max_snapshot_count: u64::MAX,
+                aggressive_quarantine_rows: u64::MAX,
+                hard_max_quarantine_rows: u64::MAX,
+            })
+            .unwrap_or_else(|error| panic!("maintain_with_policy: {error}"));
+
+        assert!(!report.cancelled);
         assert!(report.checkpointed);
         assert!(!report.vacuumed);
         assert_eq!(report.pruned_rows, 0);
         assert!(report.wal_bytes_after < wal_bytes_before);
 
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn history_wal_checkpoint_due_requires_half_budget() {
+        let policy = HistoryRetentionPolicy {
+            max_age_millis: u64::MAX,
+            emergency_max_age_millis: u64::MAX,
+            soft_max_store_bytes: u64::MAX,
+            hard_max_store_bytes: u64::MAX,
+            max_wal_bytes: 100,
+            target_snapshot_count: u64::MAX,
+            soft_max_snapshot_count: u64::MAX,
+            hard_max_snapshot_count: u64::MAX,
+            aggressive_quarantine_rows: u64::MAX,
+            hard_max_quarantine_rows: u64::MAX,
+        };
+
+        assert!(!history_wal_checkpoint_due(49, &policy));
+        assert!(history_wal_checkpoint_due(50, &policy));
     }
 
     #[test]

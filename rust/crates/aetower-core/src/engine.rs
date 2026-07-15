@@ -38,7 +38,7 @@ use crate::{
 
 const ADAPTER_IDLE_SLEEP: Duration = Duration::from_secs(5);
 const TELEMETRY_DISABLED_SLEEP: Duration = Duration::from_secs(30);
-const HISTORY_MAINTENANCE_INITIAL_DELAY: Duration = Duration::from_secs(45);
+const HISTORY_MAINTENANCE_INITIAL_DELAY: Duration = Duration::from_secs(5 * 60);
 const HISTORY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const HISTORY_MAINTENANCE_BUSY_DEFER_INTERVAL: Duration = Duration::from_secs(2 * 60);
 const HISTORY_MAINTENANCE_DEFER_LOG_INTERVAL_MILLIS: u64 = 15 * 60 * 1000;
