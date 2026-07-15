@@ -1,5 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    io::Read,
+    process::{Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -101,7 +103,8 @@ const NANOWATTS_PER_WATT: f64 = 1_000_000_000.0;
 const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
 const MCP_HELPER_REAP_RETRY_MILLIS: u64 = 60 * 1000;
 const MCP_HELPER_LIFECYCLE_AGE_BUCKET_MILLIS: u64 = 15 * 60 * 1000;
-const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 90 * 60 * 1000;
+const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 15 * 60 * 1000;
+const SYSTEM_MARKER_LOG_SHOW_TIMEOUT: Duration = Duration::from_secs(4);
 const DIAGNOSTIC_REPORT_MARKER_LOOKBACK_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
 const SYSTEM_MARKER_MIN_LOG_SHOW_LOOKBACK_MILLIS: u64 = 60 * 1000;
 const SYSTEM_MARKER_PREDICATE: &str = "(eventMessage CONTAINS[c] \"Previous shutdown cause\") OR (eventMessage CONTAINS[c] \"Entering Sleep state\") OR (eventMessage CONTAINS[c] \"Wake reason\") OR (eventMessage CONTAINS[c] \"panic(cpu\") OR (eventMessage CONTAINS[c] \"userspace watchdog timeout\") OR (eventMessage CONTAINS[c] \"thermal pressure\") OR (eventMessage CONTAINS[c] \"low power mode\")";
@@ -3013,22 +3016,11 @@ fn system_marker_worker_is_current(
 
 fn load_recent_system_markers(since_millis: u64) -> Vec<SystemMarker> {
     let last_arg = unified_log_last_arg(since_millis);
-    let output = match std::process::Command::new("/usr/bin/log")
-        .args([
-            "show",
-            "--style",
-            "json",
-            "--last",
-            last_arg.as_str(),
-            "--predicate",
-            SYSTEM_MARKER_PREDICATE,
-        ])
-        .output()
-    {
-        Ok(output) if output.status.success() => output,
-        _ => return Vec::new(),
+    let stdout = match run_unified_log_show(&last_arg) {
+        Some(stdout) => stdout,
+        None => return Vec::new(),
     };
-    let stdout = match String::from_utf8(output.stdout) {
+    let stdout = match String::from_utf8(stdout) {
         Ok(stdout) => stdout,
         Err(_) => return Vec::new(),
     };
@@ -3048,6 +3040,53 @@ fn load_recent_system_markers(since_millis: u64) -> Vec<SystemMarker> {
             && left.detail == right.detail
     });
     markers
+}
+
+fn run_unified_log_show(last_arg: &str) -> Option<Vec<u8>> {
+    let mut child = Command::new("/usr/bin/log")
+        .args([
+            "show",
+            "--style",
+            "json",
+            "--last",
+            last_arg,
+            "--predicate",
+            SYSTEM_MARKER_PREDICATE,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let mut stdout = child.stdout.take()?;
+    let reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes);
+        bytes
+    });
+
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let bytes = reader.join().ok()?;
+                return status.success().then_some(bytes);
+            }
+            Ok(None) if started.elapsed() >= SYSTEM_MARKER_LOG_SHOW_TIMEOUT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return None;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return None;
+            }
+        }
+    }
 }
 
 fn classify_system_marker(entry: UnifiedLogEntry) -> Option<SystemMarker> {
@@ -3687,7 +3726,7 @@ mod tests {
     fn caps_unified_log_lookback_for_system_marker_scan() {
         assert_eq!(unified_log_last_arg_for_elapsed(1), "1m");
         assert_eq!(unified_log_last_arg_for_elapsed(10 * 60 * 1000), "10m");
-        assert_eq!(unified_log_last_arg_for_elapsed(12 * 60 * 60 * 1000), "90m");
+        assert_eq!(unified_log_last_arg_for_elapsed(12 * 60 * 60 * 1000), "15m");
     }
 
     #[test]
