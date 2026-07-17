@@ -187,7 +187,7 @@ private struct RowSignalBadge: View {
     let isHighlighted: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
             if let valueText {
                 Text(valueText)
                     .font(.caption.weight(.semibold))
@@ -276,6 +276,9 @@ public struct MainListView: View {
     @State private var quickStopSubmission: SidePanelQuickStopSubmission?
     @State private var advancedFilterText = ""
     @State private var showAdvancedFilter = false
+    @State private var sidePanelWhyExpanded = false
+    @State private var sidePanelMembersExpanded = false
+    @State private var sidePanelWatchExpanded = false
     @StateObject private var processOriginCacheStore = ProcessOriginSnapshotCacheStore()
     @StateObject private var monitorSectionCacheStore = MonitorEntitySectionCacheStore()
     @StateObject private var monitorGroupRowCacheStore = MonitorGroupRowCacheStore()
@@ -597,13 +600,13 @@ public struct MainListView: View {
                         processTreeEntities: processTreeEntities
                     )
 
-                    sidePanelWhy(entity)
-
                     sidePanelMembers(
                         entity: entity,
                         processTreeEntities: processTreeEntities,
                         browserTabs: browserTabs
                     )
+
+                    sidePanelWhy(entity)
 
                     sidePanelWatch(entity)
                 }
@@ -612,6 +615,7 @@ public struct MainListView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .animation(nil, value: state.snapshotSequence)
     }
 
     private func sidePanelSection<Content: View>(
@@ -637,6 +641,34 @@ public struct MainListView: View {
 
             content()
         }
+    }
+
+    private func sidePanelDisclosureSection<Content: View>(
+        _ title: String,
+        systemImage: String,
+        badge: String? = nil,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        DisclosureGroup(isExpanded: isExpanded) {
+            content()
+                .padding(.top, AetowerDesign.Spacing.xs)
+        } label: {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Label(title, systemImage: systemImage)
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                if let badge {
+                    AetowerBadge(
+                        badge,
+                        tone: AetowerDesign.Status.neutral,
+                        style: .outline
+                    )
+                }
+                Spacer(minLength: AetowerDesign.Spacing.xs)
+            }
+        }
+        .disclosureGroupStyle(.automatic)
     }
 
     private func sidePanelCurrentRead(
@@ -707,10 +739,11 @@ public struct MainListView: View {
     }
 
     private func sidePanelWhy(_ entity: EntitySnapshot) -> some View {
-        sidePanelSection(
+        sidePanelDisclosureSection(
             "Why",
             systemImage: "questionmark.circle",
-            badge: sidePanelFrictionTrendBadge(for: entity)
+            badge: sidePanelFrictionTrendBadge(for: entity),
+            isExpanded: $sidePanelWhyExpanded
         ) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 SidePanelSignalLine(
@@ -797,14 +830,19 @@ public struct MainListView: View {
         let componentCount = processTreeEntities.reduce(0) { $0 + $1.components.count }
         let memberBadge = "\(sidePanelLiveProcessCount(processTreeEntities)) PIDs"
 
-        return sidePanelSection("Members", systemImage: "list.bullet.indent", badge: memberBadge) {
+        return sidePanelDisclosureSection(
+            "Members",
+            systemImage: "list.bullet.indent",
+            badge: memberBadge,
+            isExpanded: $sidePanelMembersExpanded
+        ) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 if processTreeEntities.count > 1 {
                     SidePanelSignalLine(
                         icon: "square.stack.3d.up",
                         tone: AetowerDesign.Tone.cpu,
                         title: "\(processTreeEntities.count) grouped entities",
-                        detail: "Members are ordered with the current Monitor sort: \(sortKey.title)."
+                        detail: "\(sortKey.title) order"
                     )
                 }
 
@@ -878,7 +916,12 @@ public struct MainListView: View {
     }
 
     private func sidePanelWatch(_ entity: EntitySnapshot) -> some View {
-        sidePanelSection("Watch", systemImage: "bell.badge", badge: sidePanelWatchBadge(for: entity)) {
+        sidePanelDisclosureSection(
+            "Watch",
+            systemImage: "bell.badge",
+            badge: sidePanelWatchBadge(for: entity),
+            isExpanded: $sidePanelWatchExpanded
+        ) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 if let bundleId = entity.bundleId, !bundleId.isEmpty {
                     SidePanelSignalLine(
@@ -1159,30 +1202,23 @@ public struct MainListView: View {
         _ origin: ProcessOriginSummary,
         processTreeEntities: [EntitySnapshot]
     ) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
-                Label("Attribution", systemImage: "point.3.connected.trianglepath.dotted")
-                    .font(AetowerDesign.Typography.caption.weight(.semibold))
-                    .foregroundStyle(AetowerDesign.Ink.secondary)
-                ProcessOriginChip(summary: origin)
-                Text(origin.subtitle)
-                    .font(AetowerDesign.Typography.caption)
-                    .foregroundStyle(AetowerDesign.Ink.secondary)
-                    .lineLimit(1)
-                Spacer()
-            }
-            ForEach(Array(origin.detailLines.dropFirst().prefix(3)), id: \.self) { line in
-                Text(line)
-                    .font(AetowerDesign.Typography.metadata)
-                    .foregroundStyle(AetowerDesign.Ink.tertiary)
-                    .lineLimit(1)
-            }
+        HStack(spacing: 8) {
+            Label("Attribution", systemImage: "point.3.connected.trianglepath.dotted")
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+            ProcessOriginChip(summary: origin)
+            Text(origin.subtitle)
+                .font(AetowerDesign.Typography.caption)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .lineLimit(1)
             if processTreeEntities.count > 1 {
-                Text("Attribution is aggregated across \(processTreeEntities.count) grouped entities.")
-                    .font(AetowerDesign.Typography.metadata)
-                    .foregroundStyle(AetowerDesign.Ink.tertiary)
-                    .lineLimit(1)
+                AetowerBadge(
+                    "\(processTreeEntities.count) entities",
+                    tone: AetowerDesign.Status.neutral,
+                    style: .outline
+                )
             }
+            Spacer(minLength: AetowerDesign.Spacing.xs)
         }
         .help(origin.detailLines.joined(separator: "\n"))
     }
@@ -1206,7 +1242,7 @@ public struct MainListView: View {
             }
 
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 84), spacing: AetowerDesign.Spacing.xs)],
+                columns: [GridItem(.adaptive(minimum: AetowerDesign.Size.actionTileMinWidth), spacing: AetowerDesign.Spacing.xs)],
                 alignment: .leading,
                 spacing: AetowerDesign.Spacing.xs
             ) {
@@ -1249,11 +1285,23 @@ public struct MainListView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(AetowerDesign.Typography.caption.weight(.semibold))
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                Image(systemName: systemImage)
+                    .font(AetowerDesign.Typography.compactData(size: 12, weight: .semibold))
+                    .frame(width: AetowerDesign.Size.iconSlot)
+                Text(title)
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .lineLimit(1)
+                Spacer(minLength: AetowerDesign.Spacing.xs)
+            }
+            .foregroundStyle(isEnabled ? AetowerDesign.Ink.primary : AetowerDesign.Ink.tertiary)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .aetowerControlChrome(minHeight: AetowerDesign.Size.minTouchTarget)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
         .disabled(!isEnabled)
+        .help(isEnabled ? title : "Target PID is no longer visible.")
     }
 
     private func sidePanelStopButton(
@@ -1265,11 +1313,26 @@ public struct MainListView: View {
         Button(role: action.isDestructive ? .destructive : nil) {
             runSidePanelQuickStop(action, entity: entity, pid: pid)
         } label: {
-            Label(action.label, systemImage: action.systemImage)
-                .font(.caption.weight(.semibold))
+            AetowerSurface(
+                level: action == .forceKill ? .critical : .warning,
+                padding: AetowerDesign.Spacing.none,
+                cornerRadius: AetowerDesign.Radius.sm
+            ) {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Image(systemName: action.systemImage)
+                        .font(AetowerDesign.Typography.compactData(size: 12, weight: .semibold))
+                        .frame(width: AetowerDesign.Size.iconSlot)
+                    Text(action.label)
+                        .font(AetowerDesign.Typography.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: AetowerDesign.Spacing.xs)
+                }
                 .foregroundStyle(action == .forceKill ? AetowerDesign.Status.error : AetowerDesign.Status.warning)
+                .padding(.horizontal, AetowerDesign.Spacing.sm)
+                .frame(maxWidth: .infinity, minHeight: AetowerDesign.Size.minTouchTarget, alignment: .leading)
+            }
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
         .disabled(!targetVisible || state.entityAnalysisIsLoading(processAnalysisKey(pid), kind: .processAction))
         .help(targetVisible ? "Validate the target, send \(action.label.lowercased()), and verify the result." : "Target PID is no longer visible.")
     }
@@ -2606,7 +2669,24 @@ public struct MainListView: View {
 
     private var groupedEntities: [EntityGroup] {
         guard let key = currentGroupingCacheKey else { return [] }
-        return groupedEntitiesCache[key] ?? []
+        if let exact = groupedEntitiesCache[key] {
+            return exact
+        }
+        return latestCompatibleGroupedEntities(for: key)
+    }
+
+    private func latestCompatibleGroupedEntities(for key: GroupingCacheKey) -> [EntityGroup] {
+        groupedEntitiesCache
+            .filter { cachedKey, _ in
+                cachedKey.query == key.query
+                    && cachedKey.originFilter == key.originFilter
+                    && cachedKey.sortKey == key.sortKey
+                    && cachedKey.filterSignature == key.filterSignature
+            }
+            .max { left, right in
+                left.key.sequence < right.key.sequence
+            }
+            .map(\.value) ?? []
     }
 
     private var monitorSections: MonitorEntitySections {
@@ -2815,8 +2895,15 @@ public struct MainListView: View {
         guard !Task.isCancelled else { return }
         guard currentGroupingCacheKey == key else { return }
 
-        groupedEntitiesCache = groupedEntitiesCache
-            .filter { $0.key.sequence == key.sequence }
+        let compatiblePrevious = groupedEntitiesCache.filter { cachedKey, _ in
+            cachedKey.query == key.query
+                && cachedKey.originFilter == key.originFilter
+                && cachedKey.sortKey == key.sortKey
+                && cachedKey.filterSignature == key.filterSignature
+        }
+        let previousSequenceFloor = key.sequence > 0 ? key.sequence - 1 : key.sequence
+        groupedEntitiesCache = compatiblePrevious
+            .filter { $0.key.sequence >= previousSequenceFloor }
         groupedEntitiesCache[key] = groups
         isGrouping = false
 

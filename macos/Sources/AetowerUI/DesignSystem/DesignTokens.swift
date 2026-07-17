@@ -39,6 +39,7 @@ public enum AetowerDesign {
         public static let minTouchTarget: CGFloat = 32
         public static let iconSlot: CGFloat = 24
         public static let sidebarWidth: CGFloat = 188
+        public static let actionTileMinWidth: CGFloat = 116
     }
 
     // MARK: - Typography
