@@ -22,6 +22,7 @@ public struct SettingsView: View {
     /// In-memory integration draft. Values are written to SettingsStore/Keychain
     /// only when the user applies them, so endpoint edits are genuinely staged.
     @State private var integrationDraft = SettingsIntegrationDraft()
+    @State private var browserAttributionState: BrowserAttributionViewState = .notConfigured
 
     public init(state: AppState, settings: SettingsStore, nav: NavigationModel? = nil) {
         self.state = state
@@ -135,6 +136,7 @@ public struct SettingsView: View {
             if appliedIntegrationSnapshot == nil {
                 appliedIntegrationSnapshot = currentIntegrationSnapshot
             }
+            refreshBrowserAttributionStatusIfConfigured()
         }
         .onDisappear {
             focusedField = nil
@@ -344,6 +346,63 @@ public struct SettingsView: View {
 
     private var persistedIntegrationSnapshot: SettingsIntegrationSnapshot {
         SettingsIntegrationSnapshot(settings)
+    }
+
+    private var browserAttributionEndpoint: String {
+        integrationDraft.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var browserAttributionIsBusy: Bool {
+        switch browserAttributionState {
+        case .checking, .launching:
+            return true
+        case .notConfigured, .connected, .failed:
+            return false
+        }
+    }
+
+    private var browserAttributionPrimaryActionTitle: String {
+        switch browserAttributionState {
+        case .launching:
+            return "Opening Chrome..."
+        case .checking:
+            return "Checking..."
+        case .connected:
+            return "Open Dedicated Chrome"
+        case .failed, .notConfigured:
+            return browserAttributionEndpoint.isEmpty ? "Enable Browser Attribution" : "Open Dedicated Chrome"
+        }
+    }
+
+    private var browserAttributionPresentation: (badge: String, color: Color, detail: String) {
+        switch browserAttributionState {
+        case .launching:
+            return ("Opening", AetowerDesign.Status.ready, "Opening a dedicated Chrome profile and waiting for the local debug endpoint.")
+        case .checking:
+            return ("Checking", AetowerDesign.Status.ready, "Testing the configured browser debug endpoint.")
+        case .connected(let summary) where summary.endpoint == browserAttributionEndpoint:
+            let pageLabel = summary.pageTargetCount == 1 ? "tab" : "tabs"
+            return (
+                "Connected",
+                AetowerDesign.Status.success,
+                "Connected to \(summary.pageTargetCount) \(pageLabel) across \(summary.totalTargetCount) debug targets."
+            )
+        case .failed(let message):
+            return ("Attention", AetowerDesign.Status.warning, message)
+        case .connected, .notConfigured:
+            if browserAttributionEndpoint.isEmpty {
+                return (
+                    "Not enabled",
+                    AetowerDesign.Status.neutral,
+                    "Browser tab attribution is off. Use the button above to open a dedicated Chrome window."
+                )
+            }
+            return (
+                "Configured",
+                AetowerDesign.Status.ready,
+                "An endpoint is configured. Test it, or apply the staged settings to use it."
+            )
+        }
     }
 
     private var setupChecklistProgress: (completed: Int, total: Int) {
@@ -1071,6 +1130,7 @@ public struct SettingsView: View {
     @ViewBuilder
     private var integrationsSection: some View {
         let validation = IntegrationValidation(draft: integrationDraft)
+        let browserPresentation = browserAttributionPresentation
         SettingsCard(
             title: "Integration endpoints",
             subtitle: "Endpoint fields are staged until you apply them.",
@@ -1095,11 +1155,49 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 SettingsSetupCard(
                     title: "Browser tabs",
-                    subtitle: "Adds Chrome, Edge, or Chromium tab attribution when remote debugging is enabled.",
+                    subtitle: "Open a dedicated Chrome profile so Aetower can attribute browser load to tabs.",
                     systemImage: "globe",
-                    badge: "Optional",
-                    color: AetowerDesign.Status.ready
+                    badge: browserPresentation.badge,
+                    color: browserPresentation.color
                 ) {
+                    Text("Aetower uses a separate Chrome profile for this integration. When enabled, local tab titles, URLs, JS heap, DOM size, and network activity can be shown in Monitor without exposing your normal Chrome profile.")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Button(browserAttributionPrimaryActionTitle) {
+                            focusedField = nil
+                            enableDedicatedBrowserAttribution()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(browserAttributionIsBusy)
+
+                        Button("Test endpoint") {
+                            focusedField = nil
+                            testBrowserAttributionEndpoint()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(browserAttributionEndpoint.isEmpty || browserAttributionIsBusy)
+
+                        if !browserAttributionEndpoint.isEmpty {
+                            Button("Disable") {
+                                focusedField = nil
+                                disableBrowserAttribution()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(browserAttributionIsBusy)
+                        }
+                    }
+
+                    Text(browserPresentation.detail)
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+
+                    Text("Dedicated profile: \(BrowserAttributionSetup.dedicatedProfileDisplayPath)")
+                        .font(AetowerDesign.Typography.caption.monospaced())
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        .textSelection(.enabled)
+
                     TextField(
                         "Browser debug endpoint",
                         text: $integrationDraft.chromiumEndpoint,
@@ -1108,7 +1206,7 @@ public struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
                     .aetowerUtilityTextInput()
                     .focused($focusedField, equals: .chromiumEndpoint)
-                    Text("Use a local `/json` or `/json/list` endpoint. Leave blank to disable browser attribution.")
+                    Text("Advanced: use a local `/json` or `/json/list` endpoint for Chrome, Edge, Brave, Arc, or Chromium. Leave blank to disable browser attribution.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     SettingsValidationList(issues: validation.issues(for: .chromiumEndpoint))
@@ -1898,6 +1996,65 @@ public struct SettingsView: View {
         }
     }
 
+    private func enableDedicatedBrowserAttribution() {
+        browserAttributionState = .launching
+        Task { @MainActor in
+            do {
+                let summary = try await BrowserAttributionSetup.enableDedicatedChrome()
+                persistBrowserAttributionEndpoint(
+                    summary.endpoint,
+                    confirmation: "Browser attribution enabled with a dedicated Chrome profile."
+                )
+                browserAttributionState = .connected(summary)
+            } catch {
+                browserAttributionState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func testBrowserAttributionEndpoint() {
+        let endpoint = browserAttributionEndpoint
+        guard !endpoint.isEmpty else {
+            browserAttributionState = .notConfigured
+            return
+        }
+        browserAttributionState = .checking
+        Task { @MainActor in
+            do {
+                let summary = try await BrowserAttributionSetup.probeEndpoint(endpoint)
+                browserAttributionState = .connected(summary)
+            } catch {
+                browserAttributionState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func disableBrowserAttribution() {
+        persistBrowserAttributionEndpoint(
+            "",
+            confirmation: "Browser attribution disabled."
+        )
+        browserAttributionState = .notConfigured
+    }
+
+    private func persistBrowserAttributionEndpoint(_ endpoint: String, confirmation: String) {
+        integrationDraft.chromiumEndpoint = endpoint
+        settings.chromiumEndpoint = endpoint
+        state.applyIntegrationSettings(settings)
+        appliedIntegrationSnapshot = currentIntegrationSnapshot
+        applyConfirmation = confirmation
+        clearApplyConfirmationLater()
+    }
+
+    private func refreshBrowserAttributionStatusIfConfigured() {
+        guard !browserAttributionEndpoint.isEmpty else {
+            browserAttributionState = .notConfigured
+            return
+        }
+        guard browserAttributionState == .notConfigured else { return }
+        testBrowserAttributionEndpoint()
+    }
+
     private func applyIntegrationAndTelemetrySettings(
         confirmation: String = "Integration and telemetry settings applied."
     ) {
@@ -2199,6 +2356,14 @@ private struct ProviderCredentialSnapshot {
     let provider: ProjectProvider
     let source: ProviderCredentialSource
     let canAuthenticate: Bool
+}
+
+private enum BrowserAttributionViewState: Equatable {
+    case notConfigured
+    case checking
+    case launching
+    case connected(BrowserAttributionEndpointSummary)
+    case failed(String)
 }
 
 private struct SettingsIntegrationDraft: Equatable {
