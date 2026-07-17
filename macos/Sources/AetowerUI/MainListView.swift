@@ -124,6 +124,39 @@ private struct SidePanelQuickStatusLine: View {
     }
 }
 
+private struct SidePanelSignalLine: View {
+    let icon: String
+    let tone: Color
+    let title: String
+    let detail: String?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: icon)
+                .font(AetowerDesign.Typography.compactData(size: 11, weight: .semibold))
+                .foregroundStyle(AnyShapeStyle(tone), AnyShapeStyle(AetowerDesign.Ink.secondary))
+                .frame(width: 16, height: 16)
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                Text(title)
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: AetowerDesign.Spacing.xs)
+        }
+    }
+}
+
 private struct SortChip: View {
     let title: String
     let tone: Color
@@ -530,48 +563,500 @@ public struct MainListView: View {
         let browserTabs = sidePanelBrowserTabComponents(for: entity)
 
         return VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                sidePanelInspectorHeader(
+                    entity: entity,
+                    origin: origin,
+                    processTreeEntities: processTreeEntities
+                )
+
+                if let quickStopDisplayPID {
+                    sidePanelActionStrip(
+                        entity: entity,
+                        pid: quickStopDisplayPID,
+                        targetVisible: quickStopPID != nil
+                    )
+                }
+            }
+            .padding(.horizontal, AetowerDesign.Spacing.lg)
+            .padding(.vertical, AetowerDesign.Spacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider()
+
             ScrollView {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
-                    sidePanelInspectorHeader(
+                    sidePanelCurrentRead(
                         entity: entity,
                         origin: origin,
                         processTreeEntities: processTreeEntities
                     )
 
-                    sidePanelMetricStrip(for: entity)
+                    sidePanelOperationPanel(
+                        entity: entity,
+                        processTreeEntities: processTreeEntities
+                    )
 
-                    if let quickStopDisplayPID {
-                        sidePanelActionStrip(
-                            entity: entity,
-                            pid: quickStopDisplayPID,
-                            targetVisible: quickStopPID != nil
-                        )
-                    }
+                    sidePanelWhy(entity)
 
-                    sidePanelBrowserTabs(browserTabs)
+                    sidePanelMembers(
+                        entity: entity,
+                        processTreeEntities: processTreeEntities,
+                        browserTabs: browserTabs
+                    )
 
-                    sidePanelOriginSummary(origin)
+                    sidePanelWatch(entity)
                 }
                 .padding(.horizontal, AetowerDesign.Spacing.lg)
                 .padding(.vertical, AetowerDesign.Spacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(minHeight: 230, idealHeight: 310, maxHeight: 430)
+        }
+    }
 
-            Divider()
+    private func sidePanelSection<Content: View>(
+        _ title: String,
+        systemImage: String,
+        badge: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Label(title, systemImage: systemImage)
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                if let badge {
+                    AetowerBadge(
+                        badge,
+                        tone: AetowerDesign.Status.neutral,
+                        style: .outline
+                    )
+                }
+                Spacer(minLength: AetowerDesign.Spacing.xs)
+            }
 
-            EntityDetailView(
-                entity: entity,
-                state: state,
-                settings: settings,
-                processTreeSeedEntities: processTreeEntities,
-                processOperatorRequest: processOperatorRequest,
-                processSortKey: selectedEntityGroup?.root.entityId == entity.entityId ? sortKey : nil,
-                showsHero: false,
-                showsOperator: false,
-                startsOnComponents: !browserTabs.isEmpty
+            content()
+        }
+    }
+
+    private func sidePanelCurrentRead(
+        entity: EntitySnapshot,
+        origin: ProcessOriginSummary,
+        processTreeEntities: [EntitySnapshot]
+    ) -> some View {
+        sidePanelSection("Current Read", systemImage: "waveform.path.ecg") {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                sidePanelDominantIssue(entity)
+
+                sidePanelMetricStrip(for: entity)
+
+                if let recentChangeSummary = entity.recentChangeSummary, !recentChangeSummary.isEmpty {
+                    SidePanelSignalLine(
+                        icon: "clock.arrow.circlepath",
+                        tone: AetowerDesign.Tone.network,
+                        title: "Recent change",
+                        detail: recentChangeSummary
+                    )
+                }
+
+                if let activeWindowTitle = entity.activeWindowTitle, !activeWindowTitle.isEmpty {
+                    SidePanelSignalLine(
+                        icon: "macwindow",
+                        tone: AetowerDesign.Status.neutral,
+                        title: "Active window",
+                        detail: activeWindowTitle
+                    )
+                }
+
+                sidePanelOriginSummary(origin, processTreeEntities: processTreeEntities)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sidePanelDominantIssue(_ entity: EntitySnapshot) -> some View {
+        if let recommendation = sidePanelPrimaryRecommendation(for: entity) {
+            SidePanelSignalLine(
+                icon: sidePanelRecommendationIcon(recommendation.severity),
+                tone: sidePanelRecommendationTone(recommendation.severity),
+                title: recommendation.title,
+                detail: recommendation.detail
+            )
+        } else if let firstReason = entity.friction.reasons.first, !firstReason.isEmpty {
+            SidePanelSignalLine(
+                icon: "target",
+                tone: AetowerDesign.frictionColor(entity.friction.totalScore),
+                title: "Dominant issue",
+                detail: firstReason
+            )
+        } else if entity.anomalyDetected {
+            SidePanelSignalLine(
+                icon: "exclamationmark.triangle.fill",
+                tone: AetowerDesign.Status.warning,
+                title: "Anomaly detected",
+                detail: "This entity is behaving outside its recent baseline."
+            )
+        } else {
+            SidePanelSignalLine(
+                icon: "checkmark.circle",
+                tone: AetowerDesign.Status.ready,
+                title: "No strong issue attached",
+                detail: "Current signals are informational unless the list sort is highlighting a specific metric."
             )
         }
+    }
+
+    private func sidePanelWhy(_ entity: EntitySnapshot) -> some View {
+        sidePanelSection(
+            "Why",
+            systemImage: "questionmark.circle",
+            badge: sidePanelFrictionTrendBadge(for: entity)
+        ) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                SidePanelSignalLine(
+                    icon: "chart.line.uptrend.xyaxis",
+                    tone: AetowerDesign.frictionColor(entity.friction.totalScore),
+                    title: sidePanelFrictionSummary(for: entity),
+                    detail: sidePanelFrictionTrendDetail(for: entity)
+                )
+
+                if entity.friction.reasons.isEmpty {
+                    SidePanelSignalLine(
+                        icon: "info.circle",
+                        tone: AetowerDesign.Status.neutral,
+                        title: "No specific reason attached",
+                        detail: "The score is currently driven by the live metrics and list sort."
+                    )
+                } else {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        ForEach(Array(entity.friction.reasons.prefix(3).enumerated()), id: \.offset) { _, reason in
+                            SidePanelSignalLine(
+                                icon: "smallcircle.filled.circle",
+                                tone: AetowerDesign.frictionColor(entity.friction.totalScore),
+                                title: reason,
+                                detail: nil
+                            )
+                        }
+                    }
+                }
+
+                if !entity.friction.contributors.isEmpty {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                        Text("Top contributors")
+                            .font(AetowerDesign.Typography.metadataStrong)
+                            .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        ForEach(Array(entity.friction.contributors.prefix(3).enumerated()), id: \.offset) { _, contributor in
+                            sidePanelContributorRow(contributor, totalScore: entity.friction.totalScore)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func sidePanelContributorRow(
+        _ contributor: FrictionContributor,
+        totalScore: Float
+    ) -> some View {
+        let share = sidePanelContributorShare(contributor, totalScore: totalScore)
+        let tone = sidePanelContributorTone(contributor)
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                Text(contributor.label)
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .lineLimit(1)
+                Spacer(minLength: AetowerDesign.Spacing.xs)
+                Text(String(format: "%.1f", contributor.score))
+                    .font(AetowerDesign.Typography.dataSmall)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+            }
+
+            ProgressView(value: Double(share))
+                .progressViewStyle(.linear)
+                .tint(tone)
+                .controlSize(.mini)
+
+            if !contributor.detail.isEmpty {
+                Text(contributor.detail)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func sidePanelMembers(
+        entity: EntitySnapshot,
+        processTreeEntities: [EntitySnapshot],
+        browserTabs: [ComponentSnapshot]
+    ) -> some View {
+        let processRefs = sidePanelProcessRefs(for: processTreeEntities)
+        let componentCount = processTreeEntities.reduce(0) { $0 + $1.components.count }
+        let memberBadge = "\(sidePanelLiveProcessCount(processTreeEntities)) PIDs"
+
+        return sidePanelSection("Members", systemImage: "list.bullet.indent", badge: memberBadge) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                if processTreeEntities.count > 1 {
+                    SidePanelSignalLine(
+                        icon: "square.stack.3d.up",
+                        tone: AetowerDesign.Tone.cpu,
+                        title: "\(processTreeEntities.count) grouped entities",
+                        detail: "Members are ordered with the current Monitor sort: \(sortKey.title)."
+                    )
+                }
+
+                if processRefs.isEmpty {
+                    SidePanelSignalLine(
+                        icon: "eye.slash",
+                        tone: AetowerDesign.Status.neutral,
+                        title: "No live process details",
+                        detail: "The entity is visible, but this snapshot has no process rows to expand."
+                    )
+                } else {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        ForEach(Array(processRefs.prefix(6).enumerated()), id: \.element.id) { _, processRef in
+                            sidePanelProcessRefRow(processRef)
+                        }
+                    }
+
+                    if processRefs.count > 6 {
+                        Text("+\(processRefs.count - 6) more process rows follow the same sort order.")
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    }
+                }
+
+                sidePanelBrowserTabs(browserTabs)
+
+                if componentCount > browserTabs.count {
+                    SidePanelSignalLine(
+                        icon: "puzzlepiece.extension",
+                        tone: AetowerDesign.Status.neutral,
+                        title: "\(componentCount) component snapshots",
+                        detail: entity.components.isEmpty ? "Grouped members provide the component context." : "Process and adapter components are folded into this inspector."
+                    )
+                }
+            }
+        }
+    }
+
+    private func sidePanelProcessRefRow(_ processRef: MonitorProcessComponentRef) -> some View {
+        Button {
+            selectProcessRow(MonitorProcessRowModel(reference: processRef))
+        } label: {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: "terminal")
+                    .font(AetowerDesign.Typography.compactData(size: 11, weight: .semibold))
+                    .foregroundStyle(AetowerDesign.Tone.cpu)
+                    .frame(width: 16, height: 16)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    Text(processRef.title.isEmpty ? processRef.owner.displayName : processRef.title)
+                        .font(AetowerDesign.Typography.caption.weight(.medium))
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+
+                    Text(sidePanelProcessRefDetail(processRef))
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.xs)
+
+                Text(verbatim: processPIDLabel(processRef.pid))
+                    .font(AetowerDesign.Typography.compactData(size: 10, weight: .medium))
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(MonitorProcessRowModel(reference: processRef).helpText)
+    }
+
+    private func sidePanelWatch(_ entity: EntitySnapshot) -> some View {
+        sidePanelSection("Watch", systemImage: "bell.badge", badge: sidePanelWatchBadge(for: entity)) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                if let bundleId = entity.bundleId, !bundleId.isEmpty {
+                    SidePanelSignalLine(
+                        icon: "bell.slash",
+                        tone: AetowerDesign.Status.neutral,
+                        title: "Snooze notifications",
+                        detail: "Mute alerts for this app without changing Monitor visibility."
+                    )
+
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        sidePanelSnoozeButton("1h", entity: entity, bundleId: bundleId, hours: 1)
+                        sidePanelSnoozeButton("4h", entity: entity, bundleId: bundleId, hours: 4)
+                        sidePanelSnoozeButton("24h", entity: entity, bundleId: bundleId, hours: 24)
+                    }
+                } else {
+                    SidePanelSignalLine(
+                        icon: "bell",
+                        tone: AetowerDesign.Status.neutral,
+                        title: "No app bundle target",
+                        detail: "Snooze controls need a bundle identifier; this entity may be a process, service, or grouped runtime."
+                    )
+                }
+
+                SidePanelSignalLine(
+                    icon: "slider.horizontal.3",
+                    tone: AetowerDesign.Tone.memory,
+                    title: "Automation rules live in Settings",
+                    detail: "Use Settings > Automation for durable rules; this panel stays focused on the current selection."
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sidePanelOperationPanel(
+        entity: EntitySnapshot,
+        processTreeEntities: [EntitySnapshot]
+    ) -> some View {
+        if processOperatorRequest != nil {
+            sidePanelSection("Operation", systemImage: "wrench.and.screwdriver") {
+                ProcessOperatorPanel(
+                    entity: entity,
+                    state: state,
+                    processEntities: processTreeEntities,
+                    processSortKey: selectedEntityGroup?.root.entityId == entity.entityId ? sortKey : nil,
+                    quickRequest: processOperatorRequest
+                )
+            }
+        }
+    }
+
+    private func sidePanelPrimaryRecommendation(for entity: EntitySnapshot) -> Recommendation? {
+        entity.recommendations.sorted {
+            let leftRank = sidePanelRecommendationRank($0.severity)
+            let rightRank = sidePanelRecommendationRank($1.severity)
+            if leftRank != rightRank {
+                return leftRank > rightRank
+            }
+            return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+        .first
+    }
+
+    private func sidePanelRecommendationRank(_ severity: RecommendationSeverity) -> Int {
+        switch severity {
+        case .urgent: return 3
+        case .suggested: return 2
+        case .info: return 1
+        @unknown default: return 0
+        }
+    }
+
+    private func sidePanelRecommendationTone(_ severity: RecommendationSeverity) -> Color {
+        switch severity {
+        case .urgent: return AetowerDesign.Status.error
+        case .suggested: return AetowerDesign.Status.warning
+        case .info: return AetowerDesign.Status.neutral
+        @unknown default: return AetowerDesign.Status.neutral
+        }
+    }
+
+    private func sidePanelRecommendationIcon(_ severity: RecommendationSeverity) -> String {
+        switch severity {
+        case .urgent: return "exclamationmark.triangle.fill"
+        case .suggested: return "lightbulb"
+        case .info: return "info.circle"
+        @unknown default: return "info.circle"
+        }
+    }
+
+    private func sidePanelFrictionTrendBadge(for entity: EntitySnapshot) -> String {
+        trendLabel(samples: entity.trend.friction.map(Double.init), stableText: "stable")
+    }
+
+    private func sidePanelFrictionSummary(for entity: EntitySnapshot) -> String {
+        "Friction \(String(format: "%.1f", entity.friction.totalScore))"
+    }
+
+    private func sidePanelFrictionTrendDetail(for entity: EntitySnapshot) -> String {
+        let trend = sidePanelFrictionTrendBadge(for: entity)
+        return "\(trend.capitalized) over \(trendWindowLabel(sampleCount: entity.trend.friction.count)); current sort is \(sortKey.title)."
+    }
+
+    private func sidePanelContributorShare(
+        _ contributor: FrictionContributor,
+        totalScore: Float
+    ) -> CGFloat {
+        guard totalScore > 0 else { return 0 }
+        return CGFloat(min(1, max(0, contributor.score / totalScore)))
+    }
+
+    private func sidePanelContributorTone(_ contributor: FrictionContributor) -> Color {
+        let key = contributor.key.lowercased()
+        if key.contains("cpu") { return AetowerDesign.Tone.cpu }
+        if key.contains("memory") || key.contains("pressure") { return AetowerDesign.Tone.memory }
+        if key.contains("disk") { return AetowerDesign.Tone.disk }
+        if key.contains("network") { return AetowerDesign.Tone.network }
+        if key.contains("wake") { return AetowerDesign.Tone.wakeups }
+        if key.contains("energy") { return AetowerDesign.Tone.energy }
+        return AetowerDesign.frictionColor(contributor.score)
+    }
+
+    private func sidePanelProcessRefs(for entities: [EntitySnapshot]) -> [MonitorProcessComponentRef] {
+        sortEntities(entities, by: sortKey)
+            .enumerated()
+            .flatMap { ownerIndex, owner in
+                let lineageRefs = owner.processLineage.map {
+                    MonitorProcessComponentRef(owner: owner, lineage: $0, ownerSortIndex: ownerIndex)
+                }
+                if !lineageRefs.isEmpty {
+                    return lineageRefs
+                }
+
+                return owner.components.compactMap { component -> MonitorProcessComponentRef? in
+                    guard component.kind != .adapterContext, component.processId != nil else {
+                        return nil
+                    }
+                    return MonitorProcessComponentRef(owner: owner, component: component, ownerSortIndex: ownerIndex)
+                }
+            }
+            .sorted { compareProcessComponents($0, $1, by: sortKey) }
+    }
+
+    private func sidePanelProcessRefDetail(_ processRef: MonitorProcessComponentRef) -> String {
+        let memoryBytes = max(processRef.memoryPhysicalFootprintBytes, processRef.memoryBytes)
+        var parts = [
+            String(format: "%.1f%% CPU", processRef.cpuPercent),
+            formatBytes(memoryBytes),
+            "\(processRef.threadCount) threads",
+        ]
+        if let user = processRef.user, !user.isEmpty {
+            parts.append(user)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func sidePanelWatchBadge(for entity: EntitySnapshot) -> String {
+        entity.bundleId?.isEmpty == false ? "app" : "runtime"
+    }
+
+    private func sidePanelSnoozeButton(
+        _ label: String,
+        entity: EntitySnapshot,
+        bundleId: String,
+        hours: Double
+    ) -> some View {
+        Button {
+            state.snoozeNotifications(
+                bundleId: bundleId,
+                displayName: entity.displayName,
+                hours: hours
+            )
+        } label: {
+            Label(label, systemImage: "bell.slash")
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+        }
+        .buttonStyle(.borderless)
+        .help("Snooze \(entity.displayName) notifications for \(label).")
     }
 
     private func sidePanelInspectorHeader(
@@ -670,7 +1155,10 @@ public struct MainListView: View {
         }
     }
 
-    private func sidePanelOriginSummary(_ origin: ProcessOriginSummary) -> some View {
+    private func sidePanelOriginSummary(
+        _ origin: ProcessOriginSummary,
+        processTreeEntities: [EntitySnapshot]
+    ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Label("Attribution", systemImage: "point.3.connected.trianglepath.dotted")
@@ -678,15 +1166,21 @@ public struct MainListView: View {
                     .foregroundStyle(AetowerDesign.Ink.secondary)
                 ProcessOriginChip(summary: origin)
                 Text(origin.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
                     .lineLimit(1)
                 Spacer()
             }
             ForEach(Array(origin.detailLines.dropFirst().prefix(3)), id: \.self) { line in
                 Text(line)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .lineLimit(1)
+            }
+            if processTreeEntities.count > 1 {
+                Text("Attribution is aggregated across \(processTreeEntities.count) grouped entities.")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
                     .lineLimit(1)
             }
         }
