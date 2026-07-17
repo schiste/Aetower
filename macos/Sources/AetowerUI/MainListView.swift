@@ -1571,7 +1571,8 @@ public struct MainListView: View {
     private func runSidePanelQuickStop(
         _ action: ProcessActionKind,
         entity: EntitySnapshot,
-        pid: UInt32
+        pid: UInt32,
+        reason: String = "Quick stop from Monitor side panel."
     ) {
         let actionID = UUID().uuidString
         quickStopSubmission = SidePanelQuickStopSubmission(
@@ -1584,7 +1585,7 @@ public struct MainListView: View {
         state.runVerifiedProcessAction(
             pid: pid,
             action: action,
-            reason: "Quick stop from Monitor side panel.",
+            reason: reason,
             actionID: actionID
         )
     }
@@ -1842,23 +1843,15 @@ public struct MainListView: View {
                 requestProcessOperation(entityID: entity.entityId, pid: pid, operation: .sample)
             }
             Divider()
-            Button("Terminate \(processPIDLabel(pid))…", role: .destructive) {
-                requestProcessOperation(
-                    entityID: entity.entityId,
-                    pid: pid,
-                    operation: .previewAction(.terminate)
-                )
+            Button("Terminate \(processPIDLabel(pid))", role: .destructive) {
+                runContextQuickStop(.terminate, entity: entity, pid: pid)
             }
-            Button("Force kill \(processPIDLabel(pid))…", role: .destructive) {
-                requestProcessOperation(
-                    entityID: entity.entityId,
-                    pid: pid,
-                    operation: .previewAction(.forceKill)
-                )
+            Button("Force kill \(processPIDLabel(pid))", role: .destructive) {
+                runContextQuickStop(.forceKill, entity: entity, pid: pid)
             }
-            Menu("Actions") {
+            Menu("Preview actions") {
                 ForEach(contextPreviewActions) { action in
-                    Button(action.label, role: action.isDestructive ? .destructive : nil) {
+                    Button("Preview \(action.label)", role: action.isDestructive ? .destructive : nil) {
                         requestProcessOperation(
                             entityID: entity.entityId,
                             pid: pid,
@@ -1911,6 +1904,36 @@ public struct MainListView: View {
         }
 
         Divider()
+        Button("Terminate \(processPIDLabel(row.pid))", role: .destructive) {
+            runContextQuickStop(
+                .terminate,
+                entity: row.owner,
+                pid: row.pid,
+                selectedProcessRow: row
+            )
+        }
+        Button("Force kill \(processPIDLabel(row.pid))", role: .destructive) {
+            runContextQuickStop(
+                .forceKill,
+                entity: row.owner,
+                pid: row.pid,
+                selectedProcessRow: row
+            )
+        }
+        Menu("Preview actions") {
+            ForEach(contextPreviewActions) { action in
+                Button("Preview \(action.label)", role: action.isDestructive ? .destructive : nil) {
+                    requestProcessOperation(
+                        entityID: row.ownerEntityID,
+                        pid: row.pid,
+                        operation: .previewAction(action)
+                    )
+                    selectedProcessRowID = row.id
+                }
+            }
+        }
+
+        Divider()
         Button("Copy Process ID") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(String(row.pid), forType: .string)
@@ -1928,7 +1951,7 @@ public struct MainListView: View {
     }
 
     private var contextPreviewActions: [ProcessActionKind] {
-        [.suspend, .resume, .lowerPriority, .normalPriority, .terminate, .forceKill, .terminateTree, .forceKillTree]
+        [.suspend, .resume, .lowerPriority, .normalPriority, .terminateTree, .forceKillTree]
     }
 
     private func selectEntity(_ entityID: String) {
@@ -1954,6 +1977,26 @@ public struct MainListView: View {
     ) {
         processOperatorRequest = ProcessOperatorRequest(pid: pid, operation: operation)
         selectEntity(entityID)
+    }
+
+    private func runContextQuickStop(
+        _ action: ProcessActionKind,
+        entity: EntitySnapshot,
+        pid: UInt32,
+        selectedProcessRow: MonitorProcessRowModel? = nil
+    ) {
+        processOperatorRequest = nil
+        if let selectedProcessRow {
+            selectProcessRow(selectedProcessRow)
+        } else {
+            selectEntity(entity.entityId)
+        }
+        runSidePanelQuickStop(
+            action,
+            entity: entity,
+            pid: pid,
+            reason: "Quick stop from Monitor context menu."
+        )
     }
 
     private func primaryProcessID(in members: [EntitySnapshot]) -> UInt32? {
