@@ -526,49 +526,37 @@ public struct MainListView: View {
         let processTreeEntities = selectedProcessTreeEntities(for: entity)
         let quickStopPID = primaryProcessID(in: processTreeEntities)
         let quickStopDisplayPID = quickStopPID ?? retainedQuickStopPID(for: entity.entityId)
+        let origin = processOriginCache.summary(for: processTreeEntities)
+        let browserTabs = sidePanelBrowserTabComponents(for: entity)
 
         return VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .center, spacing: 12) {
-                    SectionEyebrow(text: "Detail")
-
-                    Text(entity.displayName)
-                        .font(.title2.weight(.semibold))
-
-                    FrictionStatusBadge(score: Double(entity.friction.totalScore))
-
-                    Spacer()
-
-                    Button {
-                        withAnimation(AetowerDesign.Motion.standard) {
-                            selectedEntityID = nil
-                            selectedProcessRowID = nil
-                        }
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Text(topConcernSummary(for: entity, sortKey: sortKey))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-
-                sidePanelOriginSummary(processOriginCache.summary(for: processTreeEntities))
-
-                if let quickStopDisplayPID {
-                    sidePanelQuickStop(
+            ScrollView {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+                    sidePanelInspectorHeader(
                         entity: entity,
-                        pid: quickStopDisplayPID,
-                        targetVisible: quickStopPID != nil
+                        origin: origin,
+                        processTreeEntities: processTreeEntities
                     )
+
+                    sidePanelMetricStrip(for: entity)
+
+                    if let quickStopDisplayPID {
+                        sidePanelActionStrip(
+                            entity: entity,
+                            pid: quickStopDisplayPID,
+                            targetVisible: quickStopPID != nil
+                        )
+                    }
+
+                    sidePanelBrowserTabs(browserTabs)
+
+                    sidePanelOriginSummary(origin)
                 }
+                .padding(.horizontal, AetowerDesign.Spacing.lg)
+                .padding(.vertical, AetowerDesign.Spacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, AetowerDesign.Spacing.lg)
-            .padding(.vertical, AetowerDesign.Spacing.md)
+            .frame(minHeight: 230, idealHeight: 310, maxHeight: 430)
 
             Divider()
 
@@ -578,7 +566,106 @@ public struct MainListView: View {
                 settings: settings,
                 processTreeSeedEntities: processTreeEntities,
                 processOperatorRequest: processOperatorRequest,
-                processSortKey: selectedEntityGroup?.root.entityId == entity.entityId ? sortKey : nil
+                processSortKey: selectedEntityGroup?.root.entityId == entity.entityId ? sortKey : nil,
+                showsHero: false,
+                showsOperator: false,
+                startsOnComponents: !browserTabs.isEmpty
+            )
+        }
+    }
+
+    private func sidePanelInspectorHeader(
+        entity: EntitySnapshot,
+        origin: ProcessOriginSummary,
+        processTreeEntities: [EntitySnapshot]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: sidePanelEntityIconName(for: entity))
+                    .font(AetowerDesign.Typography.metricValue(size: 18, weight: .semibold))
+                    .foregroundStyle(AetowerDesign.frictionColor(entity.friction.totalScore))
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                        Text(entity.displayName)
+                            .font(AetowerDesign.Typography.sectionTitle.weight(.semibold))
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+
+                        FrictionStatusBadge(score: Double(entity.friction.totalScore))
+                    }
+
+                    Text(topConcernSummary(for: entity, sortKey: sortKey))
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+
+                Button {
+                    withAnimation(AetowerDesign.Motion.standard) {
+                        selectedEntityID = nil
+                        selectedProcessRowID = nil
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(AetowerDesign.Typography.compactData(size: 12, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
+                .help("Close inspector")
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.xs) {
+                ProcessOriginChip(summary: origin)
+                AetowerBadge(
+                    entity.metrics.isForeground ? "Frontmost" : "Background",
+                    systemImage: entity.metrics.isForeground ? "macwindow.on.rectangle" : "rectangle.dashed",
+                    tone: entity.metrics.isForeground ? AetowerDesign.Status.ready : AetowerDesign.Status.neutral
+                )
+                AetowerBadge(
+                    "\(sidePanelLiveProcessCount(processTreeEntities)) PIDs",
+                    systemImage: "number",
+                    tone: AetowerDesign.Tone.cpu
+                )
+            }
+        }
+    }
+
+    private func sidePanelMetricStrip(for entity: EntitySnapshot) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 92), spacing: AetowerDesign.Spacing.md)],
+            alignment: .leading,
+            spacing: AetowerDesign.Spacing.sm
+        ) {
+            AetowerMetricReadout(
+                label: "CPU",
+                value: String(format: "%.1f%%", entity.metrics.cpuPercent),
+                detail: trendLabel(samples: entity.trend.cpuPercent.map(Double.init), stableText: "current"),
+                tone: AetowerDesign.Tone.cpu
+            )
+            AetowerMetricReadout(
+                label: "Memory",
+                value: formatBytes(entityEffectiveMemoryBytes(entity)),
+                detail: entity.metrics.memoryPhysicalFootprintBytes > 0 ? "charged" : "resident",
+                tone: AetowerDesign.Tone.memory
+            )
+            AetowerMetricReadout(
+                label: "Wakeups",
+                value: formatWakeups(entity.metrics.wakeupsPerSecond),
+                detail: "timer churn",
+                tone: AetowerDesign.Tone.wakeups
+            )
+            AetowerMetricReadout(
+                label: "Network",
+                value: formatRate(entity.metrics.networkReceiveBps + entity.metrics.networkSendBps),
+                detail: "in + out",
+                tone: AetowerDesign.Tone.network
             )
         }
     }
@@ -586,6 +673,9 @@ public struct MainListView: View {
     private func sidePanelOriginSummary(_ origin: ProcessOriginSummary) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
+                Label("Attribution", systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
                 ProcessOriginChip(summary: origin)
                 Text(origin.subtitle)
                     .font(.caption)
@@ -600,28 +690,55 @@ public struct MainListView: View {
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
         .help(origin.detailLines.joined(separator: "\n"))
     }
 
-    private func sidePanelQuickStop(
+    private func sidePanelActionStrip(
         entity: EntitySnapshot,
         pid: UInt32,
         targetVisible: Bool
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Label("Quick stop", systemImage: "hand.raised.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Label("Process actions", systemImage: "wrench.and.screwdriver")
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
 
                 Text(verbatim: processPIDLabel(pid))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .font(AetowerDesign.Typography.compactData(size: 10, weight: .medium))
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
 
-                Spacer()
+                Spacer(minLength: AetowerDesign.Spacing.xs)
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 84), spacing: AetowerDesign.Spacing.xs)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.xs
+            ) {
+                sidePanelProcessActionButton(
+                    title: "Inspect",
+                    systemImage: "info.circle",
+                    isEnabled: targetVisible
+                ) {
+                    requestProcessOperation(entityID: entity.entityId, pid: pid, operation: .inspect)
+                }
+
+                sidePanelProcessActionButton(
+                    title: "Files",
+                    systemImage: "folder",
+                    isEnabled: targetVisible
+                ) {
+                    requestProcessOperation(entityID: entity.entityId, pid: pid, operation: .resources)
+                }
+
+                sidePanelProcessActionButton(
+                    title: "Sample",
+                    systemImage: "waveform.path.ecg",
+                    isEnabled: targetVisible
+                ) {
+                    requestProcessOperation(entityID: entity.entityId, pid: pid, operation: .sample)
+                }
 
                 sidePanelStopButton(.terminate, entity: entity, pid: pid, targetVisible: targetVisible)
                 sidePanelStopButton(.forceKill, entity: entity, pid: pid, targetVisible: targetVisible)
@@ -629,9 +746,20 @@ public struct MainListView: View {
 
             sidePanelQuickStopStatus(entity: entity, pid: pid, targetVisible: targetVisible)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
+    }
+
+    private func sidePanelProcessActionButton(
+        title: String,
+        systemImage: String,
+        isEnabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(AetowerDesign.Typography.caption.weight(.semibold))
+        }
+        .buttonStyle(.borderless)
+        .disabled(!isEnabled)
     }
 
     private func sidePanelStopButton(
@@ -650,6 +778,144 @@ public struct MainListView: View {
         .buttonStyle(.borderless)
         .disabled(!targetVisible || state.entityAnalysisIsLoading(processAnalysisKey(pid), kind: .processAction))
         .help(targetVisible ? "Validate the target, send \(action.label.lowercased()), and verify the result." : "Target PID is no longer visible.")
+    }
+
+    @ViewBuilder
+    private func sidePanelBrowserTabs(_ components: [ComponentSnapshot]) -> some View {
+        if !components.isEmpty {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Label("Browser tabs", systemImage: "globe")
+                        .font(AetowerDesign.Typography.caption.weight(.semibold))
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                    AetowerBadge(
+                        "\(components.count)",
+                        tone: AetowerDesign.Tone.network,
+                        style: .outline
+                    )
+                    Spacer()
+                    Text("Chromium debug")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                }
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(Array(components.prefix(4).enumerated()), id: \.offset) { _, component in
+                        sidePanelBrowserTabRow(component)
+                    }
+                }
+
+                if components.count > 4 {
+                    Text("+\(components.count - 4) more in Components")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                }
+            }
+        }
+    }
+
+    private func sidePanelBrowserTabRow(_ component: ComponentSnapshot) -> some View {
+        HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: "safari")
+                .font(AetowerDesign.Typography.compactData(size: 11, weight: .semibold))
+                .foregroundStyle(AetowerDesign.Tone.network)
+                .frame(width: 16, height: 16)
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                Text(sidePanelBrowserTabTitle(component.title))
+                    .font(AetowerDesign.Typography.caption.weight(.medium))
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .lineLimit(1)
+
+                if let url = component.adapterContext?.url, !url.isEmpty {
+                    Text(url)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+
+                if let signal = sidePanelBrowserTabSignal(component) {
+                    Text(signal)
+                        .font(AetowerDesign.Typography.metadataStrong)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: AetowerDesign.Spacing.xs)
+        }
+        .padding(.vertical, AetowerDesign.Spacing.xxs)
+    }
+
+    private func sidePanelBrowserTabComponents(for entity: EntitySnapshot) -> [ComponentSnapshot] {
+        entity.components.filter { component in
+            component.adapterContext?.kind == .chromiumTab
+        }
+    }
+
+    private func sidePanelBrowserTabTitle(_ title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Untitled tab" }
+
+        let separator = " · "
+        if trimmed.hasPrefix("Tab "), let range = trimmed.range(of: separator) {
+            let tabTitle = trimmed[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            return tabTitle.isEmpty ? "Untitled tab" : tabTitle
+        }
+
+        return trimmed
+    }
+
+    private func sidePanelBrowserTabSignal(_ component: ComponentSnapshot) -> String? {
+        guard let adapterContext = component.adapterContext else { return nil }
+
+        var parts: [String] = []
+        if component.memoryBytes > 0 || adapterContext.jsHeapTotalBytes > 0 {
+            let used = component.memoryBytes > 0 ? formatBytes(component.memoryBytes) : "unknown"
+            if adapterContext.jsHeapTotalBytes > 0 {
+                parts.append("heap \(used) / \(formatBytes(adapterContext.jsHeapTotalBytes))")
+            } else {
+                parts.append("heap \(used)")
+            }
+        }
+
+        let networkBps = adapterContext.networkReceiveBps + adapterContext.networkSendBps
+        if networkBps > 0 {
+            parts.append("net \(formatRate(networkBps))")
+        }
+
+        if adapterContext.domNodes > 0 {
+            parts.append("\(adapterContext.domNodes) DOM nodes")
+        } else if adapterContext.documents > 0 || adapterContext.frames > 0 {
+            parts.append("\(adapterContext.documents) docs · \(adapterContext.frames) frames")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func sidePanelLiveProcessCount(_ entities: [EntitySnapshot]) -> Int {
+        entities.reduce(0) { count, entity in
+            count + liveProcessCount(for: entity)
+        }
+    }
+
+    private func sidePanelEntityIconName(for entity: EntitySnapshot) -> String {
+        switch entity.entityKind {
+        case .app:
+            return "app"
+        case .browser:
+            return "globe"
+        case .daemon, .service:
+            return "gearshape.2"
+        case .terminalSession:
+            return "terminal"
+        case .aiAgent:
+            return "sparkles"
+        case .unknown:
+            return "square.stack.3d.up"
+        }
     }
 
     @ViewBuilder

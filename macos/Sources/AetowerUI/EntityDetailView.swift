@@ -294,6 +294,9 @@ public struct EntityDetailView: View {
     let processTreeSeedEntities: [EntitySnapshot]
     let processOperatorRequest: ProcessOperatorRequest?
     let processSortKey: SortKey?
+    let showsHero: Bool
+    let showsOperator: Bool
+    let startsOnComponents: Bool
     @State private var selectedSection: EntityDetailSection = .summary
     /// Set when a recommendation's one-click action is tapped — staged into the
     /// always-visible operator panel below, where the dry-run preview shows and
@@ -305,7 +308,10 @@ public struct EntityDetailView: View {
         state: AppState,
         settings: SettingsStore,
         processTreeSeedEntities: [EntitySnapshot]? = nil,
-        processOperatorRequest: ProcessOperatorRequest? = nil
+        processOperatorRequest: ProcessOperatorRequest? = nil,
+        showsHero: Bool = true,
+        showsOperator: Bool = true,
+        startsOnComponents: Bool = false
     ) {
         self.entity = entity
         self.state = state
@@ -313,6 +319,9 @@ public struct EntityDetailView: View {
         self.processTreeSeedEntities = processTreeSeedEntities ?? [entity]
         self.processOperatorRequest = processOperatorRequest
         self.processSortKey = nil
+        self.showsHero = showsHero
+        self.showsOperator = showsOperator
+        self.startsOnComponents = startsOnComponents
     }
 
     init(
@@ -321,7 +330,10 @@ public struct EntityDetailView: View {
         settings: SettingsStore,
         processTreeSeedEntities: [EntitySnapshot]? = nil,
         processOperatorRequest: ProcessOperatorRequest? = nil,
-        processSortKey: SortKey?
+        processSortKey: SortKey?,
+        showsHero: Bool = true,
+        showsOperator: Bool = true,
+        startsOnComponents: Bool = false
     ) {
         self.entity = entity
         self.state = state
@@ -329,20 +341,27 @@ public struct EntityDetailView: View {
         self.processTreeSeedEntities = processTreeSeedEntities ?? [entity]
         self.processOperatorRequest = processOperatorRequest
         self.processSortKey = processSortKey
+        self.showsHero = showsHero
+        self.showsOperator = showsOperator
+        self.startsOnComponents = startsOnComponents
     }
 
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 alertStack
-                hero
-                ProcessOperatorPanel(
-                    entity: entity,
-                    state: state,
-                    processEntities: processTreeSeedEntities,
-                    processSortKey: processSortKey,
-                    quickRequest: effectiveOperatorRequest
-                )
+                if showsHero {
+                    hero
+                }
+                if showsOperator || effectiveOperatorRequest != nil {
+                    ProcessOperatorPanel(
+                        entity: entity,
+                        state: state,
+                        processEntities: processTreeSeedEntities,
+                        processSortKey: processSortKey,
+                        quickRequest: effectiveOperatorRequest
+                    )
+                }
                 sectionPicker
                 selectedSectionContent
             }
@@ -373,12 +392,16 @@ public struct EntityDetailView: View {
                 }
             }
         }
-        .task(id: entity.entityId) {
-            selectedSection = .summary
+        .task(id: "\(entity.entityId)|\(startsOnComponents)") {
+            selectedSection = initialSection
         }
         .onChange(of: selectedSection) { _, _ in
             loadStaticAnalysisIfNeeded()
         }
+    }
+
+    private var initialSection: EntityDetailSection {
+        startsOnComponents ? .components : .summary
     }
 
     @ViewBuilder
