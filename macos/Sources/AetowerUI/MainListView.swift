@@ -1607,6 +1607,36 @@ public struct MainListView: View {
         return nil
     }
 
+    private func entityRowActionIsPending(_ entity: EntitySnapshot) -> Bool {
+        if let quickStopSubmission,
+           quickStopSubmission.entityID == entity.entityId,
+           processActionIsPending(pid: quickStopSubmission.pid) {
+            return true
+        }
+
+        guard let pid = primaryProcessID(in: [entity]) else { return false }
+        return processActionIsPending(pid: pid)
+    }
+
+    private func groupRowActionIsPending(_ group: EntityGroup) -> Bool {
+        if let quickStopSubmission,
+           quickStopSubmission.entityID == group.root.entityId,
+           processActionIsPending(pid: quickStopSubmission.pid) {
+            return true
+        }
+
+        guard let pid = primaryProcessID(in: group.members) else { return false }
+        return processActionIsPending(pid: pid)
+    }
+
+    private func processRowActionIsPending(_ row: MonitorProcessRowModel) -> Bool {
+        processActionIsPending(pid: row.pid)
+    }
+
+    private func processActionIsPending(pid: UInt32) -> Bool {
+        state.entityAnalysisIsLoading(processAnalysisKey(pid), kind: .processAction)
+    }
+
     private func shortActionID(_ actionID: String) -> String {
         "#\(actionID.suffix(8))"
     }
@@ -1729,7 +1759,8 @@ public struct MainListView: View {
                             } label: {
                                 EntityRow(
                                     row: row,
-                                    isSelected: selectedEntityID == row.id
+                                    isSelected: selectedEntityID == row.id,
+                                    isActionPending: entityRowActionIsPending(row.entity)
                                 )
                                 .equatable()
                             }
@@ -1761,6 +1792,7 @@ public struct MainListView: View {
                                 isSelected: selectedEntityID == row.id,
                                 isExpanded: isExpanded,
                                 canExpand: canExpandGroup(row.group),
+                                isActionPending: groupRowActionIsPending(row.group),
                                 onToggleExpansion: {
                                     toggleGroupExpansion(row.group)
                                 }
@@ -1787,7 +1819,8 @@ public struct MainListView: View {
                                     } label: {
                                         MonitorProcessRow(
                                             row: processRow,
-                                            isSelected: selectedProcessRowID == processRow.id
+                                            isSelected: selectedProcessRowID == processRow.id,
+                                            isActionPending: processRowActionIsPending(processRow)
                                         )
                                         .equatable()
                                     }
@@ -1807,7 +1840,8 @@ public struct MainListView: View {
                             } label: {
                                 EntityRow(
                                     row: row,
-                                    isSelected: selectedEntityID == row.id
+                                    isSelected: selectedEntityID == row.id,
+                                    isActionPending: entityRowActionIsPending(row.entity)
                                 )
                                 .equatable()
                             }

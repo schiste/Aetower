@@ -333,15 +333,19 @@ struct MonitorProcessRowModel: Identifiable, Equatable {
 struct EntityRow: View, Equatable {
     let row: MonitorEntityRowModel
     let isSelected: Bool
+    let isActionPending: Bool
 
     nonisolated static func == (lhs: EntityRow, rhs: EntityRow) -> Bool {
-        lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
+        lhs.row == rhs.row
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isActionPending == rhs.isActionPending
     }
 
     var body: some View {
         MonitorRowChrome(
             frictionScore: row.frictionScore,
             isSelected: isSelected,
+            isActionPending: isActionPending,
             helpText: row.helpText
         ) { _ in
             Image(systemName: row.iconName)
@@ -426,15 +430,19 @@ struct EntityRow: View, Equatable {
 struct MonitorProcessRow: View, Equatable {
     let row: MonitorProcessRowModel
     let isSelected: Bool
+    let isActionPending: Bool
 
     nonisolated static func == (lhs: MonitorProcessRow, rhs: MonitorProcessRow) -> Bool {
-        lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
+        lhs.row == rhs.row
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isActionPending == rhs.isActionPending
     }
 
     var body: some View {
         MonitorRowChrome(
             frictionScore: row.frictionScore,
             isSelected: isSelected,
+            isActionPending: isActionPending,
             helpText: row.helpText
         ) { _ in
             Image(systemName: "cpu")
@@ -487,6 +495,7 @@ struct GroupedEntityRow: View, Equatable {
     let isSelected: Bool
     let isExpanded: Bool
     let canExpand: Bool
+    let isActionPending: Bool
     let onToggleExpansion: () -> Void
 
     nonisolated static func == (lhs: GroupedEntityRow, rhs: GroupedEntityRow) -> Bool {
@@ -494,12 +503,14 @@ struct GroupedEntityRow: View, Equatable {
             && lhs.isSelected == rhs.isSelected
             && lhs.isExpanded == rhs.isExpanded
             && lhs.canExpand == rhs.canExpand
+            && lhs.isActionPending == rhs.isActionPending
     }
 
     var body: some View {
         MonitorRowChrome(
             frictionScore: row.frictionScore,
             isSelected: isSelected,
+            isActionPending: isActionPending,
             helpText: row.helpText,
             trailingAction: disclosureAction
         ) { _ in
@@ -574,6 +585,7 @@ private struct MonitorRowTrailingAction {
 private struct MonitorRowChrome<Content: View>: View {
     let frictionScore: Float
     let isSelected: Bool
+    let isActionPending: Bool
     let helpText: String
     let trailingAction: MonitorRowTrailingAction?
     @ViewBuilder var content: (Bool) -> Content
@@ -582,12 +594,14 @@ private struct MonitorRowChrome<Content: View>: View {
     init(
         frictionScore: Float,
         isSelected: Bool,
+        isActionPending: Bool = false,
         helpText: String,
         trailingAction: MonitorRowTrailingAction? = nil,
         @ViewBuilder content: @escaping (Bool) -> Content
     ) {
         self.frictionScore = frictionScore
         self.isSelected = isSelected
+        self.isActionPending = isActionPending
         self.helpText = helpText
         self.trailingAction = trailingAction
         self.content = content
@@ -599,6 +613,7 @@ private struct MonitorRowChrome<Content: View>: View {
 
             trailingControl(isActive: isSelected || isHovered)
         }
+        .opacity(isActionPending ? 0.48 : 1.0)
         .padding(.horizontal, AetowerDesign.Spacing.sm)
         .padding(.vertical, AetowerDesign.Spacing.xs)
         .frame(maxWidth: .infinity)
@@ -611,18 +626,24 @@ private struct MonitorRowChrome<Content: View>: View {
         .overlay(
             RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm, style: .continuous)
                 .stroke(
-                    isSelected ? Color.accentColor.opacity(0.5) : .clear,
+                    rowStrokeColor,
                     lineWidth: 1
                 )
         )
         .onHover { isHovered = $0 }
         .help(helpText)
         .animation(AetowerDesign.Motion.quick, value: isHovered)
+        .animation(AetowerDesign.Motion.quick, value: isActionPending)
     }
 
     @ViewBuilder
     private func trailingControl(isActive: Bool) -> some View {
-        if let trailingAction {
+        if isActionPending {
+            ProgressView()
+                .controlSize(.mini)
+                .frame(width: 16)
+                .help("Process action in progress.")
+        } else if let trailingAction {
             Button(action: trailingAction.action) {
                 Image(systemName: trailingAction.systemImage)
                     .font(.system(size: 10, weight: .semibold))
@@ -642,10 +663,18 @@ private struct MonitorRowChrome<Content: View>: View {
     }
 
     private var frictionBackgroundOpacity: Double {
+        if isActionPending { return 0.08 }
         let base = min(Double(frictionScore) / 100.0, 1.0)
         if isSelected { return base * 0.12 + 0.04 }
         if isHovered { return base * 0.08 + 0.02 }
         return base * 0.05
+    }
+
+    private var rowStrokeColor: Color {
+        if isActionPending {
+            return AetowerDesign.Ink.tertiary.opacity(0.32)
+        }
+        return isSelected ? Color.accentColor.opacity(0.5) : .clear
     }
 }
 
