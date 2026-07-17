@@ -630,6 +630,8 @@ public final class AppState {
     @ObservationIgnored
     private var refreshFetchTask: Task<Void, Never>?
     @ObservationIgnored
+    private var processActionRefreshTask: Task<Void, Never>?
+    @ObservationIgnored
     private var refreshInFlight = false
     @ObservationIgnored
     private var pendingForcedRefresh = false
@@ -978,6 +980,8 @@ public final class AppState {
         refreshTask = nil
         refreshFetchTask?.cancel()
         refreshFetchTask = nil
+        processActionRefreshTask?.cancel()
+        processActionRefreshTask = nil
         refreshInFlight = false
         pendingForcedRefresh = false
         workspaceActivationTask?.cancel()
@@ -4677,6 +4681,7 @@ public final class AppState {
             restoreNiceValue: restoreNiceValue,
             privilegedHelperApproved: privilegedHelperApproved
         )
+        scheduleProcessActionSnapshotRefreshPulse()
     }
 
     func runVerifiedProcessAction(
@@ -4693,6 +4698,20 @@ public final class AppState {
             actionID: actionID,
             privilegedHelperApproved: privilegedHelperApproved
         )
+        scheduleProcessActionSnapshotRefreshPulse()
+    }
+
+    private func scheduleProcessActionSnapshotRefreshPulse() {
+        processActionRefreshTask?.cancel()
+        refresh(force: true)
+        processActionRefreshTask = Task { [weak self] in
+            let delays: [UInt64] = [350_000_000, 1_200_000_000, 2_500_000_000]
+            for delayNanos in delays {
+                try? await Task.sleep(nanoseconds: delayNanos)
+                guard !Task.isCancelled else { return }
+                self?.refresh(force: true)
+            }
+        }
     }
 
     func runProcessActionPreview(

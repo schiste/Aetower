@@ -121,7 +121,7 @@ struct ProcessOperatorPanel: View {
                                 .lineLimit(1)
                         }
                         Spacer()
-                        Text("PID \(process.id)")
+                        Text(verbatim: processPIDLabel(process.id))
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.tertiary)
                     }
@@ -137,7 +137,7 @@ struct ProcessOperatorPanel: View {
 
     @ViewBuilder
     private func processContextMenu(for pid: UInt32) -> some View {
-        Button("Inspect PID \(pid)") {
+        Button("Inspect \(processPIDLabel(pid))") {
             selectProcessForNavigation(pid)
             state.runProcessInspection(pid: pid)
         }
@@ -150,10 +150,10 @@ struct ProcessOperatorPanel: View {
             state.runProcessSample(pid: pid)
         }
         Divider()
-        Button("Terminate PID \(pid)…", role: .destructive) {
+        Button("Terminate \(processPIDLabel(pid))…", role: .destructive) {
             previewAction(.terminate, pid: pid)
         }
-        Button("Force kill PID \(pid)…", role: .destructive) {
+        Button("Force kill \(processPIDLabel(pid))…", role: .destructive) {
             previewAction(.forceKill, pid: pid)
         }
         Menu("Actions") {
@@ -384,7 +384,7 @@ struct ProcessOperatorPanel: View {
                     .foregroundStyle(.secondary)
                 ForEach(outcomes.prefix(8)) { outcome in
                     HStack(alignment: .top, spacing: 8) {
-                        Text("PID \(outcome.pid)")
+                        Text(verbatim: processPIDLabel(outcome.pid))
                             .font(.system(size: 10, design: .monospaced))
                             .frame(width: 64, alignment: .leading)
                         VStack(alignment: .leading, spacing: 2) {
@@ -488,7 +488,7 @@ struct ProcessOperatorPanel: View {
                 }
             }
         } else if isLoading(pid, .processInspect) {
-            ProgressView("Inspecting PID \(pid)…")
+            ProgressView("Inspecting \(processPIDLabel(pid))…")
         }
     }
 
@@ -926,7 +926,7 @@ struct ProcessOperatorPanel: View {
                 }
             }
         } else if isLoading(pid, .processSample) {
-            ProgressView("Sampling PID \(pid)…")
+            ProgressView("Sampling \(processPIDLabel(pid))…")
         }
     }
 
@@ -1113,7 +1113,7 @@ struct ProcessOperatorPanel: View {
             return "\(targetPids.count) targets"
         }
         if let targetPID = targetPids.first ?? fallbackPID {
-            return "PID \(targetPID)"
+            return processPIDLabel(targetPID)
         }
         return "unknown PID"
     }
@@ -1124,9 +1124,9 @@ struct ProcessOperatorPanel: View {
             return "unknown PID"
         }
         if targets.count <= 8 {
-            return targets.map { "PID \($0)" }.joined(separator: ", ")
+            return targets.map(processPIDLabel).joined(separator: ", ")
         }
-        let visible = targets.prefix(8).map { "PID \($0)" }.joined(separator: ", ")
+        let visible = targets.prefix(8).map(processPIDLabel).joined(separator: ", ")
         return "\(visible), +\(targets.count - 8) more"
     }
 

@@ -617,7 +617,7 @@ public struct MainListView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
-                Text("PID \(pid)")
+                Text(verbatim: processPIDLabel(pid))
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.tertiary)
 
@@ -664,12 +664,12 @@ public struct MainListView: View {
             SidePanelQuickStatusLine(
                 icon: "checkmark.seal.fill",
                 color: AetowerDesign.Status.success,
-                text: "PID \(pid) is no longer visible in the current snapshot."
+                text: "\(processPIDLabel(pid)) is no longer visible in the current snapshot."
             )
         }
 
         if let submission {
-            sidePanelQuickStopSubmissionStatus(submission)
+            sidePanelQuickStopSubmissionStatus(submission, targetVisible: targetVisible)
         }
 
         if submission != nil,
@@ -683,7 +683,10 @@ public struct MainListView: View {
     }
 
     @ViewBuilder
-    private func sidePanelQuickStopSubmissionStatus(_ submission: SidePanelQuickStopSubmission) -> some View {
+    private func sidePanelQuickStopSubmissionStatus(
+        _ submission: SidePanelQuickStopSubmission,
+        targetVisible: Bool
+    ) -> some View {
         if state.entityAnalysisIsLoading(processAnalysisKey(submission.pid), kind: .processAction) {
             SidePanelQuickStatusLine(
                 icon: "paperplane.fill",
@@ -704,6 +707,15 @@ public struct MainListView: View {
                     Text("Verification: \(sidePanelQuickStopVerificationLabel(verification))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                }
+                if targetVisible,
+                   sidePanelQuickStopVerificationIsConfirmed(sidePanelQuickStopEffectiveVerification(report)),
+                   sidePanelQuickStopActionRemovesProcess(submission.action) {
+                    SidePanelQuickStatusLine(
+                        icon: "arrow.clockwise",
+                        color: AetowerDesign.Status.ready,
+                        text: "Monitor is refreshing; the current snapshot still includes \(processPIDLabel(submission.pid))."
+                    )
                 }
                 sidePanelQuickStopFollowUpStatus(report)
                 if let stderr = report.commandResult?.stderr, !stderr.isEmpty {
@@ -803,6 +815,15 @@ public struct MainListView: View {
             "verified-priority", "command-accepted", "preview":
             return true
         default:
+            return false
+        }
+    }
+
+    private func sidePanelQuickStopActionRemovesProcess(_ action: ProcessActionKind) -> Bool {
+        switch action {
+        case .terminate, .forceKill, .terminateTree, .forceKillTree:
+            return true
+        case .suspend, .resume, .lowerPriority, .normalPriority:
             return false
         }
     }
@@ -988,7 +1009,7 @@ public struct MainListView: View {
 
         if let pid = primaryProcessID(in: members) {
             Divider()
-            Button("Inspect PID \(pid)") {
+            Button("Inspect \(processPIDLabel(pid))") {
                 requestProcessOperation(entityID: entity.entityId, pid: pid, operation: .inspect)
             }
             Button("Open files & sockets") {
@@ -998,14 +1019,14 @@ public struct MainListView: View {
                 requestProcessOperation(entityID: entity.entityId, pid: pid, operation: .sample)
             }
             Divider()
-            Button("Terminate PID \(pid)…", role: .destructive) {
+            Button("Terminate \(processPIDLabel(pid))…", role: .destructive) {
                 requestProcessOperation(
                     entityID: entity.entityId,
                     pid: pid,
                     operation: .previewAction(.terminate)
                 )
             }
-            Button("Force kill PID \(pid)…", role: .destructive) {
+            Button("Force kill \(processPIDLabel(pid))…", role: .destructive) {
                 requestProcessOperation(
                     entityID: entity.entityId,
                     pid: pid,
@@ -1053,7 +1074,7 @@ public struct MainListView: View {
         }
 
         Divider()
-        Button("Inspect PID \(row.pid)") {
+        Button("Inspect \(processPIDLabel(row.pid))") {
             requestProcessOperation(entityID: row.ownerEntityID, pid: row.pid, operation: .inspect)
             selectedProcessRowID = row.id
         }

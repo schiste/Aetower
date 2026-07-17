@@ -300,7 +300,7 @@ struct MonitorProcessRowModel: Identifiable, Equatable {
             max(reference.memoryPhysicalFootprintBytes, reference.memoryBytes)
         )
         self.threadsText = "\(reference.threadCount) th"
-        self.pidText = "PID \(reference.pid)"
+        self.pidText = processPIDLabel(reference.pid)
         self.frictionScore = reference.owner.friction.totalScore
         self.helpText = Self.helpText(for: reference)
     }
@@ -318,8 +318,8 @@ struct MonitorProcessRowModel: Identifiable, Equatable {
     private static func helpText(for reference: MonitorProcessComponentRef) -> String {
         return [
             "Owner: \(reference.owner.displayName)",
-            "PID: \(reference.pid)",
-            reference.parentPid.map { "Parent PID: \($0)" },
+            processPIDLabel(reference.pid),
+            reference.parentPid.map { "Parent \(processPIDLabel($0))" },
             reference.user.map { "User: \($0)" },
             reference.cwd.map { "CWD: \($0)" },
             reference.commandLine.map { "Command: \($0)" },
