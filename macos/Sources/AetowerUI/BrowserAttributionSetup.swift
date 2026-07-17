@@ -64,14 +64,18 @@ enum BrowserAttributionSetup {
             "--user-data-dir=\(profileDirectory.path)",
             "--no-first-run",
             "--new-window",
-            "about:blank",
+            welcomePageURL(profileDirectory: profileDirectory).absoluteString,
         ]
+    }
+
+    static func welcomePageURL(profileDirectory: URL = dedicatedProfileDirectory) -> URL {
+        profileDirectory.appendingPathComponent("Aetower Browser Attribution.html")
     }
 
     @MainActor
     static func enableDedicatedChrome() async throws -> BrowserAttributionEndpointSummary {
         do {
-            return try await probeEndpoint(defaultEndpoint)
+            _ = try await probeEndpoint(defaultEndpoint)
         } catch BrowserAttributionSetupError.endpointUnavailable {
             // Expected when the dedicated browser has not been launched yet.
         } catch BrowserAttributionSetupError.invalidResponse(let detail) {
@@ -84,13 +88,10 @@ enum BrowserAttributionSetup {
 
         let executableURL = try chromeExecutableURL()
         do {
-            try FileManager.default.createDirectory(
-                at: dedicatedProfileDirectory,
-                withIntermediateDirectories: true
-            )
+            try prepareDedicatedProfile()
         } catch {
             throw BrowserAttributionSetupError.launchFailed(
-                "Could not create \(dedicatedProfileDisplayPath): \(error.localizedDescription)"
+                "Could not prepare \(dedicatedProfileDisplayPath): \(error.localizedDescription)"
             )
         }
 
@@ -211,6 +212,86 @@ enum BrowserAttributionSetup {
             lastError?.localizedDescription ?? "Timed out waiting for \(endpoint)."
         )
     }
+
+    private static func prepareDedicatedProfile() throws {
+        try FileManager.default.createDirectory(
+            at: dedicatedProfileDirectory,
+            withIntermediateDirectories: true
+        )
+        try welcomePageHTML.write(
+            to: welcomePageURL(),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    private static let welcomePageHTML = """
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Aetower Browser Attribution</title>
+      <style>
+        :root {
+          color-scheme: light dark;
+          font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+          background: Canvas;
+          color: CanvasText;
+        }
+        body {
+          margin: 0;
+          min-height: 100vh;
+          display: grid;
+          place-items: center;
+        }
+        main {
+          width: min(680px, calc(100vw - 48px));
+        }
+        h1 {
+          margin: 0 0 12px;
+          font-size: 28px;
+          line-height: 1.15;
+        }
+        p {
+          margin: 0 0 14px;
+          color: color-mix(in srgb, CanvasText 72%, transparent);
+          font-size: 15px;
+          line-height: 1.5;
+        }
+        .badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 18px;
+          padding: 6px 10px;
+          background: color-mix(in srgb, #0a84ff 14%, Canvas);
+          color: #0a84ff;
+          font-size: 13px;
+          font-weight: 650;
+        }
+        code {
+          font-family: "SF Mono", ui-monospace, monospace;
+          font-size: 13px;
+        }
+      </style>
+    </head>
+    <body>
+      <main>
+        <div class="badge">Dedicated Aetower browser profile</div>
+        <h1>Browser attribution is ready.</h1>
+        <p>
+          Use this Chrome window when you want Aetower to attribute browser load to individual tabs.
+          Your normal Chrome profile is not exposed to the debug endpoint.
+        </p>
+        <p>
+          Open the pages you want to inspect in this window. Aetower will read local tab metadata from
+          <code>127.0.0.1:9222</code> and show tab context in Monitor.
+        </p>
+      </main>
+    </body>
+    </html>
+    """
 }
 
 private struct ChromiumDebugTarget: Decodable {

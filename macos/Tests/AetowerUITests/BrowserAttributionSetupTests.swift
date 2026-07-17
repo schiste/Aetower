@@ -12,6 +12,8 @@ final class BrowserAttributionSetupTests: XCTestCase {
         XCTAssertTrue(arguments.contains("--user-data-dir=/tmp/aetower-browser-profile"))
         XCTAssertTrue(arguments.contains("--no-first-run"))
         XCTAssertTrue(arguments.contains("--new-window"))
+        XCTAssertTrue(arguments.contains { $0.hasPrefix("file:///tmp/aetower-browser-profile/") })
+        XCTAssertFalse(arguments.contains("about:blank"))
     }
 
     func testParseTargetSummaryCountsOnlyPageTargetsAsTabs() throws {
@@ -37,5 +39,13 @@ final class BrowserAttributionSetupTests: XCTestCase {
         let path = BrowserAttributionSetup.dedicatedProfileDirectory.path
 
         XCTAssertTrue(path.contains("/Application Support/Aetower/BrowserProfiles/ChromeDebug"))
+    }
+
+    func testWelcomePageLivesInsideDedicatedProfile() {
+        let profile = URL(fileURLWithPath: "/tmp/aetower-browser-profile", isDirectory: true)
+        let page = BrowserAttributionSetup.welcomePageURL(profileDirectory: profile)
+
+        XCTAssertEqual(page.lastPathComponent, "Aetower Browser Attribution.html")
+        XCTAssertTrue(page.path.hasPrefix(profile.path))
     }
 }
