@@ -22,14 +22,12 @@ pub(crate) fn build_process_tree_report(
         .collect::<Vec<_>>();
     let grouped_process_count = seed_entities
         .iter()
-        .flat_map(|entity| entity.components.iter())
-        .filter(|component| component.kind != aetower_model::ComponentKind::AdapterContext)
-        .count() as u32;
+        .map(|entity| entity_process_ids(entity).len())
+        .sum::<usize>() as u32;
     let expanded_process_count = expanded_entities
         .iter()
-        .flat_map(|entity| entity.components.iter())
-        .filter(|component| component.kind != aetower_model::ComponentKind::AdapterContext)
-        .count() as u32;
+        .map(|entity| entity_process_ids(entity).len())
+        .sum::<usize>() as u32;
     let roots = process_tree_roots(root, &expanded_entities);
     Ok(ProcessTreeReport {
         captured_at_millis: snapshot.captured_at_millis,
@@ -75,10 +73,8 @@ pub(crate) fn process_tree_roots(
     let related_components = expanded_entities
         .iter()
         .flat_map(|entity| {
-            entity
-                .components
-                .iter()
-                .cloned()
+            entity_process_components(entity)
+                .into_iter()
                 .map(|component| RelatedProcessComponent {
                     entity_id: entity.entity_id.clone(),
                     owner_display_name: entity.display_name.clone(),
@@ -360,12 +356,7 @@ pub(crate) fn related_entities_for_process_tree(
         .collect::<BTreeSet<_>>();
     let mut included_pids = seed_entities
         .iter()
-        .flat_map(|entity| {
-            entity
-                .components
-                .iter()
-                .filter_map(|component| component.process_id)
-        })
+        .flat_map(entity_process_ids)
         .collect::<BTreeSet<_>>();
     let selected_session_ids = seed_entities
         .iter()
@@ -385,10 +376,12 @@ pub(crate) fn related_entities_for_process_tree(
             .cloned()
             .collect::<Vec<_>>();
         for candidate in candidates {
-            let is_child_by_pid = candidate.components.iter().any(|component| {
-                extract_parent_pid(component.parent_summary.as_deref())
-                    .is_some_and(|parent_pid| included_pids.contains(&parent_pid))
-            });
+            let is_child_by_pid = entity_process_components(&candidate)
+                .iter()
+                .any(|component| {
+                    extract_parent_pid(component.parent_summary.as_deref())
+                        .is_some_and(|parent_pid| included_pids.contains(&parent_pid))
+                });
             let shares_chau7_context = candidate.badges.iter().any(|badge| badge == "chau7-live")
                 && (!selected_session_ids.is_disjoint(&entity_session_ids(&candidate))
                     || candidate.components.iter().any(|component| {
@@ -414,12 +407,7 @@ pub(crate) fn related_entities_for_process_tree(
                     }));
             if is_child_by_pid || shares_chau7_context {
                 included_ids.insert(candidate.entity_id.clone());
-                included_pids.extend(
-                    candidate
-                        .components
-                        .iter()
-                        .filter_map(|component| component.process_id),
-                );
+                included_pids.extend(entity_process_ids(&candidate));
                 if is_child_by_pid {
                     reasons.insert("expanded through parent/child PID lineage".to_owned());
                 }

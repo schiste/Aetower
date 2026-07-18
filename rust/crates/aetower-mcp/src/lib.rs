@@ -50,9 +50,9 @@ use reports::history::{
 pub use reports::persistence::{persistence_deep_scan_json, persistence_scan_json};
 #[cfg(test)]
 use reports::process::{
-    build_process_action, build_process_action_with_context, parse_lsof_resources,
-    parse_sample_threads, parse_vmmap_region_line, process_action_history_item,
-    process_action_plan,
+    build_process_action, build_process_action_with_context, build_process_inspection,
+    parse_lsof_resources, parse_sample_threads, parse_vmmap_region_line,
+    process_action_history_item, process_action_plan,
 };
 use reports::process::{
     build_process_tree_report, entity_process_ids, format_metric_value,
@@ -2436,6 +2436,12 @@ fn entity_session_ids(entity: &aetower_model::EntitySnapshot) -> BTreeSet<String
         .iter()
         .filter_map(|component| component.adapter_context.as_ref())
         .filter_map(|context| context.session_id.clone())
+        .chain(
+            entity
+                .process_lineage
+                .iter()
+                .filter_map(|lineage| lineage.session_id.clone()),
+        )
         .filter(|session_id| !session_id.is_empty())
         .collect()
 }
@@ -2446,6 +2452,12 @@ fn entity_repo_roots(entity: &aetower_model::EntitySnapshot) -> BTreeSet<String>
         .iter()
         .filter_map(|component| component.adapter_context.as_ref())
         .filter_map(|context| context.repo_root.clone())
+        .chain(
+            entity
+                .process_lineage
+                .iter()
+                .filter_map(|lineage| lineage.workspace.clone()),
+        )
         .filter(|repo_root| !repo_root.is_empty())
         .collect()
 }
@@ -2456,6 +2468,12 @@ fn entity_workspaces(entity: &aetower_model::EntitySnapshot) -> BTreeSet<String>
         .iter()
         .filter_map(|component| component.adapter_context.as_ref())
         .filter_map(|context| context.workspace_path.clone())
+        .chain(
+            entity
+                .process_lineage
+                .iter()
+                .filter_map(|lineage| lineage.workspace.clone()),
+        )
         .filter(|workspace| !workspace.is_empty())
         .collect()
 }
@@ -5138,6 +5156,110 @@ mod tests {
     }
 
     #[test]
+    fn process_tree_report_includes_lineage_only_children() {
+        let snapshot = SystemSnapshot {
+            captured_at_millis: 123,
+            entities: vec![aetower_model::EntitySnapshot {
+                entity_id: "chrome".to_owned(),
+                display_name: "Google Chrome".to_owned(),
+                components: vec![aetower_model::ComponentSnapshot {
+                    title: "Google Chrome".to_owned(),
+                    process_id: Some(42_000),
+                    cpu_percent: 5.0,
+                    memory_bytes: 100,
+                    ..aetower_model::ComponentSnapshot::default()
+                }],
+                process_lineage: vec![
+                    aetower_model::ProcessLineageNode {
+                        pid: 42_000,
+                        entity_id: "chrome".to_owned(),
+                        title: "Google Chrome".to_owned(),
+                        source: "esf".to_owned(),
+                        confidence: 0.95,
+                        ..aetower_model::ProcessLineageNode::default()
+                    },
+                    aetower_model::ProcessLineageNode {
+                        pid: 42_001,
+                        parent_pid: Some(42_000),
+                        entity_id: "chrome".to_owned(),
+                        title: "Chrome Renderer".to_owned(),
+                        cpu_percent: 3.0,
+                        memory_bytes: 50,
+                        source: "esf".to_owned(),
+                        confidence: 0.95,
+                        ..aetower_model::ProcessLineageNode::default()
+                    },
+                ],
+                ..aetower_model::EntitySnapshot::default()
+            }],
+            ..SystemSnapshot::default()
+        };
+        let report = build_process_tree_report(&snapshot, "chrome")
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(report.grouped_process_count, 2);
+        assert_eq!(report.roots.len(), 1);
+        assert_eq!(report.roots[0].pid, Some(42_000));
+        assert_eq!(report.roots[0].children.len(), 1);
+        assert_eq!(report.roots[0].children[0].pid, Some(42_001));
+        assert_eq!(report.roots[0].subtree_process_count, 2);
+    }
+
+    #[test]
+    fn process_inspection_attributes_lineage_only_pid() {
+        let snapshot = SystemSnapshot {
+            sequence: 1,
+            captured_at_millis: 123,
+            entities: vec![aetower_model::EntitySnapshot {
+                entity_id: "chrome".to_owned(),
+                display_name: "Google Chrome".to_owned(),
+                process_lineage: vec![
+                    aetower_model::ProcessLineageNode {
+                        pid: 42_000,
+                        entity_id: "chrome".to_owned(),
+                        title: "Google Chrome".to_owned(),
+                        source: "esf".to_owned(),
+                        confidence: 0.95,
+                        ..aetower_model::ProcessLineageNode::default()
+                    },
+                    aetower_model::ProcessLineageNode {
+                        pid: 42_001,
+                        parent_pid: Some(42_000),
+                        entity_id: "chrome".to_owned(),
+                        title: "Chrome Renderer".to_owned(),
+                        executable_path: Some(
+                            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+                                .to_owned(),
+                        ),
+                        command_line: Some("Google Chrome --type=renderer".to_owned()),
+                        cpu_percent: 3.0,
+                        memory_bytes: 50,
+                        source: "esf".to_owned(),
+                        confidence: 0.95,
+                        ..aetower_model::ProcessLineageNode::default()
+                    },
+                ],
+                ..aetower_model::EntitySnapshot::default()
+            }],
+            ..SystemSnapshot::default()
+        };
+        let report = build_process_inspection(&ProcessSnapshotSource { snapshot }, 42_001)
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(report.entity_id.as_deref(), Some("chrome"));
+        assert_eq!(report.display_name.as_deref(), Some("Google Chrome"));
+        assert_eq!(report.component_title.as_deref(), Some("Chrome Renderer"));
+        assert_eq!(report.parent_pid, Some(42_000));
+        assert_eq!(report.sibling_process_count, 2);
+        assert!(
+            !report
+                .safety_notes
+                .iter()
+                .any(|note| note.contains("not currently attributed"))
+        );
+    }
+
+    #[test]
     fn process_action_dry_run_does_not_signal() {
         let report =
             build_process_action(&FakeSource, 42, "terminate", true, Some("test".to_owned()))
@@ -5386,6 +5508,57 @@ mod tests {
         assert_eq!(plan.signal, "TERM");
         assert_eq!(plan.target_pids, vec![10, 11, 12]);
         assert_eq!(plan.command, "/bin/kill -TERM 10 11 12");
+    }
+
+    #[test]
+    fn process_action_plan_expands_lineage_only_tree_from_snapshot() {
+        let snapshot = SystemSnapshot {
+            entities: vec![aetower_model::EntitySnapshot {
+                entity_id: "tree".to_owned(),
+                display_name: "Tree".to_owned(),
+                components: vec![aetower_model::ComponentSnapshot {
+                    title: "Root proc".to_owned(),
+                    process_id: Some(42_000),
+                    ..aetower_model::ComponentSnapshot::default()
+                }],
+                process_lineage: vec![
+                    aetower_model::ProcessLineageNode {
+                        pid: 42_000,
+                        entity_id: "tree".to_owned(),
+                        title: "Root proc".to_owned(),
+                        source: "snapshot".to_owned(),
+                        confidence: 1.0,
+                        ..aetower_model::ProcessLineageNode::default()
+                    },
+                    aetower_model::ProcessLineageNode {
+                        pid: 42_001,
+                        parent_pid: Some(42_000),
+                        entity_id: "tree".to_owned(),
+                        title: "Child proc".to_owned(),
+                        source: "snapshot".to_owned(),
+                        confidence: 1.0,
+                        ..aetower_model::ProcessLineageNode::default()
+                    },
+                    aetower_model::ProcessLineageNode {
+                        pid: 42_002,
+                        parent_pid: Some(42_001),
+                        entity_id: "tree".to_owned(),
+                        title: "Grandchild proc".to_owned(),
+                        source: "snapshot".to_owned(),
+                        confidence: 1.0,
+                        ..aetower_model::ProcessLineageNode::default()
+                    },
+                ],
+                ..aetower_model::EntitySnapshot::default()
+            }],
+            ..SystemSnapshot::default()
+        };
+        let plan = process_action_plan(Some(&snapshot), 42_000, "terminate-tree")
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(plan.normalized_action, "terminate-tree");
+        assert_eq!(plan.target_pids, vec![42_000, 42_001, 42_002]);
+        assert_eq!(plan.command, "/bin/kill -TERM 42000 42001 42002");
     }
 
     #[test]

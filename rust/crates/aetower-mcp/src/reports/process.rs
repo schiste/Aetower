@@ -1,8 +1,10 @@
 //! Process-domain report builders for the MCP server.
 
-use aetower_model::SystemSnapshot;
+use std::collections::{BTreeMap, BTreeSet};
+
 #[cfg(test)]
 use aetower_model::classify_signature;
+use aetower_model::{ComponentKind, ComponentSnapshot, ProcessLineageNode, SystemSnapshot};
 use serde_json::Value;
 
 use crate::*;
@@ -139,32 +141,127 @@ pub(crate) fn process_dynamic_tool_request(
     }
 }
 
-pub(crate) fn entity_process_ids(entity: &aetower_model::EntitySnapshot) -> Vec<u32> {
-    let mut process_ids = entity
+pub(crate) fn entity_process_components(
+    entity: &aetower_model::EntitySnapshot,
+) -> Vec<ComponentSnapshot> {
+    let mut components_by_pid = BTreeMap::<u32, ComponentSnapshot>::new();
+    let mut components_without_pid = Vec::new();
+    for component in entity
         .components
         .iter()
-        .filter_map(|component| {
-            (component.kind != aetower_model::ComponentKind::AdapterContext)
+        .filter(|component| component.kind != ComponentKind::AdapterContext)
+    {
+        if let Some(pid) = component.process_id {
+            components_by_pid.insert(pid, component.clone());
+        } else {
+            components_without_pid.push(component.clone());
+        }
+    }
+
+    for lineage in &entity.process_lineage {
+        if lineage.pid == 0 {
+            continue;
+        }
+        if let Some(component) = components_by_pid.get_mut(&lineage.pid) {
+            merge_lineage_into_component(component, lineage);
+        } else {
+            components_by_pid.insert(lineage.pid, component_from_lineage(lineage));
+        }
+    }
+
+    components_without_pid.extend(components_by_pid.into_values());
+    components_without_pid
+}
+
+pub(crate) fn entity_process_ids(entity: &aetower_model::EntitySnapshot) -> Vec<u32> {
+    entity
+        .process_lineage
+        .iter()
+        .map(|lineage| lineage.pid)
+        .chain(entity.components.iter().filter_map(|component| {
+            (component.kind != ComponentKind::AdapterContext)
                 .then_some(component.process_id)
                 .flatten()
-        })
-        .collect::<Vec<_>>();
-    process_ids.sort_unstable();
-    process_ids.dedup();
-    process_ids
+        }))
+        .filter(|pid| *pid != 0)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 pub(crate) fn process_child_pids(snapshot: &SystemSnapshot, pid: u32) -> Vec<u32> {
     let mut child_pids = snapshot
         .entities
         .iter()
-        .flat_map(|entity| &entity.components)
+        .flat_map(entity_process_components)
         .filter(|component| extract_parent_pid(component.parent_summary.as_deref()) == Some(pid))
         .filter_map(|component| component.process_id)
         .collect::<Vec<_>>();
     child_pids.sort_unstable();
     child_pids.dedup();
     child_pids
+}
+
+fn component_from_lineage(lineage: &ProcessLineageNode) -> ComponentSnapshot {
+    ComponentSnapshot {
+        kind: ComponentKind::Process,
+        title: lineage.title.clone(),
+        detail: format!(
+            "lineage source: {}; confidence: {:.0}%",
+            lineage.source,
+            (lineage.confidence * 100.0).clamp(0.0, 100.0)
+        ),
+        process_id: Some(lineage.pid),
+        start_time_millis: lineage.start_time_millis,
+        executable_path: lineage.executable_path.clone(),
+        command_line: lineage.command_line.clone(),
+        parent_summary: lineage
+            .parent_pid
+            .map(|parent_pid| format!("parent pid {parent_pid}")),
+        cpu_percent: lineage.cpu_percent,
+        memory_bytes: lineage.memory_bytes,
+        memory_physical_footprint_bytes: lineage.memory_physical_footprint_bytes,
+        cwd: lineage.cwd.clone(),
+        user: lineage.user.clone(),
+        thread_count: lineage.thread_count,
+        ..ComponentSnapshot::default()
+    }
+}
+
+fn merge_lineage_into_component(component: &mut ComponentSnapshot, lineage: &ProcessLineageNode) {
+    if component.parent_summary.is_none() {
+        component.parent_summary = lineage
+            .parent_pid
+            .map(|parent_pid| format!("parent pid {parent_pid}"));
+    }
+    if component.start_time_millis == 0 {
+        component.start_time_millis = lineage.start_time_millis;
+    }
+    if component.executable_path.is_none() {
+        component.executable_path = lineage.executable_path.clone();
+    }
+    if component.command_line.is_none() {
+        component.command_line = lineage.command_line.clone();
+    }
+    if component.cwd.is_none() {
+        component.cwd = lineage.cwd.clone();
+    }
+    if component.user.is_none() {
+        component.user = lineage.user.clone();
+    }
+    if component.thread_count == 0 {
+        component.thread_count = lineage.thread_count;
+    }
+    if component.memory_physical_footprint_bytes == 0 {
+        component.memory_physical_footprint_bytes = lineage.memory_physical_footprint_bytes;
+    }
+    if component.detail.is_empty() {
+        component.detail = format!(
+            "lineage source: {}; confidence: {:.0}%",
+            lineage.source,
+            (lineage.confidence * 100.0).clamp(0.0, 100.0)
+        );
+    }
 }
 
 pub(crate) fn validate_pid(pid: u32) -> Result<(), String> {

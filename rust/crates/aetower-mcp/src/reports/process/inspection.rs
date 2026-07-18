@@ -141,7 +141,7 @@ pub(crate) fn process_component_context(
     pid: u32,
 ) -> Option<ProcessComponentContext> {
     for entity in &snapshot.entities {
-        for component in &entity.components {
+        for component in entity_process_components(entity) {
             if component.process_id != Some(pid) {
                 continue;
             }

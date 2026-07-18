@@ -2283,7 +2283,9 @@ public final class AppState {
     /// subjects (plus one grace pass) caps long-session memory growth.
     private func pruneOnDemandReportCaches(snapshot: SystemSnapshot) {
         let liveEntityIds = Set(snapshot.entities.map(\.entityId))
-        let livePids = Set(snapshot.entities.flatMap { $0.components.compactMap(\.processId) })
+        let componentPids = snapshot.entities.flatMap { $0.components.compactMap(\.processId) }
+        let lineagePids = snapshot.entities.flatMap { $0.processLineage.map(\.pid) }
+        let livePids = Set(componentPids + lineagePids)
 
         let entityKeys = Set(entityAnomalyExplanations.keys)
             .union(entityProcessTreeReports.keys)
