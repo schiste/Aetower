@@ -40,6 +40,7 @@ const PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 // hammered on the normal polling cadence. Success or reconfiguration resets it.
 const ADAPTER_REFRESH_BACKOFF_CAP_MILLIS: u64 = 5 * 60 * 1000;
 const ADAPTER_REFRESH_BACKOFF_MAX_SHIFT: u32 = 8;
+const CHROMIUM_PEER_UNAVAILABLE_BACKOFF_CAP_MILLIS: u64 = 30 * 1000;
 const CHROMIUM_FETCH_BUDGET: Duration = Duration::from_millis(750);
 const DOCKER_FETCH_BUDGET: Duration = Duration::from_millis(750);
 const ADAPTER_HTTP_READ_CHUNK_BYTES: usize = 8 * 1024;
@@ -1421,9 +1422,9 @@ fn refresh_chromium_cache(state: &Arc<Mutex<AdapterState>>) {
     let now = time::now_millis();
     let fetch_plan = {
         let guard = state.lock();
-        let refresh_interval_millis = adapter_refresh_interval_millis(
-            CHROMIUM_REFRESH_INTERVAL_MILLIS,
+        let refresh_interval_millis = chromium_refresh_interval_millis(
             guard.chromium_consecutive_failures,
+            guard.chromium_last_error.as_deref(),
         );
         let is_stale =
             now.saturating_sub(guard.last_chromium_fetch_millis) >= refresh_interval_millis;
@@ -1471,16 +1472,18 @@ fn refresh_chromium_cache(state: &Arc<Mutex<AdapterState>>) {
         }
         Err(error) => {
             let mut guard = state.lock();
+            if is_peer_unavailable_adapter_error(&error) {
+                guard.chromium_samples.clear();
+                guard.cached_chromium_targets.clear();
+            }
             guard.last_chromium_fetch_millis = now;
             guard.chromium_last_error = Some(error);
             guard.chromium_consecutive_failures =
                 guard.chromium_consecutive_failures.saturating_add(1);
             let error = guard.chromium_last_error.clone().unwrap_or_default();
             let consecutive_failures = guard.chromium_consecutive_failures;
-            let next_retry_interval_millis = adapter_refresh_interval_millis(
-                CHROMIUM_REFRESH_INTERVAL_MILLIS,
-                consecutive_failures,
-            );
+            let next_retry_interval_millis =
+                chromium_refresh_interval_millis(consecutive_failures, Some(&error));
             drop(guard);
             emit_adapter_refresh_event(
                 state,
@@ -2057,6 +2060,16 @@ fn adapter_refresh_interval_millis(base_interval_millis: u64, consecutive_failur
         .min(ADAPTER_REFRESH_BACKOFF_CAP_MILLIS)
 }
 
+fn chromium_refresh_interval_millis(consecutive_failures: u32, last_error: Option<&str>) -> u64 {
+    let interval =
+        adapter_refresh_interval_millis(CHROMIUM_REFRESH_INTERVAL_MILLIS, consecutive_failures);
+    if last_error.is_some_and(is_peer_unavailable_adapter_error) {
+        interval.min(CHROMIUM_PEER_UNAVAILABLE_BACKOFF_CAP_MILLIS)
+    } else {
+        interval
+    }
+}
+
 fn adapter_refresh_failure_level(error: &str) -> DiagnosticsLevel {
     if is_peer_unavailable_adapter_error(error) {
         DiagnosticsLevel::Warn
@@ -2089,13 +2102,26 @@ fn capability_status(state: &AdapterState, kind: &CapabilityKind) -> (Capability
     let now = time::now_millis();
     match kind {
         CapabilityKind::ChromiumDebug => match state.chromium_endpoint.as_deref() {
-            Some(raw) if parse_http_endpoint(raw).is_some() => (
-                CapabilityState::Granted,
-                format!(
-                    "Chromium target discovery configured at {raw}. {}",
-                    chromium_runtime_detail(state, now)
-                ),
-            ),
+            Some(raw) if parse_http_endpoint(raw).is_some() => {
+                let detail = chromium_runtime_detail(state, now);
+                if state
+                    .chromium_last_error
+                    .as_deref()
+                    .is_some_and(is_peer_unavailable_adapter_error)
+                {
+                    (
+                        CapabilityState::Unavailable,
+                        format!(
+                            "Chromium target discovery configured at {raw}, but the endpoint is currently unreachable. {detail}"
+                        ),
+                    )
+                } else {
+                    (
+                        CapabilityState::Granted,
+                        format!("Chromium target discovery configured at {raw}. {detail}"),
+                    )
+                }
+            }
             Some(raw) => (
                 CapabilityState::Denied,
                 format!("Chromium endpoint is invalid: {raw}."),
@@ -2244,7 +2270,10 @@ fn capability_health(state: &AdapterState, kind: &CapabilityKind, now: u64) -> C
             state.last_chromium_success_millis,
             state.last_chromium_fetch_millis,
             state.chromium_last_error.as_deref(),
-            CHROMIUM_REFRESH_INTERVAL_MILLIS,
+            chromium_refresh_interval_millis(
+                state.chromium_consecutive_failures,
+                state.chromium_last_error.as_deref(),
+            ),
             now,
         ),
         CapabilityKind::DockerSocket => {
@@ -2325,7 +2354,10 @@ fn chromium_runtime_detail(state: &AdapterState, now: u64) -> String {
         state.last_chromium_success_millis,
         state.last_chromium_fetch_millis,
         state.chromium_last_error.as_deref(),
-        CHROMIUM_REFRESH_INTERVAL_MILLIS,
+        chromium_refresh_interval_millis(
+            state.chromium_consecutive_failures,
+            state.chromium_last_error.as_deref(),
+        ),
         now,
     )
 }
@@ -4138,9 +4170,10 @@ mod tests {
         DockerBlkioEntry, DockerContainerStats, DockerContainerSummary, DockerNetworkStats,
         EndpointSecurityLifecycleEvent, EndpointSecuritySample, EndpointSecurityStatusSnapshot,
         adapter_refresh_failure_level, adapter_refresh_interval_millis, adapter_runtime_detail,
-        capability_status, docker_block_io_totals, docker_cpu_percent, docker_network_totals,
-        endpoint_security_runtime_detail, enrich_vscode_entity, enrich_with_endpoint_security,
-        parse_connection_string, parse_http_endpoint, read_http_body, resolved_chau7_socket_path,
+        capability_status, chromium_refresh_interval_millis, docker_block_io_totals,
+        docker_cpu_percent, docker_network_totals, endpoint_security_runtime_detail,
+        enrich_vscode_entity, enrich_with_endpoint_security, parse_connection_string,
+        parse_http_endpoint, read_http_body, resolved_chau7_socket_path,
         sanitize_chau7_socket_path, workspace_hint_from_command_line,
     };
 
@@ -4313,6 +4346,22 @@ mod tests {
     }
 
     #[test]
+    fn chromium_capability_is_unavailable_when_endpoint_is_refused() {
+        let state = AdapterState {
+            chromium_endpoint: Some("http://127.0.0.1:9222/json/list".to_owned()),
+            last_chromium_fetch_millis: 20_000,
+            chromium_last_error: Some("tcp connect failed: Connection refused".to_owned()),
+            chromium_consecutive_failures: 3,
+            ..AdapterState::default()
+        };
+        let (capability_state, detail) = capability_status(&state, &CapabilityKind::ChromiumDebug);
+
+        assert_eq!(capability_state, CapabilityState::Unavailable);
+        assert!(detail.contains("currently unreachable"));
+        assert!(detail.contains("Connection refused"));
+    }
+
+    #[test]
     fn adapter_runtime_detail_reports_live_cached_and_errors() {
         let live = adapter_runtime_detail("tabs", 3, 20_000, 20_000, None, 10_000, 25_000);
         assert!(live.contains("status live"));
@@ -4342,6 +4391,23 @@ mod tests {
         assert_eq!(adapter_refresh_interval_millis(30_000, 3), 240_000);
         assert_eq!(adapter_refresh_interval_millis(30_000, 4), 300_000);
         assert_eq!(adapter_refresh_interval_millis(30_000, 12), 300_000);
+    }
+
+    #[test]
+    fn chromium_peer_unavailable_retry_stays_responsive() {
+        assert_eq!(chromium_refresh_interval_millis(0, None), 10_000);
+        assert_eq!(
+            chromium_refresh_interval_millis(4, Some("tcp connect failed: Connection refused")),
+            30_000
+        );
+        assert_eq!(
+            chromium_refresh_interval_millis(12, Some("tcp connect failed: Connection refused")),
+            30_000
+        );
+        assert_eq!(
+            chromium_refresh_interval_millis(12, Some("invalid chromium json")),
+            300_000
+        );
     }
 
     #[test]
