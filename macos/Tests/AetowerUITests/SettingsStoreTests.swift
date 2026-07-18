@@ -45,6 +45,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.autoRegisterLocalMcpClientsEnabled)
         XCTAssertTrue(store.localMcpOperatorActionsEnabled)
         XCTAssertFalse(store.fleetEnabled)
+        XCTAssertFalse(store.browserTabAutomationEnabled)
         XCTAssertEqual(store.telemetryEndpoint, SettingsStore.defaultTelemetryEndpoint)
         XCTAssertEqual(store.chau7AgentCommand, SettingsStore.defaultChau7AgentCommand)
         XCTAssertEqual(store.collectionProfile, .balanced)
@@ -57,6 +58,7 @@ final class SettingsStoreTests: XCTestCase {
 
         XCTAssertFalse(store.privilegedHelperEnabled)
         XCTAssertFalse(store.telemetryEnabled)
+        XCTAssertFalse(store.browserTabAutomationEnabled)
         XCTAssertFalse(store.autoRegisterLocalMcpClientsEnabled)
         XCTAssertTrue(store.localMcpOperatorActionsEnabled)
         XCTAssertFalse(store.fleetEnabled)
@@ -104,6 +106,20 @@ final class SettingsStoreTests: XCTestCase {
 
         let reloaded = SettingsStore(defaults: defaults)
         XCTAssertTrue(reloaded.fleetEnabled)
+    }
+
+    func testBrowserTabAutomationPreferencePersistsAndDefaultsOff() {
+        let suiteName = "AetowerSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertFalse(SettingsStore(defaults: defaults).browserTabAutomationEnabled)
+
+        let store = SettingsStore(defaults: defaults)
+        store.browserTabAutomationEnabled = true
+
+        let reloaded = SettingsStore(defaults: defaults)
+        XCTAssertTrue(reloaded.browserTabAutomationEnabled)
     }
 
     func testRepositoryRootsDefaultToRepositoryOnlyLocations() {

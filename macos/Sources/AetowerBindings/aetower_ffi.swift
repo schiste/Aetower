@@ -750,6 +750,8 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
 
     func storageScanStatusJson(jobId: String)  -> JsonQueryResult
 
+    func updateBrowserTabContext(tabs: [BrowserTabContextSnapshot])
+
     func updateFrontmostAppState(state: FrontmostAppState)
 
     func updateUiLagMetrics(metrics: UiLagMetrics)
@@ -1452,6 +1454,13 @@ open func storageScanStatusJson(jobId: String) -> JsonQueryResult  {
         FfiConverterString.lower(jobId),$0
     )
 })
+}
+
+open func updateBrowserTabContext(tabs: [BrowserTabContextSnapshot])  {try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_update_browser_tab_context(self.uniffiClonePointer(),
+        FfiConverterSequenceTypeBrowserTabContextSnapshot.lower(tabs),$0
+    )
+}
 }
 
 open func updateFrontmostAppState(state: FrontmostAppState)  {try! rustCall() {
@@ -2578,6 +2587,140 @@ public func FfiConverterTypeBootSessionSnapshot_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeBootSessionSnapshot_lower(_ value: BootSessionSnapshot) -> RustBuffer {
     return FfiConverterTypeBootSessionSnapshot.lower(value)
+}
+
+
+public struct BrowserTabContextSnapshot {
+    public var browserBundleId: String
+    public var browserName: String
+    public var title: String
+    public var url: String
+    public var windowIndex: UInt32
+    public var tabIndex: UInt32
+    public var active: Bool
+    public var source: String
+    public var capturedAtMillis: UInt64
+    public var confidence: AttributionConfidence
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(browserBundleId: String, browserName: String, title: String, url: String, windowIndex: UInt32, tabIndex: UInt32, active: Bool, source: String, capturedAtMillis: UInt64, confidence: AttributionConfidence) {
+        self.browserBundleId = browserBundleId
+        self.browserName = browserName
+        self.title = title
+        self.url = url
+        self.windowIndex = windowIndex
+        self.tabIndex = tabIndex
+        self.active = active
+        self.source = source
+        self.capturedAtMillis = capturedAtMillis
+        self.confidence = confidence
+    }
+}
+
+#if compiler(>=6)
+extension BrowserTabContextSnapshot: Sendable {}
+#endif
+
+
+extension BrowserTabContextSnapshot: Equatable, Hashable {
+    public static func ==(lhs: BrowserTabContextSnapshot, rhs: BrowserTabContextSnapshot) -> Bool {
+        if lhs.browserBundleId != rhs.browserBundleId {
+            return false
+        }
+        if lhs.browserName != rhs.browserName {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.url != rhs.url {
+            return false
+        }
+        if lhs.windowIndex != rhs.windowIndex {
+            return false
+        }
+        if lhs.tabIndex != rhs.tabIndex {
+            return false
+        }
+        if lhs.active != rhs.active {
+            return false
+        }
+        if lhs.source != rhs.source {
+            return false
+        }
+        if lhs.capturedAtMillis != rhs.capturedAtMillis {
+            return false
+        }
+        if lhs.confidence != rhs.confidence {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(browserBundleId)
+        hasher.combine(browserName)
+        hasher.combine(title)
+        hasher.combine(url)
+        hasher.combine(windowIndex)
+        hasher.combine(tabIndex)
+        hasher.combine(active)
+        hasher.combine(source)
+        hasher.combine(capturedAtMillis)
+        hasher.combine(confidence)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBrowserTabContextSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BrowserTabContextSnapshot {
+        return
+            try BrowserTabContextSnapshot(
+                browserBundleId: FfiConverterString.read(from: &buf),
+                browserName: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                url: FfiConverterString.read(from: &buf),
+                windowIndex: FfiConverterUInt32.read(from: &buf),
+                tabIndex: FfiConverterUInt32.read(from: &buf),
+                active: FfiConverterBool.read(from: &buf),
+                source: FfiConverterString.read(from: &buf),
+                capturedAtMillis: FfiConverterUInt64.read(from: &buf),
+                confidence: FfiConverterTypeAttributionConfidence.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BrowserTabContextSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.browserBundleId, into: &buf)
+        FfiConverterString.write(value.browserName, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.url, into: &buf)
+        FfiConverterUInt32.write(value.windowIndex, into: &buf)
+        FfiConverterUInt32.write(value.tabIndex, into: &buf)
+        FfiConverterBool.write(value.active, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+        FfiConverterUInt64.write(value.capturedAtMillis, into: &buf)
+        FfiConverterTypeAttributionConfidence.write(value.confidence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBrowserTabContextSnapshot_lift(_ buf: RustBuffer) throws -> BrowserTabContextSnapshot {
+    return try FfiConverterTypeBrowserTabContextSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBrowserTabContextSnapshot_lower(_ value: BrowserTabContextSnapshot) -> RustBuffer {
+    return FfiConverterTypeBrowserTabContextSnapshot.lower(value)
 }
 
 
@@ -11774,6 +11917,31 @@ fileprivate struct FfiConverterSequenceTypeBluetoothDeviceBattery: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeBrowserTabContextSnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = [BrowserTabContextSnapshot]
+
+    public static func write(_ value: [BrowserTabContextSnapshot], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBrowserTabContextSnapshot.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BrowserTabContextSnapshot] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [BrowserTabContextSnapshot]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBrowserTabContextSnapshot.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeCapabilitySnapshot: FfiConverterRustBuffer {
     typealias SwiftType = [CapabilitySnapshot]
 
@@ -12560,6 +12728,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_scan_status_json() != 33708) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_update_browser_tab_context() != 425) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_update_frontmost_app_state() != 57149) {

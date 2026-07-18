@@ -204,6 +204,21 @@ pub struct AdapterContextSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BrowserTabContextSnapshot {
+    pub browser_bundle_id: String,
+    pub browser_name: String,
+    pub title: String,
+    pub url: String,
+    pub window_index: u32,
+    pub tab_index: u32,
+    pub active: bool,
+    pub source: String,
+    pub captured_at_millis: u64,
+    #[serde(default)]
+    pub confidence: AttributionConfidence,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HostSnapshot {
     pub cpu_percent: f32,
     pub memory_used_bytes: u64,

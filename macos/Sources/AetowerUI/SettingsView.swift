@@ -354,10 +354,21 @@ public struct SettingsView: View {
 
     private var browserAttributionIsBusy: Bool {
         switch browserAttributionState {
-        case .checking, .launching:
+        case .checking, .checkingCurrentChrome, .launching:
             return true
         case .notConfigured, .connected, .failed:
             return false
+        }
+    }
+
+    private var currentChromeAttributionActionTitle: String {
+        switch browserAttributionState {
+        case .checkingCurrentChrome:
+            return "Checking Chrome..."
+        default:
+            return integrationDraft.browserTabAutomationEnabled
+                ? "Refresh Current Chrome"
+                : "Connect Current Chrome"
         }
     }
 
@@ -367,15 +378,73 @@ public struct SettingsView: View {
             return "Opening Chrome..."
         case .checking:
             return "Checking..."
+        case .checkingCurrentChrome:
+            return "Open Dedicated Chrome"
         case .connected:
             return "Open Dedicated Chrome"
         case .failed, .notConfigured:
-            return browserAttributionEndpoint.isEmpty ? "Enable Browser Attribution" : "Open Dedicated Chrome"
+            return "Open Dedicated Chrome"
         }
     }
 
     private var browserAttributionPresentation: (badge: String, color: Color, detail: String) {
+        if integrationDraft.browserTabAutomationEnabled {
+            if browserAttributionState == .launching {
+                return (
+                    "Opening",
+                    AetowerDesign.Status.ready,
+                    "Opening a dedicated Chrome profile and waiting for the local debug endpoint."
+                )
+            }
+            if browserAttributionState == .checking {
+                return (
+                    "Checking",
+                    AetowerDesign.Status.ready,
+                    "Testing the configured browser debug endpoint."
+                )
+            }
+            if case .failed(let message) = browserAttributionState, !browserAttributionEndpoint.isEmpty {
+                return ("Attention", AetowerDesign.Status.warning, message)
+            }
+            if let error = state.browserTabAutomationError, !error.isEmpty {
+                return ("Attention", AetowerDesign.Status.warning, error)
+            }
+            if let summary = state.browserTabAutomationSummary {
+                guard summary.running else {
+                    return (
+                        "Chrome closed",
+                        AetowerDesign.Status.neutral,
+                        "Current Chrome tab discovery is enabled. Open Google Chrome and Aetower will attach real tab metadata to Monitor."
+                    )
+                }
+                let tabLabel = summary.tabCount == 1 ? "tab" : "tabs"
+                return (
+                    "Current Chrome",
+                    AetowerDesign.Status.success,
+                    "Aetower can read \(summary.tabCount) real Chrome \(tabLabel) via macOS Automation."
+                )
+            }
+            if browserAttributionState == .checkingCurrentChrome {
+                return (
+                    "Checking",
+                    AetowerDesign.Status.ready,
+                    "macOS may ask you to allow Aetower to read Google Chrome tab metadata."
+                )
+            }
+            return (
+                "Enabled",
+                AetowerDesign.Status.ready,
+                "Current Chrome tab discovery is enabled and will refresh in the background."
+            )
+        }
+
         switch browserAttributionState {
+        case .checkingCurrentChrome:
+            return (
+                "Checking",
+                AetowerDesign.Status.ready,
+                "macOS may ask you to allow Aetower to read Google Chrome tab metadata."
+            )
         case .launching:
             return ("Opening", AetowerDesign.Status.ready, "Opening a dedicated Chrome profile and waiting for the local debug endpoint.")
         case .checking:
@@ -408,7 +477,7 @@ public struct SettingsView: View {
                 return (
                     "Not enabled",
                     AetowerDesign.Status.neutral,
-                    "Browser tab attribution is off. Use the button above to open a dedicated Chrome window."
+                    "Browser tab attribution is off. Connect Current Chrome to show real tab metadata in Monitor."
                 )
             }
             return (
@@ -1169,21 +1238,37 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                 SettingsSetupCard(
                     title: "Browser tabs",
-                    subtitle: "Open a dedicated Chrome profile so Aetower can attribute browser load to tabs.",
+                    subtitle: "Connect the Chrome you already use, with an advanced debug option for runtime counters.",
                     systemImage: "globe",
                     badge: browserPresentation.badge,
                     color: browserPresentation.color
                 ) {
-                    Text("Aetower uses a separate Chrome profile for this integration. When enabled, local tab titles, URLs, JS heap, DOM size, and network activity can be shown in Monitor without exposing your normal Chrome profile.")
+                    Text("Default mode reads tab titles and URLs from your running Chrome through macOS Automation. Advanced debug mode can add JS heap, DOM, and network counters for a dedicated or debug-enabled browser.")
                         .font(AetowerDesign.Typography.caption)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
 
                     HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Button(currentChromeAttributionActionTitle) {
+                            focusedField = nil
+                            enableCurrentChromeTabAttribution()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(browserAttributionIsBusy)
+
+                        if integrationDraft.browserTabAutomationEnabled {
+                            Button("Disable Current Chrome") {
+                                focusedField = nil
+                                disableCurrentChromeTabAttribution()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(browserAttributionIsBusy)
+                        }
+
                         Button(browserAttributionPrimaryActionTitle) {
                             focusedField = nil
                             enableDedicatedBrowserAttribution()
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.bordered)
                         .disabled(browserAttributionIsBusy)
 
                         Button("Test endpoint") {
@@ -1207,7 +1292,7 @@ public struct SettingsView: View {
                         .font(AetowerDesign.Typography.caption)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
 
-                    Text("Dedicated profile: \(BrowserAttributionSetup.dedicatedProfileDisplayPath)")
+                    Text("Advanced profile: \(BrowserAttributionSetup.dedicatedProfileDisplayPath)")
                         .font(AetowerDesign.Typography.caption.monospaced())
                         .foregroundStyle(AetowerDesign.Ink.tertiary)
                         .textSelection(.enabled)
@@ -2010,6 +2095,32 @@ public struct SettingsView: View {
         }
     }
 
+    private func enableCurrentChromeTabAttribution() {
+        browserAttributionState = .checkingCurrentChrome
+        integrationDraft.browserTabAutomationEnabled = true
+        settings.browserTabAutomationEnabled = true
+        state.applyIntegrationSettings(settings)
+        appliedIntegrationSnapshot = currentIntegrationSnapshot
+        applyConfirmation = "Current Chrome tab discovery enabled."
+        clearApplyConfirmationLater()
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            if browserAttributionState == .checkingCurrentChrome {
+                browserAttributionState = .notConfigured
+            }
+        }
+    }
+
+    private func disableCurrentChromeTabAttribution() {
+        integrationDraft.browserTabAutomationEnabled = false
+        settings.browserTabAutomationEnabled = false
+        state.applyIntegrationSettings(settings)
+        appliedIntegrationSnapshot = currentIntegrationSnapshot
+        browserAttributionState = .notConfigured
+        applyConfirmation = "Current Chrome tab discovery disabled."
+        clearApplyConfirmationLater()
+    }
+
     private func enableDedicatedBrowserAttribution() {
         browserAttributionState = .launching
         Task { @MainActor in
@@ -2383,6 +2494,7 @@ private struct ProviderCredentialSnapshot {
 private enum BrowserAttributionViewState: Equatable {
     case notConfigured
     case checking
+    case checkingCurrentChrome
     case launching
     case connected(BrowserAttributionEndpointSummary)
     case failed(String)
@@ -2390,6 +2502,7 @@ private enum BrowserAttributionViewState: Equatable {
 
 private struct SettingsIntegrationDraft: Equatable {
     var chromiumEndpoint = ""
+    var browserTabAutomationEnabled = false
     var dockerSocketPath = SettingsStore.defaultDockerSocketPath
     var privilegedHelperEnabled = false
     var privilegedHelperPath = ""
@@ -2423,6 +2536,7 @@ private struct SettingsIntegrationDraft: Equatable {
         cloudflareToken: String
     ) {
         chromiumEndpoint = settings.chromiumEndpoint
+        browserTabAutomationEnabled = settings.browserTabAutomationEnabled
         dockerSocketPath = settings.dockerSocketPath
         privilegedHelperEnabled = settings.privilegedHelperEnabled
         privilegedHelperPath = settings.privilegedHelperPath
@@ -2477,6 +2591,7 @@ private struct SettingsIntegrationDraft: Equatable {
     @MainActor
     func apply(to settings: SettingsStore) {
         settings.chromiumEndpoint = chromiumEndpoint
+        settings.browserTabAutomationEnabled = browserTabAutomationEnabled
         settings.dockerSocketPath = dockerSocketPath
         settings.privilegedHelperEnabled = privilegedHelperEnabled
         settings.privilegedHelperPath = privilegedHelperPath
@@ -2497,6 +2612,7 @@ private struct SettingsIntegrationDraft: Equatable {
 
 private struct SettingsIntegrationSnapshot: Equatable {
     let chromiumEndpoint: String
+    let browserTabAutomationEnabled: Bool
     let dockerSocketPath: String
     let privilegedHelperEnabled: Bool
     let privilegedHelperPath: String
@@ -2519,6 +2635,7 @@ private struct SettingsIntegrationSnapshot: Equatable {
     @MainActor
     init(_ settings: SettingsStore, virusTotalKeyDraft: String? = nil) {
         chromiumEndpoint = settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        browserTabAutomationEnabled = settings.browserTabAutomationEnabled
         dockerSocketPath = SettingsStore.normalizedDockerSocketPath(settings.dockerSocketPath)
         privilegedHelperEnabled = settings.privilegedHelperEnabled
         privilegedHelperPath = settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2554,6 +2671,7 @@ private struct SettingsIntegrationSnapshot: Equatable {
 
     init(_ draft: SettingsIntegrationDraft) {
         chromiumEndpoint = draft.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        browserTabAutomationEnabled = draft.browserTabAutomationEnabled
         dockerSocketPath = SettingsStore.normalizedDockerSocketPath(draft.dockerSocketPath)
         privilegedHelperEnabled = draft.privilegedHelperEnabled
         privilegedHelperPath = draft.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)

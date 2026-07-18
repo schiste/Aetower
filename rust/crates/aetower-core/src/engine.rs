@@ -1909,6 +1909,10 @@ impl Engine {
         self.refresh_capability(CapabilityKind::ChromiumDebug);
     }
 
+    pub fn update_browser_tab_context(&self, tabs: Vec<aetower_model::BrowserTabContextSnapshot>) {
+        self.adapters.update_browser_tab_context(tabs);
+    }
+
     pub fn configure_docker_socket_path(&self, socket_path: String) {
         self.adapters.configure_docker_socket_path(socket_path);
         self.refresh_capability(CapabilityKind::DockerSocket);

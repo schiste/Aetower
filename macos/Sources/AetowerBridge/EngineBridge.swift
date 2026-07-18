@@ -92,6 +92,10 @@ public final class EngineBridge: @unchecked Sendable {
         engine.configureChromiumEndpoint(endpoint: endpoint)
     }
 
+    public func updateBrowserTabContext(_ tabs: [BrowserTabContextSnapshot]) {
+        engine.updateBrowserTabContext(tabs: tabs)
+    }
+
     public func configureDockerSocketPath(_ socketPath: String) {
         engine.configureDockerSocketPath(socketPath: socketPath)
     }

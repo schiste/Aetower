@@ -577,6 +577,8 @@ public final class AppState {
     private(set) var resourceHoldersIsLoading = false
     private(set) var resourceHoldersError: String?
     private(set) var processSamples: [UInt32: ProcessSampleReportModel] = [:]
+    private(set) var browserTabAutomationSummary: BrowserAutomationCollectionSummary?
+    private(set) var browserTabAutomationError: String?
     private(set) var recentlyFinished: [FinishedProcessModel] = []
     /// Entity ids matched by the active advanced (Rhai) filter; nil = no filter.
     private(set) var advancedFilterEntityIds: Set<String>?
@@ -596,6 +598,10 @@ public final class AppState {
     /// notification, and anomaly evaluators keep running on fresh data.
     @ObservationIgnored private var fullSnapshotDemandReasons: [UUID: String] = [:]
     @ObservationIgnored private var frontmostTitleProbeTask: Task<Void, Never>?
+    @ObservationIgnored private var browserTabAutomationTask: Task<Void, Never>?
+    @ObservationIgnored private var browserTabAutomationEnabled = false
+    @ObservationIgnored private var lastBrowserTabAutomationProbeDate = Date.distantPast
+    @ObservationIgnored private var lastPublishedBrowserTabAutomationSignature: String?
     @ObservationIgnored private var lastInventorySignalRefreshMillis: UInt64 = 0
     @ObservationIgnored private var lastRepositoryInventoryFingerprintAuditMillis: UInt64 = 0
     @ObservationIgnored private var lastStorageEstimateRefreshMillis: UInt64 = 0
@@ -792,6 +798,8 @@ public final class AppState {
     @ObservationIgnored
     private let windowTitleProbeInterval: TimeInterval = 5.0
     @ObservationIgnored
+    private let browserTabAutomationProbeInterval: TimeInterval = 5.0
+    @ObservationIgnored
     private let historyReloadInterval: TimeInterval = 20.0
     @ObservationIgnored
     private let diagnosticsReloadInterval: TimeInterval = 2.0
@@ -958,6 +966,7 @@ public final class AppState {
                 guard !Task.isCancelled else { break }
                 await MainActor.run {
                     self.publishFrontmostState()
+                    self.refreshBrowserTabAutomation()
                     self.refresh()
                 }
             }
@@ -982,6 +991,8 @@ public final class AppState {
         refreshFetchTask = nil
         processActionRefreshTask?.cancel()
         processActionRefreshTask = nil
+        browserTabAutomationTask?.cancel()
+        browserTabAutomationTask = nil
         refreshInFlight = false
         pendingForcedRefresh = false
         workspaceActivationTask?.cancel()
@@ -1743,6 +1754,18 @@ public final class AppState {
     public func applyIntegrationSettings(_ settings: SettingsStore) {
         let chromiumEndpoint = settings.chromiumEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let privilegedHelperPath = settings.privilegedHelperPath.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        browserTabAutomationEnabled = settings.browserTabAutomationEnabled
+        if !browserTabAutomationEnabled {
+            browserTabAutomationTask?.cancel()
+            browserTabAutomationTask = nil
+            browserTabAutomationSummary = nil
+            browserTabAutomationError = nil
+            lastPublishedBrowserTabAutomationSignature = nil
+            bridge.updateBrowserTabContext([])
+        } else {
+            refreshBrowserTabAutomation(force: true)
+        }
 
         bridge.configureChromiumEndpoint(chromiumEndpoint.isEmpty ? nil : chromiumEndpoint)
         bridge.configureDockerSocketPath(SettingsStore.normalizedDockerSocketPath(settings.dockerSocketPath))
@@ -5296,6 +5319,131 @@ public final class AppState {
                 windowTitle: title
             )
         }
+    }
+
+    public func refreshBrowserTabAutomation(force: Bool = false) {
+        guard browserTabAutomationEnabled || force else { return }
+        let now = Date()
+        if !force && now.timeIntervalSince(lastBrowserTabAutomationProbeDate) < browserTabAutomationProbeInterval {
+            return
+        }
+        if let task = browserTabAutomationTask, !task.isCancelled {
+            if !force { return }
+            task.cancel()
+        }
+
+        lastBrowserTabAutomationProbeDate = now
+        browserTabAutomationTask = Task.detached(priority: .utility) { [weak self] in
+            let result: Result<BrowserAutomationCollectionSummary, Error>
+            do {
+                result = .success(try BrowserTabAutomation.collectCurrentChromeTabs())
+            } catch {
+                result = .failure(error)
+            }
+            await self?.finishBrowserTabAutomationRefresh(result)
+        }
+    }
+
+    @MainActor
+    private func finishBrowserTabAutomationRefresh(
+        _ result: Result<BrowserAutomationCollectionSummary, Error>
+    ) {
+        browserTabAutomationTask = nil
+        guard browserTabAutomationEnabled else {
+            bridge.updateBrowserTabContext([])
+            return
+        }
+
+        switch result {
+        case .success(let summary):
+            browserTabAutomationSummary = summary
+            browserTabAutomationError = summary.errorMessage
+            let signature = browserTabAutomationSignature(summary)
+            if signature != lastPublishedBrowserTabAutomationSignature {
+                bridge.updateBrowserTabContext(browserTabContexts(for: summary))
+                lastPublishedBrowserTabAutomationSignature = signature
+            }
+            let capabilityState = summary.errorMessage
+                .map(browserTabAutomationCapabilityState(for:)) ?? .granted
+            bridge.setCapability(
+                .appleAutomation,
+                state: capabilityState,
+                detail: browserTabAutomationCapabilityDetail(summary)
+            )
+        case .failure(let error):
+            let message = error.localizedDescription
+            browserTabAutomationError = message
+            browserTabAutomationSummary = nil
+            lastPublishedBrowserTabAutomationSignature = nil
+            bridge.updateBrowserTabContext([])
+            bridge.setCapability(
+                .appleAutomation,
+                state: browserTabAutomationCapabilityState(for: message),
+                detail: message
+            )
+        }
+    }
+
+    private func browserTabContexts(
+        for summary: BrowserAutomationCollectionSummary
+    ) -> [BrowserTabContextSnapshot] {
+        summary.tabs.map { tab in
+            BrowserTabContextSnapshot(
+                browserBundleId: tab.browserBundleID,
+                browserName: tab.browserName,
+                title: tab.title,
+                url: tab.url,
+                windowIndex: tab.windowIndex,
+                tabIndex: tab.tabIndex,
+                active: tab.active,
+                source: tab.source,
+                capturedAtMillis: summary.capturedAtMillis,
+                confidence: .medium
+            )
+        }
+    }
+
+    private func browserTabAutomationSignature(_ summary: BrowserAutomationCollectionSummary) -> String {
+        let tabSignature = summary.tabs.map {
+            [
+                $0.browserBundleID,
+                $0.browserName,
+                String($0.windowIndex),
+                String($0.tabIndex),
+                $0.active ? "active" : "background",
+                $0.title,
+                $0.url,
+            ].joined(separator: "\u{1f}")
+        }.joined(separator: "\u{1e}")
+        return [
+            summary.running ? "running" : "stopped",
+            summary.errorMessage ?? "",
+            tabSignature,
+        ].joined(separator: "\u{1d}")
+    }
+
+    private func browserTabAutomationCapabilityDetail(
+        _ summary: BrowserAutomationCollectionSummary
+    ) -> String {
+        if let error = summary.errorMessage, !error.isEmpty {
+            return "Aetower reached Chrome, but some tab metadata could not be read: \(error)"
+        }
+        guard summary.running else {
+            return "Current Chrome tab discovery is enabled. Google Chrome is not running."
+        }
+        let tabLabel = summary.tabCount == 1 ? "tab" : "tabs"
+        return "Aetower can read \(summary.tabCount) real Chrome \(tabLabel) via Apple Automation."
+    }
+
+    private func browserTabAutomationCapabilityState(for message: String) -> CapabilityState {
+        let normalized = message.lowercased()
+        if normalized.contains("not granted")
+            || normalized.contains("not authorized")
+            || normalized.contains("not permitted")
+        {
+            return .denied
+        }
+        return .requested
     }
 
     private func finishFrontmostTitleProbe(

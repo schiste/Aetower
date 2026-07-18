@@ -15,8 +15,9 @@ use aetower_diagnostics::{
 };
 use aetower_model::{
     AdapterContextKind, AdapterContextSnapshot, AttributionConfidence, BinaryReputation,
-    CapabilityHealth, CapabilityKind, CapabilitySnapshot, CapabilityState, ComponentKind,
-    ComponentSnapshot, EntitySnapshot, NetworkConnection, ProvenanceKind, ProvenanceSnapshot,
+    BrowserTabContextSnapshot, CapabilityHealth, CapabilityKind, CapabilitySnapshot,
+    CapabilityState, ComponentKind, ComponentSnapshot, EntitySnapshot, NetworkConnection,
+    ProvenanceKind, ProvenanceSnapshot,
 };
 use aetower_reputation::{RateLimiter, ReputationOutcome, VtClient, hash_file};
 use aetower_time as time;
@@ -70,6 +71,7 @@ const CHAU7_DEEP_MAX_AI_TABS: usize = 8;
 const CHAU7_DEEP_MAX_REPOS: usize = 3;
 const ENDPOINT_SECURITY_REFRESH_INTERVAL_MILLIS: u64 = 30_000;
 const MAX_CHROMIUM_TARGETS: usize = 5;
+const MAX_BROWSER_AUTOMATION_TABS: usize = 30;
 const MAX_DOCKER_CONTAINERS: usize = 5;
 const MAX_CHAU7_TABS: usize = 30;
 
@@ -92,6 +94,8 @@ struct AdapterState {
     chromium_consecutive_failures: u32,
     chromium_last_error: Option<String>,
     cached_chromium_targets: Vec<ChromiumPageTarget>,
+    cached_browser_tab_contexts: Vec<BrowserTabContextSnapshot>,
+    last_browser_tab_context_millis: u64,
     last_docker_fetch_millis: u64,
     last_docker_success_millis: u64,
     docker_consecutive_failures: u32,
@@ -318,6 +322,8 @@ impl Default for AdapterManager {
             chromium_consecutive_failures: 0,
             chromium_last_error: None,
             cached_chromium_targets: Vec::new(),
+            cached_browser_tab_contexts: Vec::new(),
+            last_browser_tab_context_millis: 0,
             last_docker_fetch_millis: 0,
             last_docker_success_millis: 0,
             docker_consecutive_failures: 0,
@@ -443,6 +449,27 @@ impl AdapterManager {
         guard.last_chromium_success_millis = 0;
         guard.chromium_consecutive_failures = 0;
         guard.chromium_last_error = None;
+    }
+
+    pub fn update_browser_tab_context(&self, mut tabs: Vec<BrowserTabContextSnapshot>) {
+        tabs.retain(|tab| {
+            !tab.browser_bundle_id.trim().is_empty()
+                && (!tab.title.trim().is_empty() || !tab.url.trim().is_empty())
+        });
+        tabs.sort_by(|left, right| {
+            right
+                .active
+                .cmp(&left.active)
+                .then(left.browser_bundle_id.cmp(&right.browser_bundle_id))
+                .then(left.window_index.cmp(&right.window_index))
+                .then(left.tab_index.cmp(&right.tab_index))
+                .then(left.title.cmp(&right.title))
+        });
+        tabs.truncate(MAX_BROWSER_AUTOMATION_TABS);
+
+        let mut guard = self.state.lock();
+        guard.cached_browser_tab_contexts = tabs;
+        guard.last_browser_tab_context_millis = time::now_millis();
     }
 
     pub fn configure_docker_socket_path(&self, socket_path: String) {
@@ -778,6 +805,7 @@ impl AdapterManager {
     ) {
         let (
             chromium_targets,
+            browser_tab_contexts,
             docker_containers,
             privileged_helper_sample,
             endpoint_security_sample,
@@ -794,6 +822,7 @@ impl AdapterManager {
                 .get(&CapabilityKind::ChromiumDebug)
                 .filter(|capability| capability.state == CapabilityState::Granted)
                 .map(|_| guard.cached_chromium_targets.clone());
+            let browser_tab_contexts = guard.cached_browser_tab_contexts.clone();
             let docker_containers = capabilities
                 .get(&CapabilityKind::DockerSocket)
                 .filter(|capability| capability.state == CapabilityState::Granted)
@@ -812,6 +841,7 @@ impl AdapterManager {
                 .and_then(|_| guard.cached_chau7_snapshot.clone());
             (
                 chromium_targets,
+                browser_tab_contexts,
                 docker_containers,
                 privileged_helper_sample,
                 endpoint_security_sample,
@@ -849,6 +879,71 @@ impl AdapterManager {
             }
 
             if matches!(entity.entity_kind, aetower_model::EntityKind::Browser) {
+                let automation_tabs = browser_tab_contexts
+                    .iter()
+                    .filter(|tab| browser_tab_matches_entity(tab, entity))
+                    .take(MAX_BROWSER_AUTOMATION_TABS)
+                    .collect::<Vec<_>>();
+                let has_automation_tabs = !automation_tabs.is_empty();
+                for tab in automation_tabs {
+                    entity.components.push(ComponentSnapshot {
+                        kind: ComponentKind::AdapterContext,
+                        title: browser_tab_context_title(tab),
+                        detail: browser_tab_context_detail(tab),
+                        adapter_context: Some(AdapterContextSnapshot {
+                            kind: AdapterContextKind::ChromiumTab,
+                            status: Some(tab.source.clone()),
+                            url: Some(tab.url.clone()),
+                            workspace_path: None,
+                            repo_root: None,
+                            image_name: None,
+                            session_id: None,
+                            app_version: None,
+                            build_sha: None,
+                            build_timestamp: None,
+                            build_channel: None,
+                            network_receive_bps: 0,
+                            network_send_bps: 0,
+                            disk_read_bps: 0,
+                            disk_write_bps: 0,
+                            memory_limit_bytes: 0,
+                            js_heap_total_bytes: 0,
+                            dom_nodes: 0,
+                            documents: 0,
+                            frames: 0,
+                            process_count: None,
+                            connection_count: None,
+                            ports: Vec::new(),
+                        }),
+                        provenance: Some(ProvenanceSnapshot {
+                            kind: ProvenanceKind::BrowserContext,
+                            label: "Real Chrome tab metadata".to_owned(),
+                            rule: tab.source.clone(),
+                            confidence: tab.confidence.clone(),
+                        }),
+                        process_id: None,
+                        start_time_millis: tab.captured_at_millis,
+                        executable_path: None,
+                        command_line: None,
+                        parent_summary: None,
+                        launched_by: None,
+                        cpu_percent: 0.0,
+                        memory_bytes: 0,
+                        memory_physical_footprint_bytes: 0,
+                        cwd: None,
+                        user: None,
+                        thread_count: 0,
+                    });
+                }
+                if has_automation_tabs
+                    && !entity
+                        .badges
+                        .iter()
+                        .any(|badge| badge == "chrome-automation")
+                {
+                    entity.badges.push("chrome-automation".to_owned());
+                }
+
                 if let Some(targets) = chromium_targets.as_ref() {
                     let total_network_bps = targets.iter().fold(0u64, |total, target| {
                         total.saturating_add(target.network_bps)
@@ -3650,6 +3745,65 @@ fn chromium_target_detail(target: &ChromiumPageTarget) -> String {
     parts.join(" · ")
 }
 
+fn browser_tab_matches_entity(tab: &BrowserTabContextSnapshot, entity: &EntitySnapshot) -> bool {
+    if entity.bundle_id.as_deref() == Some(tab.browser_bundle_id.as_str()) {
+        return true;
+    }
+
+    if tab.browser_bundle_id == "com.google.Chrome" {
+        if entity.display_name.contains("Google Chrome") {
+            return true;
+        }
+        if entity
+            .executable_path
+            .as_deref()
+            .is_some_and(|path| path.contains("/Google Chrome.app/"))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn browser_tab_context_title(tab: &BrowserTabContextSnapshot) -> String {
+    let title = if tab.title.trim().is_empty() {
+        tab.url
+            .trim()
+            .strip_prefix("https://")
+            .or_else(|| tab.url.trim().strip_prefix("http://"))
+            .unwrap_or_else(|| tab.url.trim())
+    } else {
+        tab.title.trim()
+    };
+    if title.is_empty() {
+        format!("Tab {}.{} · Untitled page", tab.window_index, tab.tab_index)
+    } else {
+        format!("Tab {}.{} · {}", tab.window_index, tab.tab_index, title)
+    }
+}
+
+fn browser_tab_context_detail(tab: &BrowserTabContextSnapshot) -> String {
+    let mut parts = Vec::new();
+    let url = tab.url.trim();
+    if !url.is_empty() {
+        parts.push(url.to_owned());
+    }
+    if tab.active {
+        parts.push("active tab".to_owned());
+    }
+    parts.push(browser_tab_context_source_label(&tab.source).to_owned());
+    parts.join(" · ")
+}
+
+fn browser_tab_context_source_label(source: &str) -> &'static str {
+    match source {
+        "apple-automation" => "Apple Automation metadata",
+        "chromium-debug" => "Chromium debug",
+        _ => "Browser metadata",
+    }
+}
+
 fn docker_container_detail(container: &DockerContainer) -> String {
     let mut parts = vec![
         container.image.clone(),
@@ -4159,9 +4313,9 @@ mod tests {
 
     use aetower_diagnostics::DiagnosticsLevel;
     use aetower_model::{
-        AggregateMetrics, AttributionConfidence, CapabilityHealth, CapabilitySnapshot,
-        ComponentKind, ComponentSnapshot, EntityKind, EntitySnapshot, FrictionBreakdown,
-        MetricTrend, ProvenanceKind, ProvenanceSnapshot,
+        AdapterContextKind, AggregateMetrics, AttributionConfidence, BrowserTabContextSnapshot,
+        CapabilityHealth, CapabilitySnapshot, ComponentKind, ComponentSnapshot, EntityKind,
+        EntitySnapshot, FrictionBreakdown, MetricTrend, ProvenanceKind, ProvenanceSnapshot,
     };
     use parking_lot::Mutex;
 
@@ -4359,6 +4513,71 @@ mod tests {
         assert_eq!(capability_state, CapabilityState::Unavailable);
         assert!(detail.contains("currently unreachable"));
         assert!(detail.contains("Connection refused"));
+    }
+
+    #[test]
+    fn browser_tab_automation_context_attaches_without_chromium_debug() {
+        let manager = AdapterManager::default();
+        manager.update_browser_tab_context(vec![BrowserTabContextSnapshot {
+            browser_bundle_id: "com.google.Chrome".to_owned(),
+            browser_name: "Google Chrome".to_owned(),
+            title: "Aetower".to_owned(),
+            url: "https://aetower.dev/".to_owned(),
+            window_index: 1,
+            tab_index: 2,
+            active: true,
+            source: "apple-automation".to_owned(),
+            captured_at_millis: 42,
+            confidence: AttributionConfidence::Medium,
+        }]);
+
+        let mut entities = vec![EntitySnapshot {
+            entity_id: "browser:chrome".to_owned(),
+            display_name: "Google Chrome".to_owned(),
+            bundle_id: Some("com.google.Chrome".to_owned()),
+            entity_kind: EntityKind::Browser,
+            ..EntitySnapshot::default()
+        }];
+
+        manager.enrich_entities(&mut entities, &BTreeMap::new());
+
+        let entity = &entities[0];
+        assert!(
+            entity
+                .badges
+                .iter()
+                .any(|badge| badge == "chrome-automation")
+        );
+        let component = entity
+            .components
+            .iter()
+            .find(|component| {
+                component
+                    .adapter_context
+                    .as_ref()
+                    .is_some_and(|context| context.kind == AdapterContextKind::ChromiumTab)
+            })
+            .expect("browser tab component");
+
+        assert_eq!(component.title, "Tab 1.2 · Aetower");
+        assert_eq!(
+            component.detail,
+            "https://aetower.dev/ · active tab · Apple Automation metadata"
+        );
+        assert_eq!(
+            component
+                .adapter_context
+                .as_ref()
+                .and_then(|context| context.url.as_deref()),
+            Some("https://aetower.dev/")
+        );
+        assert_eq!(
+            component
+                .provenance
+                .as_ref()
+                .map(|provenance| provenance.confidence.clone()),
+            Some(AttributionConfidence::Medium)
+        );
     }
 
     #[test]

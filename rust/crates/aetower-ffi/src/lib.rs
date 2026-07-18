@@ -194,6 +194,20 @@ pub struct AdapterContextSnapshot {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
+pub struct BrowserTabContextSnapshot {
+    pub browser_bundle_id: String,
+    pub browser_name: String,
+    pub title: String,
+    pub url: String,
+    pub window_index: u32,
+    pub tab_index: u32,
+    pub active: bool,
+    pub source: String,
+    pub captured_at_millis: u64,
+    pub confidence: AttributionConfidence,
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
 pub struct HostSnapshot {
     pub cpu_percent: f32,
     pub memory_used_bytes: u64,
@@ -1215,6 +1229,12 @@ impl MonitorEngine {
             .lock()
             .expect("engine lock poisoned")
             .configure_chromium_endpoint(endpoint);
+    }
+
+    pub fn update_browser_tab_context(&self, tabs: Vec<BrowserTabContextSnapshot>) {
+        if let Ok(engine) = self.inner.lock() {
+            engine.update_browser_tab_context(tabs.into_iter().map(Into::into).collect());
+        }
     }
 
     pub fn configure_docker_socket_path(&self, socket_path: String) {
@@ -3166,6 +3186,16 @@ impl From<model::AttributionConfidence> for AttributionConfidence {
     }
 }
 
+impl From<AttributionConfidence> for model::AttributionConfidence {
+    fn from(value: AttributionConfidence) -> Self {
+        match value {
+            AttributionConfidence::High => Self::High,
+            AttributionConfidence::Medium => Self::Medium,
+            AttributionConfidence::Low => Self::Low,
+        }
+    }
+}
+
 impl From<model::ProvenanceKind> for ProvenanceKind {
     fn from(value: model::ProvenanceKind) -> Self {
         match value {
@@ -4110,6 +4140,23 @@ impl From<FrontmostAppState> for model::FrontmostAppState {
             executable_path: value.executable_path,
             window_title: value.window_title,
             captured_at_millis: value.captured_at_millis,
+        }
+    }
+}
+
+impl From<BrowserTabContextSnapshot> for model::BrowserTabContextSnapshot {
+    fn from(value: BrowserTabContextSnapshot) -> Self {
+        Self {
+            browser_bundle_id: value.browser_bundle_id,
+            browser_name: value.browser_name,
+            title: value.title,
+            url: value.url,
+            window_index: value.window_index,
+            tab_index: value.tab_index,
+            active: value.active,
+            source: value.source,
+            captured_at_millis: value.captured_at_millis,
+            confidence: value.confidence.into(),
         }
     }
 }

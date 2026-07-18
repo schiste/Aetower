@@ -60,4 +60,62 @@ final class BrowserAttributionSetupTests: XCTestCase {
         XCTAssertEqual(page.lastPathComponent, "Aetower Browser Attribution.html")
         XCTAssertTrue(page.path.hasPrefix(profile.path))
     }
+
+    func testParseCurrentChromeAutomationTabs() throws {
+        let json = """
+        {
+          "running": true,
+          "tabs": [
+            {
+              "browserBundleID": "com.google.Chrome",
+              "browserName": "Google Chrome",
+              "title": "Aetower",
+              "url": "https://aetower.dev/",
+              "windowIndex": 1,
+              "tabIndex": 2,
+              "active": true,
+              "source": "apple-automation"
+            }
+          ],
+          "error": null
+        }
+        """
+
+        let summary = try BrowserTabAutomation.parseCollectionOutput(
+            Data(json.utf8),
+            capturedAtMillis: 123
+        )
+
+        XCTAssertTrue(summary.running)
+        XCTAssertEqual(summary.capturedAtMillis, 123)
+        XCTAssertEqual(summary.tabCount, 1)
+        XCTAssertEqual(summary.runningBrowserNames, ["Google Chrome"])
+        XCTAssertEqual(summary.tabs.first?.url, "https://aetower.dev/")
+        XCTAssertEqual(summary.tabs.first?.active, true)
+    }
+
+    func testCurrentChromeAutomationTabsAreCapped() throws {
+        let tabs = (0..<BrowserTabAutomation.maximumTabs + 3).map { index in
+            """
+            {
+              "browserBundleID": "com.google.Chrome",
+              "browserName": "Google Chrome",
+              "title": "Tab \(index)",
+              "url": "https://example.com/\(index)",
+              "windowIndex": 1,
+              "tabIndex": \(index + 1),
+              "active": false,
+              "source": "apple-automation"
+            }
+            """
+        }.joined(separator: ",")
+        let json = #"{"running":true,"tabs":["# + tabs + #"],"error":null}"#
+
+        let summary = try BrowserTabAutomation.parseCollectionOutput(
+            Data(json.utf8),
+            capturedAtMillis: 123
+        )
+
+        XCTAssertEqual(summary.tabCount, BrowserTabAutomation.maximumTabs)
+    }
 }

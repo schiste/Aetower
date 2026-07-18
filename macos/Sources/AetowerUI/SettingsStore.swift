@@ -331,6 +331,9 @@ public final class SettingsStore {
     public var chromiumEndpoint: String {
         didSet { persist() }
     }
+    public var browserTabAutomationEnabled: Bool {
+        didSet { persist() }
+    }
     public var dockerSocketPath: String {
         didSet { persist() }
     }
@@ -515,6 +518,8 @@ public final class SettingsStore {
         self.showMenuBarExtra = defaults.object(forKey: Self.showMenuBarExtraKey) as? Bool ?? true
         self.refreshIntervalSeconds = defaults.object(forKey: Self.refreshIntervalKey) as? Double ?? 2.0
         self.chromiumEndpoint = defaults.string(forKey: Self.chromiumEndpointKey) ?? ""
+        self.browserTabAutomationEnabled =
+            defaults.object(forKey: Self.browserTabAutomationEnabledKey) as? Bool ?? false
         self.dockerSocketPath = defaults.string(forKey: Self.dockerSocketPathKey) ?? Self.defaultDockerSocketPath
         self.privilegedHelperPath = defaults.string(forKey: Self.privilegedHelperPathKey)
             ?? Self.defaultPrivilegedHelperPath()
@@ -628,6 +633,7 @@ public final class SettingsStore {
     private static let showMenuBarExtraKey = "settings.showMenuBarExtra"
     private static let refreshIntervalKey = "settings.refreshIntervalSeconds"
     private static let chromiumEndpointKey = "settings.chromiumEndpoint"
+    private static let browserTabAutomationEnabledKey = "settings.browserTabAutomationEnabled"
     private static let dockerSocketPathKey = "settings.dockerSocketPath"
     private static let privilegedHelperPathKey = "settings.privilegedHelperPath"
     private static let privilegedHelperEnabledKey = "settings.privilegedHelperEnabled"
@@ -864,6 +870,7 @@ extension SettingsStore {
         showMenuBarExtra = true
         refreshIntervalSeconds = 2.0
         chromiumEndpoint = ""
+        browserTabAutomationEnabled = false
         dockerSocketPath = Self.defaultDockerSocketPath
         privilegedHelperPath = Self.defaultPrivilegedHelperPath()
         privilegedHelperEnabled = false
@@ -921,6 +928,7 @@ extension SettingsStore {
         defaults.set(showMenuBarExtra, forKey: Self.showMenuBarExtraKey)
         defaults.set(refreshIntervalSeconds, forKey: Self.refreshIntervalKey)
         defaults.set(chromiumEndpoint, forKey: Self.chromiumEndpointKey)
+        defaults.set(browserTabAutomationEnabled, forKey: Self.browserTabAutomationEnabledKey)
         defaults.set(dockerSocketPath, forKey: Self.dockerSocketPathKey)
         defaults.set(privilegedHelperPath, forKey: Self.privilegedHelperPathKey)
         defaults.set(privilegedHelperEnabled, forKey: Self.privilegedHelperEnabledKey)
