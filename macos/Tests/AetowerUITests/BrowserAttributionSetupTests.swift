@@ -33,6 +33,18 @@ final class BrowserAttributionSetupTests: XCTestCase {
         XCTAssertEqual(summary.endpoint, "http://127.0.0.1:9222/json/list")
         XCTAssertEqual(summary.pageTargetCount, 2)
         XCTAssertEqual(summary.totalTargetCount, 3)
+        XCTAssertTrue(summary.exposesPageTargets)
+    }
+
+    func testParseTargetSummaryKeepsReachableEndpointWithNoTabsDistinct() throws {
+        let summary = try BrowserAttributionSetup.parseTargetSummary(
+            from: Data("[]".utf8),
+            endpoint: BrowserAttributionSetup.defaultEndpoint
+        )
+
+        XCTAssertEqual(summary.pageTargetCount, 0)
+        XCTAssertEqual(summary.totalTargetCount, 0)
+        XCTAssertFalse(summary.exposesPageTargets)
     }
 
     func testDedicatedProfileLivesUnderAetowerApplicationSupport() {

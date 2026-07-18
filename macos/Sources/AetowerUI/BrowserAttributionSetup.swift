@@ -5,6 +5,10 @@ struct BrowserAttributionEndpointSummary: Equatable, Sendable {
     let endpoint: String
     let pageTargetCount: Int
     let totalTargetCount: Int
+
+    var exposesPageTargets: Bool {
+        pageTargetCount > 0
+    }
 }
 
 enum BrowserAttributionSetupError: Error, LocalizedError, Equatable, Sendable {

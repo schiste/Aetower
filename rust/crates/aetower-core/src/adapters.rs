@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     env,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     net::TcpStream,
     os::unix::net::UnixStream,
     path::Path,
@@ -42,6 +42,8 @@ const ADAPTER_REFRESH_BACKOFF_CAP_MILLIS: u64 = 5 * 60 * 1000;
 const ADAPTER_REFRESH_BACKOFF_MAX_SHIFT: u32 = 8;
 const CHROMIUM_FETCH_BUDGET: Duration = Duration::from_millis(750);
 const DOCKER_FETCH_BUDGET: Duration = Duration::from_millis(750);
+const ADAPTER_HTTP_READ_CHUNK_BYTES: usize = 8 * 1024;
+const MAX_ADAPTER_HTTP_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 // 30 s instead of 10 s: the chau7 adapter fires ~40 serial JSON-RPC calls per
 // refresh against Chau7's single-threaded MCP server, and at 10 s tick we left
 // no quiet windows for Chau7 to GC, persist async, or unload state. 30 s cuts
@@ -3957,20 +3959,171 @@ fn http_get_unix(socket_path: &str, path: &str, timeout: Duration) -> Result<Str
 }
 
 fn read_http_body(stream: &mut impl Read) -> Result<String, String> {
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .map_err(|error| format!("read failed: {error}"))?;
+    let mut response = Vec::new();
+    let mut buffer = [0u8; ADAPTER_HTTP_READ_CHUNK_BYTES];
 
-    let (_, body) = response
-        .split_once("\r\n\r\n")
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => return decode_http_body(&response),
+            Ok(read_bytes) => {
+                response.extend_from_slice(&buffer[..read_bytes]);
+                if response.len() > MAX_ADAPTER_HTTP_RESPONSE_BYTES {
+                    return Err(format!(
+                        "http response exceeded {} bytes",
+                        MAX_ADAPTER_HTTP_RESPONSE_BYTES
+                    ));
+                }
+                if let Some(body) = complete_http_body(&response)? {
+                    return Ok(body);
+                }
+            }
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                if let Some(body) = complete_http_body(&response)? {
+                    return Ok(body);
+                }
+                return Err(format!("read failed: {error}"));
+            }
+            Err(error) => return Err(format!("read failed: {error}")),
+        }
+    }
+}
+
+fn complete_http_body(response: &[u8]) -> Result<Option<String>, String> {
+    let Some(header_end) = find_http_header_end(response) else {
+        return Ok(None);
+    };
+    let headers = parse_http_headers(response, header_end)?;
+    let body_start = header_end + 4;
+    let body = &response[body_start..];
+
+    if let Some(content_length) = http_content_length(headers)? {
+        if body.len() < content_length {
+            return Ok(None);
+        }
+        return decode_utf8_body(&body[..content_length]).map(Some);
+    }
+
+    if http_uses_chunked_transfer(headers) {
+        return decode_chunked_body(body)?
+            .map(|bytes| decode_utf8_body(&bytes))
+            .transpose();
+    }
+
+    Ok(None)
+}
+
+fn decode_http_body(response: &[u8]) -> Result<String, String> {
+    let header_end = find_http_header_end(response)
         .ok_or_else(|| "http response missing header terminator".to_owned())?;
-    Ok(body.to_owned())
+    let headers = parse_http_headers(response, header_end)?;
+    let body_start = header_end + 4;
+    let body = &response[body_start..];
+
+    if let Some(content_length) = http_content_length(headers)? {
+        if body.len() < content_length {
+            return Err(format!(
+                "http response body incomplete: expected {content_length} bytes, got {}",
+                body.len()
+            ));
+        }
+        return decode_utf8_body(&body[..content_length]);
+    }
+
+    if http_uses_chunked_transfer(headers) {
+        let Some(decoded) = decode_chunked_body(body)? else {
+            return Err("http chunked response body incomplete".to_owned());
+        };
+        return decode_utf8_body(&decoded);
+    }
+
+    decode_utf8_body(body)
+}
+
+fn find_http_header_end(response: &[u8]) -> Option<usize> {
+    response.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn parse_http_headers(response: &[u8], header_end: usize) -> Result<&str, String> {
+    std::str::from_utf8(&response[..header_end])
+        .map_err(|error| format!("http response headers are not utf-8: {error}"))
+}
+
+fn http_content_length(headers: &str) -> Result<Option<usize>, String> {
+    for line in headers.lines().skip(1) {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.trim().eq_ignore_ascii_case("content-length") {
+            return value
+                .trim()
+                .parse::<usize>()
+                .map(Some)
+                .map_err(|error| format!("invalid content-length header: {error}"));
+        }
+    }
+    Ok(None)
+}
+
+fn http_uses_chunked_transfer(headers: &str) -> bool {
+    headers.lines().skip(1).any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.trim().eq_ignore_ascii_case("transfer-encoding")
+            && value
+                .split(',')
+                .any(|encoding| encoding.trim().eq_ignore_ascii_case("chunked"))
+    })
+}
+
+fn decode_chunked_body(body: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    let mut cursor = 0;
+    let mut decoded = Vec::new();
+
+    loop {
+        let Some(line_end) = find_crlf(&body[cursor..]) else {
+            return Ok(None);
+        };
+        let size_line = std::str::from_utf8(&body[cursor..cursor + line_end])
+            .map_err(|error| format!("http chunk header is not utf-8: {error}"))?;
+        let size_text = size_line.split(';').next().unwrap_or_default().trim();
+        let size = usize::from_str_radix(size_text, 16)
+            .map_err(|error| format!("invalid chunk size: {error}"))?;
+        cursor += line_end + 2;
+
+        if body.len() < cursor + size + 2 {
+            return Ok(None);
+        }
+        decoded.extend_from_slice(&body[cursor..cursor + size]);
+        cursor += size;
+
+        if body.get(cursor..cursor + 2) != Some(b"\r\n") {
+            return Err("malformed chunked response body".to_owned());
+        }
+        cursor += 2;
+
+        if size == 0 {
+            return Ok(Some(decoded));
+        }
+    }
+}
+
+fn find_crlf(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(2).position(|window| window == b"\r\n")
+}
+
+fn decode_utf8_body(body: &[u8]) -> Result<String, String> {
+    String::from_utf8(body.to_vec())
+        .map_err(|error| format!("http response body is not utf-8: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, sync::Arc};
+    use std::{
+        collections::BTreeMap,
+        io::{Error, ErrorKind, Read, Result as IoResult},
+        sync::Arc,
+    };
 
     use aetower_diagnostics::DiagnosticsLevel;
     use aetower_model::{
@@ -3987,9 +4140,26 @@ mod tests {
         adapter_refresh_failure_level, adapter_refresh_interval_millis, adapter_runtime_detail,
         capability_status, docker_block_io_totals, docker_cpu_percent, docker_network_totals,
         endpoint_security_runtime_detail, enrich_vscode_entity, enrich_with_endpoint_security,
-        parse_connection_string, parse_http_endpoint, resolved_chau7_socket_path,
+        parse_connection_string, parse_http_endpoint, read_http_body, resolved_chau7_socket_path,
         sanitize_chau7_socket_path, workspace_hint_from_command_line,
     };
+
+    struct WouldBlockAfterPayload {
+        payload: Vec<u8>,
+        emitted: bool,
+    }
+
+    impl Read for WouldBlockAfterPayload {
+        fn read(&mut self, buffer: &mut [u8]) -> IoResult<usize> {
+            if self.emitted {
+                return Err(Error::from(ErrorKind::WouldBlock));
+            }
+            self.emitted = true;
+            let read_bytes = self.payload.len().min(buffer.len());
+            buffer[..read_bytes].copy_from_slice(&self.payload[..read_bytes]);
+            Ok(read_bytes)
+        }
+    }
 
     #[test]
     fn parses_http_endpoint_with_explicit_path() {
@@ -4037,6 +4207,33 @@ mod tests {
         assert_eq!(parsed.target_type.as_deref(), Some("page"));
         assert_eq!(parsed.id.as_deref(), Some("1"));
         assert_eq!(parsed.title.as_deref(), Some("Docs"));
+    }
+
+    #[test]
+    fn http_body_reader_returns_content_length_body_without_waiting_for_eof() {
+        let payload =
+            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n[  ]ignored-after-body".to_vec();
+        let mut stream = WouldBlockAfterPayload {
+            payload,
+            emitted: false,
+        };
+
+        let body = read_http_body(&mut stream).unwrap();
+
+        assert_eq!(body, "[  ]");
+    }
+
+    #[test]
+    fn http_body_reader_decodes_chunked_body() {
+        let payload = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nfoo\r\n4\r\n bar\r\n0\r\n\r\n".to_vec();
+        let mut stream = WouldBlockAfterPayload {
+            payload,
+            emitted: false,
+        };
+
+        let body = read_http_body(&mut stream).unwrap();
+
+        assert_eq!(body, "foo bar");
     }
 
     #[test]

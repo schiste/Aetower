@@ -381,11 +381,25 @@ public struct SettingsView: View {
         case .checking:
             return ("Checking", AetowerDesign.Status.ready, "Testing the configured browser debug endpoint.")
         case .connected(let summary) where summary.endpoint == browserAttributionEndpoint:
+            guard summary.exposesPageTargets else {
+                if summary.endpoint == BrowserAttributionSetup.defaultEndpoint {
+                    return (
+                        "Endpoint ready",
+                        AetowerDesign.Status.ready,
+                        "Dedicated Chrome is reachable, but it is exposing 0 tabs. Open pages in the dedicated Chrome window to show per-tab context in Monitor; your normal Chrome profile is not exposed."
+                    )
+                }
+                return (
+                    "No tabs",
+                    AetowerDesign.Status.warning,
+                    "The endpoint responded, but it exposes 0 page targets. Open tabs in that debug-enabled browser, then test again."
+                )
+            }
             let pageLabel = summary.pageTargetCount == 1 ? "tab" : "tabs"
             return (
-                "Connected",
+                "Tabs visible",
                 AetowerDesign.Status.success,
-                "Connected to \(summary.pageTargetCount) \(pageLabel) across \(summary.totalTargetCount) debug targets."
+                "Aetower can read \(summary.pageTargetCount) \(pageLabel) across \(summary.totalTargetCount) debug targets."
             )
         case .failed(let message):
             return ("Attention", AetowerDesign.Status.warning, message)
@@ -2003,7 +2017,7 @@ public struct SettingsView: View {
                 let summary = try await BrowserAttributionSetup.enableDedicatedChrome()
                 persistBrowserAttributionEndpoint(
                     summary.endpoint,
-                    confirmation: "Browser attribution enabled with a dedicated Chrome profile."
+                    confirmation: browserAttributionConfirmation(for: summary)
                 )
                 browserAttributionState = .connected(summary)
             } catch {
@@ -2035,6 +2049,14 @@ public struct SettingsView: View {
             confirmation: "Browser attribution disabled."
         )
         browserAttributionState = .notConfigured
+    }
+
+    private func browserAttributionConfirmation(for summary: BrowserAttributionEndpointSummary) -> String {
+        if summary.exposesPageTargets {
+            let pageLabel = summary.pageTargetCount == 1 ? "tab" : "tabs"
+            return "Browser attribution enabled for \(summary.pageTargetCount) \(pageLabel)."
+        }
+        return "Dedicated Chrome is reachable. Open pages in that window to expose per-tab context."
     }
 
     private func persistBrowserAttributionEndpoint(_ endpoint: String, confirmation: String) {
