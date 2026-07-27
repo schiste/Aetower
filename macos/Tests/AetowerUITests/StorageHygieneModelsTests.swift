@@ -116,6 +116,103 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertEqual(display.cache.report.roots, [root])
     }
 
+    func testStorageReportDecodesCleanupLanes() throws {
+        let root = "/Users/example"
+        let json = """
+        {
+          "captured_at_millis": 1782860000000,
+          "scan_duration_millis": 42,
+          "scan_mode": "instant_cached",
+          "summary": {
+            "item_count": 1,
+            "total_reclaimable_bytes": 1024,
+            "safe_candidate_count": 0,
+            "review_candidate_count": 1,
+            "stale_candidate_count": 1,
+            "scanned_directory_count": 1,
+            "largest_item_path": "\(root)/.npm/_cacache",
+            "largest_item_bytes": 1024,
+            "attributed_repo_count": 0
+          },
+          "cleanup_tiers": [],
+          "cleanup_lanes": [
+            {
+              "id": "npm-cache-cleanup",
+              "title": "npm cache cleanup",
+              "subtitle": "npm package cache is refetchable.",
+              "lane_kind": "tool_cleanup",
+              "safety": "review",
+              "action_label": "Copy cleanup command",
+              "command": "npm cache verify && npm cache clean --force",
+              "estimated_reclaimable_bytes": 1024,
+              "item_count": 1,
+              "requires_admin": false,
+              "requires_review": true,
+              "can_stage_trash": false,
+              "items": [
+                {
+                  "path": "\(root)/.npm/_cacache",
+                  "display_name": "_cacache",
+                  "kind": "npm-cache",
+                  "cleanup_tier": "expensive",
+                  "safety": "review",
+                  "size_bytes": 1024,
+                  "reason": "npm package cache.",
+                  "next_step": "Use npm cleanup.",
+                  "evidence": ["owning tool: npm"],
+                  "cleanup_allowed": false,
+                  "cleanup_blockers": ["Hardlinked content may still be referenced elsewhere."],
+                  "default_cleanup_action": "manual_review"
+                }
+              ],
+              "blockers": ["Hardlinked content may still be referenced elsewhere."],
+              "caveats": ["Use the owning tool."]
+            }
+          ],
+          "budget_guardrails": {
+            "repo_growth_budget_bytes_per_day": 1048576,
+            "repo_artifact_budget_bytes": 10485760,
+            "total_artifact_budget_bytes": 20971520,
+            "free_space_floor_bytes": 1073741824,
+            "volume_pressure_floor_percent": 10,
+            "warning_only_by_default": true,
+            "auto_trash_safe_tier_enabled": false,
+            "scheduled_scan_recommended": false,
+            "scheduled_scan_interval_hours": 24,
+            "status": "ok",
+            "violations": [],
+            "policies": [],
+            "prevention_suggestions": []
+          },
+          "agent_hygiene": {
+            "total_agent_artifact_bytes": 0,
+            "week_agent_artifact_bytes": 0,
+            "rebuildable_agent_bytes": 0,
+            "rebuildable_agent_percent": 0,
+            "week_rebuildable_agent_bytes": 0,
+            "week_rebuildable_agent_percent": 0,
+            "attributed_item_count": 0,
+            "agent_count": 0,
+            "agents": [],
+            "caveats": []
+          },
+          "roots": ["\(root)"],
+          "truncated": false,
+          "caveats": []
+        }
+        """
+        let report = try AetowerJSON.snakeCaseDecoder().decode(
+            StorageHygieneReportModel.self,
+            from: Data(json.utf8)
+        )
+        XCTAssertEqual(report.cleanupLanes.count, 1)
+        XCTAssertEqual(report.cleanupLanes[0].id, "npm-cache-cleanup")
+        XCTAssertEqual(report.cleanupLanes[0].laneKind, "tool_cleanup")
+        XCTAssertEqual(report.cleanupLanes[0].command, "npm cache verify && npm cache clean --force")
+        XCTAssertFalse(report.cleanupLanes[0].canStageTrash)
+        XCTAssertEqual(report.cleanupLanes[0].items.first?.path, "\(root)/.npm/_cacache")
+    }
+
     func testRepositoryInventoryReportDecodesSnakeCaseJSON() throws {
         let json = """
         {

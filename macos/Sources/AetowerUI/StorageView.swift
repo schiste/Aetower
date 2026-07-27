@@ -1651,6 +1651,7 @@ public struct StorageView: View {
 
     private func storageReclaimSupportingData(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            cleanupLanesSection(report)
             cleanupRecipesSection(report)
             if report.truncated {
                 warningBanner(storageWalkPartialMessage)
@@ -6254,6 +6255,262 @@ public struct StorageView: View {
         }
     }
 
+    private func cleanupLanesSection(_ report: StorageHygieneReportModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                Label("Cleanup lanes", systemImage: "square.split.2x2")
+                    .font(AetowerDesign.Typography.sectionTitle)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                AetowerBadge(
+                    "\(report.cleanupLanes.count) lane\(report.cleanupLanes.count == 1 ? "" : "s")",
+                    tone: report.cleanupLanes.isEmpty ? AetowerDesign.Status.neutral : AetowerDesign.Tone.disk
+                )
+            }
+
+            if report.cleanupLanes.isEmpty {
+                Label("No cleanup lanes were generated for this scan.", systemImage: "checkmark.circle")
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .padding(AetowerDesign.Spacing.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 330), spacing: AetowerDesign.Spacing.sm)],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.sm
+                ) {
+                    ForEach(report.cleanupLanes) { lane in
+                        cleanupLaneCard(lane)
+                    }
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.lg)
+    }
+
+    private func cleanupLaneCard(_ lane: StorageCleanupLaneModel) -> some View {
+        let tone = cleanupLaneTone(lane)
+        return AetowerSurface(
+            level: .card,
+            padding: AetowerDesign.Spacing.md,
+            cornerRadius: AetowerDesign.Radius.lg
+        ) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                    Image(systemName: cleanupLaneIcon(lane))
+                        .foregroundStyle(tone)
+                        .frame(width: AetowerDesign.Size.iconSlot)
+
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                        Text(lane.title)
+                            .font(AetowerDesign.Typography.controlLabel)
+                            .lineLimit(1)
+                        Text(lane.subtitle)
+                            .font(AetowerDesign.Typography.caption)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: AetowerDesign.Spacing.sm)
+
+                    VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xxs) {
+                        Text(formatBytes(lane.estimatedReclaimableBytes))
+                            .font(AetowerDesign.Typography.metricValue(size: 17, weight: .semibold))
+                            .foregroundStyle(tone)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        Text("\(lane.itemCount) item\(lane.itemCount == 1 ? "" : "s")")
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    }
+                }
+
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    AetowerBadge(cleanupLaneBadgeLabel(lane), tone: tone)
+                    if lane.requiresAdmin {
+                        AetowerBadge("Admin", systemImage: "lock.shield", tone: AetowerDesign.Status.warning)
+                    }
+                    if lane.requiresReview {
+                        AetowerBadge("Review", systemImage: "eye", tone: AetowerDesign.Status.warning)
+                    }
+                }
+
+                if let command = lane.command, !command.isEmpty {
+                    Text(command)
+                        .font(AetowerDesign.Typography.compactData(size: 10))
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(lane.items.prefix(3)) { item in
+                        cleanupLaneItemRow(item, tone: tone)
+                    }
+                }
+
+                if let firstCaveat = lane.caveats.first {
+                    Label(firstCaveat, systemImage: "info.circle")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    if lane.canStageTrash {
+                        Button {
+                            stageCleanupLane(lane)
+                        } label: {
+                            Label(lane.actionLabel, systemImage: "tray.and.arrow.down")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    } else if let command = lane.command, !command.isEmpty {
+                        Button {
+                            copy(command)
+                        } label: {
+                            Label(lane.actionLabel, systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+
+                    Button {
+                        if let first = lane.items.first {
+                            reveal(path: first.path)
+                        }
+                    } label: {
+                        Label("Reveal", systemImage: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(lane.items.isEmpty)
+
+                    Button {
+                        copy(cleanupLanePlan(lane))
+                    } label: {
+                        Label("Copy plan", systemImage: "doc.text")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 258, alignment: .topLeading)
+    }
+
+    private func cleanupLaneItemRow(_ item: StorageCleanupLaneItemModel, tone: Color) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.xs) {
+            Image(systemName: cleanupTierIcon(item.cleanupTier))
+                .foregroundStyle(tone)
+                .frame(width: AetowerDesign.Size.iconSlot)
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                Text(item.displayName)
+                    .font(AetowerDesign.Typography.metadataStrong)
+                    .lineLimit(1)
+                Text(item.path)
+                    .font(AetowerDesign.Typography.compactData(size: 10))
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.xs)
+            Text(formatBytes(item.sizeBytes))
+                .font(AetowerDesign.Typography.metadataStrong)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+        }
+    }
+
+    private func cleanupLaneIcon(_ lane: StorageCleanupLaneModel) -> String {
+        switch lane.laneKind {
+        case "trash":
+            return "trash"
+        case "tool_cleanup":
+            return "terminal"
+        case "admin_required":
+            return "lock.shield"
+        case "manual_review":
+            return "eye"
+        default:
+            return "square.split.2x2"
+        }
+    }
+
+    private func cleanupLaneTone(_ lane: StorageCleanupLaneModel) -> Color {
+        switch lane.laneKind {
+        case "trash":
+            return AetowerDesign.Status.ready
+        case "tool_cleanup":
+            return AetowerDesign.Tone.cpu
+        case "admin_required":
+            return AetowerDesign.Status.warning
+        case "manual_review":
+            return AetowerDesign.Tone.memory
+        default:
+            return AetowerDesign.Tone.disk
+        }
+    }
+
+    private func cleanupLaneBadgeLabel(_ lane: StorageCleanupLaneModel) -> String {
+        switch lane.laneKind {
+        case "trash":
+            return "Trash-ready"
+        case "tool_cleanup":
+            return "Tool cleanup"
+        case "admin_required":
+            return "Admin required"
+        case "manual_review":
+            return "Manual review"
+        default:
+            return lane.safety.capitalized
+        }
+    }
+
+    private func cleanupLanePlan(_ lane: StorageCleanupLaneModel) -> String {
+        var lines = [
+            "# Aetower cleanup lane",
+            "",
+            "- Lane: \(lane.title)",
+            "- Kind: \(lane.laneKind)",
+            "- Estimated reclaimable: \(formatBytes(lane.estimatedReclaimableBytes))",
+            "- Items: \(lane.itemCount)",
+            "- Requires admin: \(lane.requiresAdmin ? "yes" : "no")",
+            "- Requires review: \(lane.requiresReview ? "yes" : "no")",
+            "- Can stage Trash: \(lane.canStageTrash ? "yes" : "no")",
+        ]
+        if let command = lane.command, !command.isEmpty {
+            lines.append(contentsOf: ["", "## Command reference", command])
+        }
+        if !lane.blockers.isEmpty {
+            lines.append(contentsOf: ["", "## Common blockers"])
+            lines.append(contentsOf: lane.blockers.map { "- \($0)" })
+        }
+        if !lane.caveats.isEmpty {
+            lines.append(contentsOf: ["", "## Caveats"])
+            lines.append(contentsOf: lane.caveats.map { "- \($0)" })
+        }
+        if !lane.items.isEmpty {
+            lines.append(contentsOf: ["", "## Largest items"])
+            for item in lane.items.prefix(12) {
+                lines.append("- \(formatBytes(item.sizeBytes)) | \(item.kind) | \(item.path)")
+                if !item.cleanupBlockers.isEmpty {
+                    lines.append("  - Blocked: \(item.cleanupBlockers.joined(separator: "; "))")
+                }
+                lines.append("  - Why: \(item.reason)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private func cleanupRecipesSection(_ report: StorageHygieneReportModel) -> some View {
         DisclosureGroup(isExpanded: $showCleanupRecipes) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
@@ -10184,6 +10441,42 @@ public struct StorageView: View {
             showCleanupBasket = true
         }
         return staged
+    }
+
+    private func stageCleanupLane(_ lane: StorageCleanupLaneModel) {
+        guard lane.canStageTrash else {
+            copy(cleanupLanePlan(lane))
+            return
+        }
+        var staged = 0
+        for item in lane.items.prefix(80) {
+            let basketItem = StorageCleanupBasketItem(
+                id: "lane|\(lane.id)|\(item.id)",
+                title: item.displayName,
+                path: item.path,
+                source: lane.title,
+                cleanupTier: item.cleanupTier,
+                safety: item.safety,
+                estimatedBytes: item.sizeBytes,
+                reason: item.reason,
+                consequence: "Moves the path to Finder Trash. Disk space is freed after Trash is emptied.",
+                evidence: item.evidence.isEmpty ? [lane.subtitle] : item.evidence,
+                requiresReview: lane.requiresReview || item.safety != "safe",
+                blockers: item.cleanupBlockers,
+                prerequisites: [
+                    "Reveal and inspect the target before moving it to Trash.",
+                    "Stop active builds, package managers, and agents that may be writing this path.",
+                ]
+            )
+            if stageBasketItem(basketItem) {
+                staged += 1
+            }
+        }
+        if staged == 0 {
+            copy(cleanupLanePlan(lane))
+        } else {
+            showCleanupBasket = true
+        }
     }
 
     @discardableResult

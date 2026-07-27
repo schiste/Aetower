@@ -434,6 +434,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
     let cleanup_tiers = summarize_cleanup_tiers(&items);
     let cleanup_recipes = build_cleanup_recipes(&items);
     let cleanup_bundles = build_cleanup_bundles(&items);
+    let cleanup_lanes = build_cleanup_lanes(&items);
     let mut repo_footprints = summarize_repo_footprints(&items);
     let duplicate_groups = summarize_duplicate_groups(&items);
     let app_footprints = summarize_app_footprints(&items);
@@ -521,6 +522,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
         cleanup_tiers,
         cleanup_recipes,
         cleanup_bundles,
+        cleanup_lanes,
         budget_guardrails,
         agent_hygiene,
         repository_inventory,
@@ -795,6 +797,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
     let cleanup_tiers = summarize_cleanup_tiers(&items);
     let cleanup_recipes = build_cleanup_recipes(&items);
     let cleanup_bundles = build_cleanup_bundles(&items);
+    let cleanup_lanes = build_cleanup_lanes(&items);
     let mut repo_footprints = summarize_repo_footprints(&items);
     let duplicate_groups = summarize_duplicate_groups(&items);
     let app_footprints = summarize_app_footprints(&items);
@@ -859,6 +862,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         cleanup_tiers,
         cleanup_recipes,
         cleanup_bundles,
+        cleanup_lanes,
         budget_guardrails,
         agent_hygiene,
         repository_inventory,

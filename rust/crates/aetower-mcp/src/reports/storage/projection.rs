@@ -16,6 +16,7 @@ pub fn storage_hygiene_overview_json(
         cleanup_tiers: report.cleanup_tiers,
         cleanup_recipes: report.cleanup_recipes.into_iter().take(8).collect(),
         cleanup_bundles: report.cleanup_bundles.into_iter().take(4).collect(),
+        cleanup_lanes: report.cleanup_lanes.into_iter().take(6).collect(),
         budget_guardrails: report.budget_guardrails,
         agent_hygiene: report.agent_hygiene,
         repository_inventory_complete: report.repository_inventory_complete,
@@ -83,6 +84,7 @@ pub fn storage_hygiene_actions_json(
         cleanup_tiers: report.cleanup_tiers,
         cleanup_recipes: report.cleanup_recipes,
         cleanup_bundles: report.cleanup_bundles,
+        cleanup_lanes: report.cleanup_lanes,
         duplicate_groups: report.duplicate_groups,
         redundancy_groups: report.redundancy_groups,
         budget_guardrails: report.budget_guardrails,
@@ -293,6 +295,7 @@ pub fn storage_hygiene_repo_detail_json(repo_root: String, mode: &str) -> Result
         items: report.items,
         cleanup_recipes: report.cleanup_recipes,
         cleanup_bundles: report.cleanup_bundles,
+        cleanup_lanes: report.cleanup_lanes,
         caveats: report.caveats,
     })
     .map_err(|error| error.to_string())

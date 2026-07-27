@@ -11,6 +11,7 @@ pub(crate) struct StorageHygieneReport {
     pub(super) cleanup_tiers: Vec<StorageCleanupTierSummary>,
     pub(super) cleanup_recipes: Vec<StorageCleanupRecipe>,
     pub(super) cleanup_bundles: Vec<StorageCleanupBundle>,
+    pub(super) cleanup_lanes: Vec<StorageCleanupLane>,
     pub(super) budget_guardrails: StorageBudgetGuardrails,
     pub(super) agent_hygiene: StorageAgentHygieneSummary,
     pub(super) repository_inventory: Vec<StorageRepositoryInventoryItem>,
@@ -598,6 +599,41 @@ pub(super) struct StorageCleanupBundleItem {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageCleanupLane {
+    pub(super) id: String,
+    pub(super) title: String,
+    pub(super) subtitle: String,
+    pub(super) lane_kind: String,
+    pub(super) safety: String,
+    pub(super) action_label: String,
+    pub(super) command: Option<String>,
+    pub(super) estimated_reclaimable_bytes: u64,
+    pub(super) item_count: usize,
+    pub(super) requires_admin: bool,
+    pub(super) requires_review: bool,
+    pub(super) can_stage_trash: bool,
+    pub(super) items: Vec<StorageCleanupLaneItem>,
+    pub(super) blockers: Vec<String>,
+    pub(super) caveats: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageCleanupLaneItem {
+    pub(super) path: String,
+    pub(super) display_name: String,
+    pub(super) kind: String,
+    pub(super) cleanup_tier: String,
+    pub(super) safety: String,
+    pub(super) size_bytes: u64,
+    pub(super) reason: String,
+    pub(super) next_step: String,
+    pub(super) evidence: Vec<String>,
+    pub(super) cleanup_allowed: bool,
+    pub(super) cleanup_blockers: Vec<String>,
+    pub(super) default_cleanup_action: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(super) struct StorageBudgetGuardrails {
     pub(super) repo_growth_budget_bytes_per_day: u64,
     pub(super) repo_artifact_budget_bytes: u64,
@@ -1039,6 +1075,7 @@ pub(super) struct StorageHygieneOverviewResponse {
     pub(super) cleanup_tiers: Vec<StorageCleanupTierSummary>,
     pub(super) cleanup_recipes: Vec<StorageCleanupRecipe>,
     pub(super) cleanup_bundles: Vec<StorageCleanupBundle>,
+    pub(super) cleanup_lanes: Vec<StorageCleanupLane>,
     pub(super) budget_guardrails: StorageBudgetGuardrails,
     pub(super) agent_hygiene: StorageAgentHygieneSummary,
     pub(super) repository_inventory_complete: bool,
@@ -1098,6 +1135,7 @@ pub(super) struct StorageHygieneActionsResponse {
     pub(super) cleanup_tiers: Vec<StorageCleanupTierSummary>,
     pub(super) cleanup_recipes: Vec<StorageCleanupRecipe>,
     pub(super) cleanup_bundles: Vec<StorageCleanupBundle>,
+    pub(super) cleanup_lanes: Vec<StorageCleanupLane>,
     pub(super) duplicate_groups: Vec<StorageDuplicateGroup>,
     pub(super) redundancy_groups: Vec<StorageRedundancyGroup>,
     pub(super) budget_guardrails: StorageBudgetGuardrails,
@@ -1129,5 +1167,6 @@ pub(super) struct StorageHygieneRepoDetailResponse {
     pub(super) items: Vec<StorageHygieneItem>,
     pub(super) cleanup_recipes: Vec<StorageCleanupRecipe>,
     pub(super) cleanup_bundles: Vec<StorageCleanupBundle>,
+    pub(super) cleanup_lanes: Vec<StorageCleanupLane>,
     pub(super) caveats: Vec<String>,
 }

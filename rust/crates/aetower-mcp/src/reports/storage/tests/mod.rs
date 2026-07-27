@@ -4830,6 +4830,97 @@ fn cleanup_recipes_require_trash_actionable_items() {
 }
 
 #[test]
+fn cleanup_lanes_surface_blocked_high_value_operator_work() {
+    let now_millis = crate::current_unix_millis().unwrap_or_default();
+    let old_millis = now_millis.saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000);
+    let mut colima = test_storage_item(
+        "/Users/me/.colima/_lima/default/diffdisk",
+        "colima-vm",
+        "system-data",
+        "review",
+        "expensive",
+        old_millis,
+    );
+    colima.size_bytes = 20 * 1024 * 1024 * 1024;
+    colima.logical_bytes = colima.size_bytes;
+    colima.physical_bytes = colima.size_bytes;
+    let mut npm = test_storage_item(
+        "/Users/me/.npm/_cacache",
+        "npm-cache",
+        "cache",
+        "review",
+        "expensive",
+        old_millis,
+    );
+    npm.size_bytes = 10 * 1024 * 1024 * 1024;
+    npm.logical_bytes = npm.size_bytes;
+    npm.physical_bytes = npm.size_bytes;
+    npm.has_hardlinks = true;
+    npm.hardlink_count = 2;
+    let mut admin_cache = test_storage_item(
+        "/Library/Developer/CoreSimulator/Caches",
+        "simulator-cache",
+        "cache",
+        "safe",
+        "safe",
+        old_millis,
+    );
+    admin_cache.size_bytes = 4 * 1024 * 1024 * 1024;
+    admin_cache.logical_bytes = admin_cache.size_bytes;
+    admin_cache.physical_bytes = admin_cache.size_bytes;
+    let mut unknown = test_storage_item(
+        "/Users/me/.codex/sessions",
+        "large-directory",
+        "review-artifact",
+        "review",
+        "",
+        old_millis,
+    );
+    unknown.size_bytes = 13 * 1024 * 1024 * 1024;
+    unknown.logical_bytes = unknown.size_bytes;
+    unknown.physical_bytes = unknown.size_bytes;
+
+    let mut items = vec![colima, npm, admin_cache, unknown];
+    apply_cleanup_guardrails(&mut items, now_millis);
+
+    assert!(items.iter().all(|item| !item.cleanup_allowed));
+    let lanes = build_cleanup_lanes(&items);
+    let lane_ids = lanes
+        .iter()
+        .map(|lane| lane.id.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        lane_ids.contains(&"colima-cleanup"),
+        "Colima VM storage must remain visible as tool cleanup: {lane_ids:?}"
+    );
+    assert!(
+        lane_ids.contains(&"npm-cache-cleanup"),
+        "blocked npm cache must still expose its owning-tool cleanup lane: {lane_ids:?}"
+    );
+    assert!(
+        lane_ids.contains(&"admin-required"),
+        "privileged system caches must surface as admin-required: {lane_ids:?}"
+    );
+    assert!(
+        lane_ids.contains(&"manual-review"),
+        "large unclassified storage must surface for manual review: {lane_ids:?}"
+    );
+    assert!(
+        lanes.iter().all(|lane| !lane.can_stage_trash),
+        "none of these blocked lanes should become a direct Trash stage"
+    );
+    assert!(
+        lanes
+            .iter()
+            .find(|lane| lane.id == "npm-cache-cleanup")
+            .and_then(|lane| lane.command.as_deref())
+            .is_some_and(|command| command.contains("npm cache")),
+        "npm lane should include the owning-tool command"
+    );
+}
+
+#[test]
 fn cleanup_bundle_manifest_carries_policy_and_excludes_blocked_items() {
     let now_millis = crate::current_unix_millis().unwrap_or_default();
     let old_millis = now_millis.saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000);

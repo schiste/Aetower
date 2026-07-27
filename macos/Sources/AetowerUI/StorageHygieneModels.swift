@@ -81,6 +81,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
     let cleanupTiers: [StorageCleanupTierModel]
     let cleanupRecipes: [StorageCleanupRecipeModel]
     let cleanupBundles: [StorageCleanupBundleModel]
+    let cleanupLanes: [StorageCleanupLaneModel]
     let budgetGuardrails: StorageBudgetGuardrailsModel
     let agentHygiene: StorageAgentHygieneSummaryModel
     var repositoryInventory: [StorageRepositoryInventoryModel]
@@ -116,6 +117,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         case cleanupTiers
         case cleanupRecipes
         case cleanupBundles
+        case cleanupLanes
         case budgetGuardrails
         case agentHygiene
         case repositoryInventory
@@ -157,6 +159,8 @@ struct StorageHygieneReportModel: Decodable, Sendable {
             try container.decodeIfPresent([StorageCleanupRecipeModel].self, forKey: .cleanupRecipes) ?? []
         cleanupBundles =
             try container.decodeIfPresent([StorageCleanupBundleModel].self, forKey: .cleanupBundles) ?? []
+        cleanupLanes =
+            try container.decodeIfPresent([StorageCleanupLaneModel].self, forKey: .cleanupLanes) ?? []
         budgetGuardrails = try container.decode(StorageBudgetGuardrailsModel.self, forKey: .budgetGuardrails)
         agentHygiene = try container.decode(StorageAgentHygieneSummaryModel.self, forKey: .agentHygiene)
         let decodedRepositoryInventory =
@@ -987,6 +991,41 @@ struct StorageCleanupBundleItemModel: Decodable, Identifiable, Sendable {
         cleanupBlockers = try container.decodeIfPresent([String].self, forKey: .cleanupBlockers) ?? []
         defaultCleanupAction = try container.decodeIfPresent(String.self, forKey: .defaultCleanupAction) ?? "trash"
     }
+}
+
+struct StorageCleanupLaneModel: Decodable, Identifiable, Sendable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let laneKind: String
+    let safety: String
+    let actionLabel: String
+    let command: String?
+    let estimatedReclaimableBytes: UInt64
+    let itemCount: Int
+    let requiresAdmin: Bool
+    let requiresReview: Bool
+    let canStageTrash: Bool
+    let items: [StorageCleanupLaneItemModel]
+    let blockers: [String]
+    let caveats: [String]
+}
+
+struct StorageCleanupLaneItemModel: Decodable, Identifiable, Sendable {
+    let path: String
+    let displayName: String
+    let kind: String
+    let cleanupTier: String
+    let safety: String
+    let sizeBytes: UInt64
+    let reason: String
+    let nextStep: String
+    let evidence: [String]
+    let cleanupAllowed: Bool
+    let cleanupBlockers: [String]
+    let defaultCleanupAction: String
+
+    var id: String { path }
 }
 
 struct StorageBudgetGuardrailsModel: Decodable, Sendable {

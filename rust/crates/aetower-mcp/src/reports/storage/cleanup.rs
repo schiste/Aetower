@@ -1876,6 +1876,322 @@ pub(super) fn build_cleanup_recipes(items: &[StorageHygieneItem]) -> Vec<Storage
     recipes
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CleanupLaneSpec {
+    id: &'static str,
+    title: &'static str,
+    subtitle: &'static str,
+    lane_kind: &'static str,
+    safety: &'static str,
+    action_label: &'static str,
+    command: Option<&'static str>,
+    requires_admin: bool,
+    requires_review: bool,
+    can_stage_trash: bool,
+}
+
+pub(super) fn build_cleanup_lanes(items: &[StorageHygieneItem]) -> Vec<StorageCleanupLane> {
+    let mut lane_items =
+        BTreeMap::<&'static str, (CleanupLaneSpec, Vec<&StorageHygieneItem>)>::new();
+    for item in items.iter().filter(|item| item.size_bytes > 0) {
+        let Some(spec) = cleanup_lane_spec(item) else {
+            continue;
+        };
+        lane_items
+            .entry(spec.id)
+            .and_modify(|(_, items)| items.push(item))
+            .or_insert_with(|| (spec, vec![item]));
+    }
+
+    let mut lanes = lane_items
+        .into_values()
+        .filter_map(|(spec, mut items)| {
+            items.sort_by(|left, right| {
+                right
+                    .size_bytes
+                    .cmp(&left.size_bytes)
+                    .then_with(|| left.path.cmp(&right.path))
+            });
+            cleanup_lane_for_items(spec, items)
+        })
+        .collect::<Vec<_>>();
+    lanes.sort_by(|left, right| {
+        right
+            .estimated_reclaimable_bytes
+            .cmp(&left.estimated_reclaimable_bytes)
+            .then_with(|| lane_priority(&left.id).cmp(&lane_priority(&right.id)))
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    lanes.truncate(8);
+    lanes
+}
+
+fn cleanup_lane_spec(item: &StorageHygieneItem) -> Option<CleanupLaneSpec> {
+    if cleanup_item_is_trash_actionable(item)
+        && item.safety == "safe"
+        && matches!(item.cleanup_tier.as_str(), "safe" | "rebuildable")
+    {
+        return Some(CleanupLaneSpec {
+            id: "trash-ready",
+            title: "Trash-ready cleanup",
+            subtitle: "Safe or rebuildable artifacts that passed every direct Trash guardrail.",
+            lane_kind: "trash",
+            safety: "safe",
+            action_label: "Stage for Trash",
+            command: None,
+            requires_admin: false,
+            requires_review: false,
+            can_stage_trash: true,
+        });
+    }
+
+    if cleanup_item_requires_admin(item) {
+        return Some(CleanupLaneSpec {
+            id: "admin-required",
+            title: "Admin-required cleanup",
+            subtitle: "System-owned caches or developer support data that need administrator review outside Aetower's direct Trash flow.",
+            lane_kind: "admin_required",
+            safety: "review",
+            action_label: "Review with admin rights",
+            command: None,
+            requires_admin: true,
+            requires_review: true,
+            can_stage_trash: false,
+        });
+    }
+
+    if let Some(spec) = tool_cleanup_lane_spec(item) {
+        return Some(spec);
+    }
+
+    if item.size_bytes >= MIN_ITEM_BYTES
+        && (!item.cleanup_allowed
+            || item.cleanup_tier == "risky"
+            || item.cleanup_tier.is_empty()
+            || item.safety != "safe")
+    {
+        return Some(CleanupLaneSpec {
+            id: "manual-review",
+            title: "Manual review",
+            subtitle: "Large files, app data, unclassified folders, and protected paths Aetower cannot prove safe to delete.",
+            lane_kind: "manual_review",
+            safety: "review",
+            action_label: "Reveal and inspect",
+            command: None,
+            requires_admin: false,
+            requires_review: true,
+            can_stage_trash: false,
+        });
+    }
+
+    None
+}
+
+fn tool_cleanup_lane_spec(item: &StorageHygieneItem) -> Option<CleanupLaneSpec> {
+    match item.kind.as_str() {
+        "colima-vm" => Some(CleanupLaneSpec {
+            id: "colima-cleanup",
+            title: "Colima/Docker cleanup",
+            subtitle: "VM-backed container storage must be reclaimed through Docker or Colima, never by deleting disk files directly.",
+            lane_kind: "tool_cleanup",
+            safety: "review",
+            action_label: "Review Docker cleanup",
+            command: Some("docker system df && docker builder prune"),
+            requires_admin: false,
+            requires_review: true,
+            can_stage_trash: false,
+        }),
+        "docker-vm" | "docker-storage" => Some(CleanupLaneSpec {
+            id: "docker-cleanup",
+            title: "Docker cleanup",
+            subtitle: "Images, layers, build cache, and volumes should be reclaimed through Docker's own metadata-aware commands.",
+            lane_kind: "tool_cleanup",
+            safety: "review",
+            action_label: "Review Docker cleanup",
+            command: Some("docker system df && docker builder prune"),
+            requires_admin: false,
+            requires_review: true,
+            can_stage_trash: false,
+        }),
+        "npm-cache" => Some(package_manager_lane(
+            "npm-cache-cleanup",
+            "npm cache cleanup",
+            "npm package cache is refetchable but can slow future installs or require network access.",
+            "npm cache verify && npm cache clean --force",
+        )),
+        "pnpm-store" => Some(package_manager_lane(
+            "pnpm-store-cleanup",
+            "pnpm store cleanup",
+            "pnpm store pruning keeps currently referenced packages and drops unreferenced cached packages.",
+            "pnpm store prune",
+        )),
+        "yarn-cache" => Some(package_manager_lane(
+            "yarn-cache-cleanup",
+            "Yarn cache cleanup",
+            "Yarn cache data is refetchable, but may be intentionally retained for offline installs.",
+            "yarn cache clean",
+        )),
+        "uv-cache" => Some(package_manager_lane(
+            "uv-cache-cleanup",
+            "uv cache cleanup",
+            "uv cache data is rebuildable and can be reclaimed through uv's cache command.",
+            "uv cache clean",
+        )),
+        "homebrew-cache" => Some(package_manager_lane(
+            "homebrew-cache-cleanup",
+            "Homebrew cache cleanup",
+            "Homebrew bottles and downloads are safe to prune with Homebrew's own cleanup command.",
+            "brew cleanup --prune=all",
+        )),
+        "pip-cache" => Some(package_manager_lane(
+            "pip-cache-cleanup",
+            "pip cache cleanup",
+            "pip wheel and HTTP caches are rebuildable and can be purged through pip.",
+            "python3 -m pip cache purge",
+        )),
+        "go-build-cache" => Some(package_manager_lane(
+            "go-build-cache-cleanup",
+            "Go build cache cleanup",
+            "Go build cache is rebuildable and should be cleared through go clean.",
+            "go clean -cache",
+        )),
+        _ => None,
+    }
+}
+
+fn package_manager_lane(
+    id: &'static str,
+    title: &'static str,
+    subtitle: &'static str,
+    command: &'static str,
+) -> CleanupLaneSpec {
+    CleanupLaneSpec {
+        id,
+        title,
+        subtitle,
+        lane_kind: "tool_cleanup",
+        safety: "review",
+        action_label: "Copy cleanup command",
+        command: Some(command),
+        requires_admin: false,
+        requires_review: true,
+        can_stage_trash: false,
+    }
+}
+
+fn cleanup_item_requires_admin(item: &StorageHygieneItem) -> bool {
+    item.cleanup_blockers.iter().any(|blocker| {
+        blocker
+            .to_ascii_lowercase()
+            .contains("administrator permission")
+    })
+}
+
+fn cleanup_lane_for_items(
+    spec: CleanupLaneSpec,
+    items: Vec<&StorageHygieneItem>,
+) -> Option<StorageCleanupLane> {
+    if items.is_empty() {
+        return None;
+    }
+    let estimated_reclaimable_bytes = items
+        .iter()
+        .fold(0u64, |total, item| total.saturating_add(item.size_bytes));
+    let item_count = items.len();
+    let blockers = unique_limited(
+        items
+            .iter()
+            .flat_map(|item| item.cleanup_blockers.iter().cloned())
+            .collect(),
+        6,
+    );
+    let lane_items = items
+        .into_iter()
+        .take(12)
+        .map(cleanup_lane_item)
+        .collect::<Vec<_>>();
+    Some(StorageCleanupLane {
+        id: spec.id.to_owned(),
+        title: spec.title.to_owned(),
+        subtitle: spec.subtitle.to_owned(),
+        lane_kind: spec.lane_kind.to_owned(),
+        safety: spec.safety.to_owned(),
+        action_label: spec.action_label.to_owned(),
+        command: spec.command.map(str::to_owned),
+        estimated_reclaimable_bytes,
+        item_count,
+        requires_admin: spec.requires_admin,
+        requires_review: spec.requires_review,
+        can_stage_trash: spec.can_stage_trash,
+        items: lane_items,
+        blockers,
+        caveats: cleanup_lane_caveats(spec),
+    })
+}
+
+fn cleanup_lane_item(item: &StorageHygieneItem) -> StorageCleanupLaneItem {
+    StorageCleanupLaneItem {
+        path: item.path.clone(),
+        display_name: item.display_name.clone(),
+        kind: item.kind.clone(),
+        cleanup_tier: item.cleanup_tier.clone(),
+        safety: item.safety.clone(),
+        size_bytes: item.size_bytes,
+        reason: item.reason.clone(),
+        next_step: item.next_step.clone(),
+        evidence: item.evidence.clone(),
+        cleanup_allowed: item.cleanup_allowed,
+        cleanup_blockers: item.cleanup_blockers.clone(),
+        default_cleanup_action: item.default_cleanup_action.clone(),
+    }
+}
+
+fn cleanup_lane_caveats(spec: CleanupLaneSpec) -> Vec<String> {
+    match spec.lane_kind {
+        "trash" => vec![
+            "Aetower stages paths into Finder Trash; disk space is freed only after Trash is emptied."
+                .to_owned(),
+            "Review active builds, terminals, package managers, and agents before moving paths."
+                .to_owned(),
+        ],
+        "tool_cleanup" => vec![
+            "Use the owning tool so caches, VM metadata, containers, and volumes stay consistent."
+                .to_owned(),
+            "Commands are references for the operator; Aetower does not run them unattended."
+                .to_owned(),
+        ],
+        "admin_required" => vec![
+            "Aetower blocks direct Trash cleanup for privileged system paths."
+                .to_owned(),
+            "Quit the owning app/tool first, then review with administrator privileges."
+                .to_owned(),
+        ],
+        _ => vec![
+            "Aetower cannot prove these paths safe to delete automatically."
+                .to_owned(),
+            "Reveal the largest items and inspect ownership before deciding."
+                .to_owned(),
+        ],
+    }
+}
+
+fn lane_priority(id: &str) -> u8 {
+    match id {
+        "trash-ready" => 0,
+        "colima-cleanup" | "docker-cleanup" => 1,
+        "npm-cache-cleanup"
+        | "pnpm-store-cleanup"
+        | "yarn-cache-cleanup"
+        | "uv-cache-cleanup"
+        | "homebrew-cache-cleanup"
+        | "pip-cache-cleanup"
+        | "go-build-cache-cleanup" => 2,
+        "admin-required" => 3,
+        "manual-review" => 4,
+        _ => 5,
+    }
+}
+
 fn cleanup_recipes_for_item(item: &StorageHygieneItem) -> Vec<StorageCleanupRecipe> {
     if !cleanup_item_is_trash_actionable(item) {
         return Vec::new();
