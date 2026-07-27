@@ -5358,6 +5358,62 @@ fn storage_scan_job_recovers_persisted_partial_state() {
 }
 
 #[test]
+fn storage_scan_state_prunes_stale_active_jobs() {
+    let root = test_root("scan-job-prunes-stale-active");
+    if let Err(error) = fs::create_dir_all(&root) {
+        panic!("create root: {error}");
+    }
+    let request = StorageScanJobRequest::new(
+        vec![root.display().to_string()],
+        5,
+        80,
+        "fast_changed_only",
+        "normal",
+        Vec::new(),
+    );
+    let mut progress = StorageScanJobProgress::new(storage_now_millis(), None);
+    progress.phase = "artifact_sizing".to_owned();
+    progress.scanned_files = 12;
+    let job_id = format!("stale-running-{}", storage_now_millis());
+    let stale_updated_at = storage_now_millis()
+        .saturating_sub(STORAGE_SCAN_STATE_MAX_AGE_MILLIS)
+        .saturating_sub(60_000);
+
+    must_ok(
+        StorageScanStateStore::persist(StorageScanPersistedRecord {
+            job_id: job_id.clone(),
+            signature: request.signature.clone(),
+            volume_key: request.volume_key.clone(),
+            roots: request.normalized_roots.clone(),
+            dirty_paths: request.dirty_paths.clone(),
+            max_depth: request.max_depth,
+            limit: request.limit,
+            mode: request.mode.as_str().to_owned(),
+            throttle_hint: request.throttle_hint.clone(),
+            status: "running".to_owned(),
+            progress,
+            started_at_millis: stale_updated_at.saturating_sub(1_000),
+            updated_at_millis: stale_updated_at,
+            completed_at_millis: None,
+            result_available: false,
+            resume_available: true,
+        }),
+        "persist stale active scan state",
+    );
+
+    assert!(
+        StorageScanStateStore::load_status_for_job(&job_id).is_none(),
+        "stale active scan state should be expired and pruned during persistence"
+    );
+    assert!(
+        StorageScanStateStore::load_resume_candidate(&request.signature).is_none(),
+        "stale active scan state must not resume on the next matching scan"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_scan_throttle_detects_pressure_cloud_and_network_roots() {
     let request = StorageScanJobRequest::new(
         vec![

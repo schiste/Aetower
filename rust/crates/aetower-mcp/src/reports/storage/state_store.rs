@@ -137,8 +137,9 @@ impl StorageScanStateStore {
 
     pub(super) fn load_resume_candidate(signature: &str) -> Option<StorageScanPersistedState> {
         let connection = Self::open_connection().ok()?;
-        let min_updated_millis =
-            storage_now_millis().saturating_sub(STORAGE_SCAN_STATE_MAX_AGE_MILLIS);
+        let now_millis = storage_now_millis();
+        Self::prune_old(&connection, now_millis);
+        let min_updated_millis = now_millis.saturating_sub(STORAGE_SCAN_STATE_MAX_AGE_MILLIS);
         let mut statement = connection
             .prepare(
                 "SELECT progress_json, persisted_at_millis
@@ -176,6 +177,15 @@ impl StorageScanStateStore {
 
     fn prune_old(connection: &Connection, now_millis: u64) {
         let cutoff = now_millis.saturating_sub(STORAGE_SCAN_STATE_MAX_AGE_MILLIS);
+        let _ = connection.execute(
+            "UPDATE storage_scan_job_state
+             SET status = 'failed',
+                 resume_available = 0,
+                 completed_at_millis = COALESCE(completed_at_millis, updated_at_millis)
+             WHERE updated_at_millis < ?1
+               AND status IN ('queued', 'running', 'paused')",
+            params![cutoff.min(i64::MAX as u64) as i64],
+        );
         let _ = connection.execute(
             "DELETE FROM storage_scan_job_state
              WHERE updated_at_millis < ?1
