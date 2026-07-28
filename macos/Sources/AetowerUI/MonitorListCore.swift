@@ -416,10 +416,48 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
         }
     }
 
-    func isChau7ProxyRoot(_ entity: EntitySnapshot) -> Bool {
-        entity.displayName.localizedCaseInsensitiveContains("chau7")
-            || (entity.badges.contains("chau7-live") && entity.entityKind != .aiAgent)
+    func chau7RootRank(_ entity: EntitySnapshot) -> Int? {
+        let entityID = entity.entityId.localizedLowercase
+        let name = entity.displayName.localizedLowercase
+        let executablePath = entity.executablePath?.localizedLowercase ?? ""
+
+        if entityID == "bundle-path:/applications/chau7.app"
+            || executablePath == "/applications/chau7.app/contents/macos/chau7" {
+            return 0
+        }
+        if entity.entityKind == .app && name == "chau7" {
+            return 1
+        }
+        if entity.entityKind == .app && name.contains("chau7") {
+            return 2
+        }
+        if name == "chau7" {
+            return 3
+        }
+        if entity.entityKind != .aiAgent
+            && (name.contains("chau7") || entity.badges.contains("chau7-live")) {
+            return 10
+        }
+        return nil
     }
+
+    func isChau7ProxyRoot(_ entity: EntitySnapshot) -> Bool {
+        chau7RootRank(entity) != nil
+    }
+
+    let canonicalChau7RootID = entities
+        .compactMap { entity -> (rank: Int, id: String)? in
+            guard let rank = chau7RootRank(entity) else { return nil }
+            return (rank, entity.entityId)
+        }
+        .sorted {
+            if $0.rank != $1.rank {
+                return $0.rank < $1.rank
+            }
+            return $0.id < $1.id
+        }
+        .first?
+        .id
 
     func sharesStrongContext(_ lhs: EntitySnapshot, _ rhs: EntitySnapshot) -> Bool {
         let sharedSessions = !sessionIDs(for: lhs).isDisjoint(with: sessionIDs(for: rhs))
@@ -445,8 +483,9 @@ func buildEntityGroups(from entities: [EntitySnapshot]) -> [EntityGroup] {
             let ids = sessionIDs(for: entity)
             guard !ids.isEmpty else { continue }
             guard isChau7ProxyRoot(entity) else { continue }
+            let rootID = canonicalChau7RootID ?? entity.entityId
             for id in ids {
-                roots[id] = entity.entityId
+                roots[id] = rootID
             }
         }
         return roots

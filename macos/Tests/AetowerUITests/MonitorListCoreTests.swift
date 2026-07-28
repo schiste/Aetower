@@ -33,6 +33,45 @@ final class MonitorListCoreTests: XCTestCase {
         XCTAssertEqual(group.frictionScore, 33)
     }
 
+    func testChau7RemoteSessionUsesAppAsCanonicalGroupRoot() throws {
+        let app = entity(
+            id: "bundle-path:/applications/chau7.app",
+            name: "Chau7",
+            kind: .app,
+            cpu: 80,
+            memory: 2_500,
+            badges: ["user-app", "helper-group"],
+            executablePath: "/Applications/Chau7.app/Contents/MacOS/Chau7"
+        )
+        let remote = entity(
+            id: "process-path:/users/me/repositories/chau7/apps/chau7-macos/build/remote-agent/chau7-remote",
+            name: "chau7-remote",
+            kind: .service,
+            cpu: 6,
+            memory: 200,
+            badges: ["chau7-live", "ai-session:s1", "waiting-input"]
+        )
+        let agent = entity(
+            id: "ai-agent:42",
+            name: "Claude Code",
+            kind: .aiAgent,
+            cpu: 2,
+            memory: 100,
+            badges: ["ai-session:s1", "claude"]
+        )
+
+        let variants: [[EntitySnapshot]] = [[agent, app, remote], [remote, agent, app]]
+        for entities in variants {
+            let groups = buildEntityGroups(from: entities)
+            let group = try XCTUnwrap(groups.first { $0.root.entityId == app.entityId })
+
+            XCTAssertNil(groups.first { $0.root.entityId == remote.entityId })
+            XCTAssertEqual(group.root.displayName, "Chau7")
+            XCTAssertEqual(Set(group.members.map { $0.entityId }), Set([app.entityId, remote.entityId, agent.entityId]))
+            XCTAssertEqual(group.memoryBytes, 2_800)
+        }
+    }
+
     func testGroupedMembersCanUseParentSortKey() {
         let small = entity(id: "small", name: "Small", memory: 10)
         let large = entity(id: "large", name: "Large", memory: 40)
