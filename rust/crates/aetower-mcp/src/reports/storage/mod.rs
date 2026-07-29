@@ -110,6 +110,7 @@ const REPOSITORY_INVENTORY_TIME_BUDGET: Duration = Duration::from_millis(30_000)
 const REPOSITORY_INVENTORY_MAX_DIRECTORIES: u64 = 200_000;
 const STORAGE_SCAN_LATENCY_WARN_MILLIS: u64 = 3_000;
 const STORAGE_SCAN_LATENCY_CRITICAL_MILLIS: u64 = 8_000;
+const STORAGE_CACHE_STALE_AFTER_MILLIS: u64 = 24 * 60 * 60 * 1000;
 const STORAGE_PAYLOAD_WARN_BYTES: u64 = 2 * 1024 * 1024;
 const STORAGE_PAYLOAD_CRITICAL_BYTES: u64 = 6 * 1024 * 1024;
 const STORAGE_TABLE_PAGE_WARN_MILLIS: u64 = 80;
@@ -496,12 +497,12 @@ use models::{
     StorageAgentGuidanceIssue, StorageAgentHygieneSummary, StorageAgentItemSummary,
     StorageAgentRepoSummary, StorageAppFootprint, StorageAppFootprintComponent,
     StorageAppOwnershipSignal, StorageArtifactAttribution, StorageBudgetGuardrails,
-    StorageBudgetViolation, StorageCleanupBundle, StorageCleanupBundleItem, StorageCleanupLane,
-    StorageCleanupLaneItem, StorageCleanupRecipe, StorageCleanupTierSummary, StorageColdData,
-    StorageColdDataBand, StorageDuplicateActionability, StorageDuplicateConfidenceBand,
-    StorageDuplicateDetectorKind, StorageDuplicateGroup, StorageDuplicateItem,
-    StorageFilesystemEventRecord, StorageGrowthAnomaly, StorageGrowthAttribution,
-    StorageGrowthDelta, StorageGrowthForecast, StorageGrowthInsights,
+    StorageBudgetViolation, StorageCacheStatus, StorageCleanupBundle, StorageCleanupBundleItem,
+    StorageCleanupLane, StorageCleanupLaneItem, StorageCleanupRecipe, StorageCleanupTierSummary,
+    StorageColdData, StorageColdDataBand, StorageDuplicateActionability,
+    StorageDuplicateConfidenceBand, StorageDuplicateDetectorKind, StorageDuplicateGroup,
+    StorageDuplicateItem, StorageFilesystemEventRecord, StorageGrowthAnomaly,
+    StorageGrowthAttribution, StorageGrowthDelta, StorageGrowthForecast, StorageGrowthInsights,
     StorageGrowthInsightsResponse, StorageGrowthRate, StorageHygieneActionsResponse,
     StorageHygieneItem, StorageHygieneItemsPageResponse, StorageHygieneOptions,
     StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse, StorageHygieneSummary,
@@ -538,9 +539,10 @@ use report::{
     build_storage_hygiene_report_with_options, finalize_storage_report_json, highest_cleanup_tier,
     normalize_dirty_paths, normalize_roots, path_matches_dirty_prefix,
     refresh_storage_performance_budget, skipped_root_permission_state,
-    storage_byte_accounting_label, storage_item_evidence, storage_item_next_step,
-    storage_local_reclaimable_bytes, storage_performance_budget_diagnostics, storage_source_kind,
-    storage_source_label, summarize_volume_states,
+    storage_byte_accounting_label, storage_index_cache_status, storage_item_evidence,
+    storage_item_next_step, storage_local_reclaimable_bytes,
+    storage_performance_budget_diagnostics, storage_source_kind, storage_source_label,
+    summarize_volume_states,
 };
 #[cfg(test)]
 pub(crate) use report::{

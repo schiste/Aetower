@@ -422,6 +422,45 @@ fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn storage_hygiene_indexed_snapshot_returns_empty_cache_without_walk() {
+    let _index_guard = storage_index_test_guard();
+    let root = test_root("indexed-empty-cache");
+    let target = root.join("project").join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&target) {
+        panic!("create target dir: {error}");
+    }
+    if let Err(error) = fs::write(
+        target.join("blob"),
+        vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+    ) {
+        panic!("write build artifact: {error}");
+    }
+
+    let overview = must_ok(
+        storage_hygiene_overview_json(vec![root.display().to_string()], 5, "instant_cached"),
+        "indexed overview serializes without seeded rows",
+    );
+    let overview = parse_json_value(&overview, "indexed empty-cache overview parses");
+
+    assert_eq!(overview["scan_mode"], "instant_cached");
+    assert_eq!(overview["diagnostics"]["root_walk_millis"], 0);
+    assert_eq!(overview["diagnostics"]["scanned_directory_count"], 0);
+    assert_eq!(overview["summary"]["item_count"], 0);
+    assert_eq!(overview["cache_status"]["source"], "persistent_index");
+    assert!(overview["cache_status"]["stale"].as_bool().is_some());
+    assert_eq!(overview["cache_status"]["partial"], true);
+    assert_eq!(overview["cache_status"]["confidence"], "low");
+    assert!(
+        overview["items"]
+            .as_array()
+            .is_some_and(|items| !items.iter().any(|item| item["kind"] == "rust-build")),
+        "cache-first reads must not run typed detectors against the live filesystem"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
 /// Staleness regression: `instant_cached` reports must re-derive from the
 /// persistent index, and the index must be fed by EVERY scan mode. A fast
 /// scan seeds the index, then a later deep scan discovers a new artifact —

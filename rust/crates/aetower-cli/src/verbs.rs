@@ -22,6 +22,10 @@ fn get_u64(v: &Value, key: &str) -> u64 {
     v.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
+fn get_bool(v: &Value, key: &str) -> bool {
+    v.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
 fn get_arr<'a>(v: &'a Value, key: &str) -> &'a [Value] {
     v.get(key)
         .and_then(Value::as_array)
@@ -201,12 +205,63 @@ pub fn storage(payload: &Value) -> String {
     }
 
     let summary = payload.get("summary").cloned().unwrap_or(Value::Null);
-    let reclaimable = get_u64(&summary, "total_reclaimable_bytes");
+    let inventory = get_u64(&summary, "inventory_size_bytes");
+    let safe_now = get_u64(&summary, "safely_reclaimable_now_bytes");
+    let maybe = get_u64(&summary, "maybe_reclaimable_bytes");
+    let review = get_u64(&summary, "review_required_bytes");
+    let dangerous = get_u64(&summary, "dangerous_user_data_bytes");
     let items = get_u64(&summary, "item_count");
+    let cache_status = payload.get("cache_status").cloned().unwrap_or(Value::Null);
+    let cache_source = get_str(&cache_status, "source");
+    let confidence = get_str(&cache_status, "confidence");
+    if !cache_source.is_empty() {
+        out.push_str(&format!(
+            "Cache: {} · stale {} · partial {} · {} confidence\n",
+            cache_source,
+            if get_bool(&cache_status, "stale") {
+                "yes"
+            } else {
+                "no"
+            },
+            if get_bool(&cache_status, "partial") {
+                "yes"
+            } else {
+                "no"
+            },
+            if confidence.is_empty() {
+                "unknown"
+            } else {
+                &confidence
+            }
+        ));
+        if let Some(background_scan) = cache_status.get("background_scan") {
+            let job_id = get_str(background_scan, "job_id");
+            let status = get_str(background_scan, "status");
+            if !job_id.is_empty() || !status.is_empty() {
+                out.push_str(&format!(
+                    "Refresh: {} {}\n",
+                    if job_id.is_empty() {
+                        "background-scan"
+                    } else {
+                        &job_id
+                    },
+                    if status.is_empty() {
+                        "requested"
+                    } else {
+                        &status
+                    }
+                ));
+            }
+        }
+    }
     out.push_str(&format!(
-        "Reclaimable: {} across {} items",
-        human_bytes(reclaimable),
-        items
+        "Inventory: {} across {} items · Safe now: {} · Maybe: {} · Review: {} · Dangerous/user data: {}",
+        human_bytes(inventory),
+        items,
+        human_bytes(safe_now),
+        human_bytes(maybe),
+        human_bytes(review),
+        human_bytes(dangerous)
     ));
     let largest_path = get_str(&summary, "largest_item_path");
     if !largest_path.is_empty() {

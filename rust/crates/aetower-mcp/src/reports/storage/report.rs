@@ -228,6 +228,94 @@ pub(super) fn storage_performance_budget_diagnostics(
     }
 }
 
+fn latest_storage_index_scan_millis(storage_index: &StorageSizeIndex) -> Option<u64> {
+    storage_index
+        .index_report_generation()
+        .map(|(file_generation, delta_generation)| file_generation.max(delta_generation))
+        .filter(|generation| *generation > 0)
+}
+
+fn storage_cache_confidence(
+    source: &str,
+    latest_scan_millis: Option<u64>,
+    stale: bool,
+    partial: bool,
+    has_cached_facts: bool,
+) -> (&'static str, u8) {
+    if source == "live_scan" {
+        return if partial {
+            ("medium", 75)
+        } else {
+            ("high", 95)
+        };
+    }
+    if latest_scan_millis.is_none() || !has_cached_facts {
+        ("low", 20)
+    } else if stale {
+        ("low", 40)
+    } else if partial {
+        ("medium", 70)
+    } else {
+        ("high", 85)
+    }
+}
+
+fn storage_live_cache_status(now_millis: u64, partial: bool) -> StorageCacheStatus {
+    let (confidence, confidence_score) =
+        storage_cache_confidence("live_scan", Some(now_millis), false, partial, true);
+    StorageCacheStatus {
+        source: "live_scan".to_owned(),
+        stale: false,
+        partial,
+        confidence: confidence.to_owned(),
+        confidence_score,
+        latest_scan_millis: Some(now_millis),
+        age_millis: Some(0),
+        message: if partial {
+            "Fresh live scan completed under a bounded budget; some sections may be partial."
+                .to_owned()
+        } else {
+            "Fresh live scan completed within the configured budget.".to_owned()
+        },
+    }
+}
+
+pub(super) fn storage_index_cache_status(
+    storage_index: &StorageSizeIndex,
+    now_millis: u64,
+    partial: bool,
+    has_cached_facts: bool,
+) -> StorageCacheStatus {
+    let latest_scan_millis = latest_storage_index_scan_millis(storage_index);
+    let age_millis = latest_scan_millis.map(|latest| now_millis.saturating_sub(latest));
+    let stale = age_millis
+        .map(|age| age > STORAGE_CACHE_STALE_AFTER_MILLIS)
+        .unwrap_or(true);
+    let (confidence, confidence_score) = storage_cache_confidence(
+        "persistent_index",
+        latest_scan_millis,
+        stale,
+        partial,
+        has_cached_facts,
+    );
+    StorageCacheStatus {
+        source: "persistent_index".to_owned(),
+        stale,
+        partial,
+        confidence: confidence.to_owned(),
+        confidence_score,
+        latest_scan_millis,
+        age_millis,
+        message: if has_cached_facts {
+            "Served from Aetower's persistent storage index; start a background refresh for current filesystem state."
+                .to_owned()
+        } else {
+            "No cached storage facts matched this request; returning current volume state only."
+                .to_owned()
+        },
+    }
+}
+
 pub fn storage_hygiene_deep_scan_json(
     roots: Vec<String>,
     max_depth: usize,
@@ -480,6 +568,13 @@ pub(super) fn build_storage_hygiene_report_with_options(
         &items,
         &growth_deltas,
     );
+    let cache_status = storage_live_cache_status(
+        now_millis,
+        storage_walk_truncated
+            || storage_sizing_truncated
+            || repository_inventory_completeness.truncated
+            || !repository_inventory_completeness.complete,
+    );
     let retained_count = items.len().min(u64::MAX as usize) as u64;
     let diagnostics = StorageScanDiagnostics {
         mode: options.mode.as_str().to_owned(),
@@ -538,6 +633,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
         scan_mode: options.mode.as_str().to_owned(),
+        cache_status,
         diagnostics,
         summary,
         investigation,
@@ -741,7 +837,7 @@ fn index_report_sections(
 
 pub(super) fn build_storage_hygiene_report_from_index(
     roots: Vec<String>,
-    max_depth: usize,
+    _max_depth: usize,
     limit: usize,
 ) -> Result<StorageHygieneReport, String> {
     let started = Instant::now();
@@ -764,39 +860,18 @@ pub(super) fn build_storage_hygiene_report_from_index(
         &mut metrics,
     );
     let limit = limit.clamp(1, MAX_LIMIT);
-    let rows = storage_index.load_candidate_rows(&roots, limit, &mut metrics)?;
+    let rows = match storage_index.load_candidate_rows(&roots, limit, &mut metrics) {
+        Ok(rows) => rows,
+        Err(error) => {
+            metrics.storage_index_status = format!("{}:{error}", metrics.storage_index_status);
+            Vec::new()
+        }
+    };
 
     let mut items = rows
         .into_iter()
         .map(|row| storage_item_for_indexed_row(row, now_millis))
         .collect::<Vec<_>>();
-    let existing_paths = items
-        .iter()
-        .map(|item| item.path.clone())
-        .collect::<BTreeSet<_>>();
-    let detector_options = StorageHygieneOptions {
-        max_depth: max_depth.clamp(1, 12),
-        limit,
-        mode: StorageScanMode::InstantCached,
-        runtime: None,
-        dirty_paths: Vec::new(),
-    };
-    let detector_items = collect_typed_detector_items(
-        &requested_roots,
-        &detector_options,
-        now_millis,
-        &storage_index,
-        &existing_paths,
-        &mut metrics,
-    );
-    let detector_seen_count = detector_items.len().min(u64::MAX as usize) as u64;
-    let detector_merged_count = merge_typed_detector_items(&mut items, detector_items);
-    metrics.candidate_seen_count = metrics
-        .candidate_seen_count
-        .saturating_add(detector_seen_count);
-    if items.is_empty() && sections.discovered_repository_count == 0 {
-        return Err("storage index has no candidate rows yet".to_owned());
-    }
     items.sort_by(|left, right| {
         right
             .size_bytes
@@ -871,6 +946,14 @@ pub(super) fn build_storage_hygiene_report_from_index(
         &items,
         &growth_deltas,
     );
+    let has_cached_facts = !items.is_empty()
+        || !repository_inventory.is_empty()
+        || metrics.discovered_repository_count > 0
+        || growth_insights.as_ref().is_some_and(|insights| {
+            !insights.per_repo_rates.is_empty() || !insights.per_root_rates.is_empty()
+        });
+    let cache_status =
+        storage_index_cache_status(&storage_index, now_millis, true, has_cached_facts);
     let sections_marker = if sections_from_memo {
         "+sections_memo"
     } else {
@@ -903,6 +986,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
         scan_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+        cache_status,
         diagnostics,
         summary,
         investigation,
@@ -933,8 +1017,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         growth_insights,
         cold_data,
         truncated: false,
-        caveats: {
-            let mut caveats = vec![
+        caveats: vec![
             "Loaded from Aetower's persistent storage index for instant display.".to_owned(),
             "Run a refresh before destructive cleanup when the displayed path changed recently."
                 .to_owned(),
@@ -942,14 +1025,9 @@ pub(super) fn build_storage_hygiene_report_from_index(
                 .to_owned(),
             "Growth attribution is based on indexed size deltas and optional Aetower/Chau7 writer ledger records."
                 .to_owned(),
-            ];
-            if detector_merged_count > 0 {
-                caveats.push(format!(
-                    "Typed detectors surfaced {detector_merged_count} high-value storage bucket(s) while loading the cached index."
-                ));
-            }
-            caveats
-        },
+            "Typed storage detectors run during refresh scans; cache-first reads do not probe detector paths."
+                .to_owned(),
+        ],
     })
 }
 

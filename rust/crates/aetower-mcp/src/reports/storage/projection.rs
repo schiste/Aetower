@@ -10,6 +10,7 @@ pub fn storage_hygiene_overview_json(
         captured_at_millis: report.captured_at_millis,
         scan_duration_millis: report.scan_duration_millis,
         scan_mode: report.scan_mode,
+        cache_status: report.cache_status,
         diagnostics: report.diagnostics,
         summary: report.summary,
         investigation: report.investigation,
@@ -80,6 +81,7 @@ pub fn storage_hygiene_actions_json(
     serde_json::to_string(&StorageHygieneActionsResponse {
         captured_at_millis: report.captured_at_millis,
         scan_mode: report.scan_mode,
+        cache_status: report.cache_status,
         diagnostics: report.diagnostics,
         cleanup_tiers: report.cleanup_tiers,
         cleanup_recipes: report.cleanup_recipes,
@@ -166,6 +168,7 @@ pub fn storage_hygiene_items_page_json(
     serde_json::to_string(&StorageHygieneItemsPageResponse {
         captured_at_millis: report.captured_at_millis,
         scan_mode: report.scan_mode,
+        cache_status: report.cache_status,
         diagnostics: report.diagnostics,
         offset,
         limit,
@@ -181,9 +184,8 @@ pub fn storage_hygiene_items_page_json(
 }
 
 /// Serve a page of items straight from the persistent index without building
-/// the full projection report. Returns `None` when the index cannot serve the
-/// request (no connection, query failure, or an empty index), which falls the
-/// caller back to the report-building path.
+/// the full projection report. Empty pages are valid cache-first answers; only
+/// index connection/query failures fall back to the report-building path.
 fn storage_hygiene_items_page_from_index(
     roots: Vec<String>,
     offset: usize,
@@ -211,9 +213,6 @@ fn storage_hygiene_items_page_from_index(
             &mut metrics,
         )
         .ok()?;
-    if page.total_available == 0 {
-        return None;
-    }
     let total_available = page.total_available.min(usize::MAX as u64) as usize;
     let mut items = page
         .rows
@@ -229,6 +228,8 @@ fn storage_hygiene_items_page_from_index(
     }
     let table_page_millis = started.elapsed().as_millis() as u64;
     let item_count = items.len().min(u64::MAX as usize) as u64;
+    let cache_status =
+        storage_index_cache_status(&storage_index, now_millis, true, total_available > 0);
     let diagnostics = StorageScanDiagnostics {
         mode: StorageScanMode::InstantCached.as_str().to_owned(),
         root_walk_millis: 0,
@@ -263,6 +264,7 @@ fn storage_hygiene_items_page_from_index(
         serde_json::to_string(&StorageHygieneItemsPageResponse {
             captured_at_millis: now_millis,
             scan_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+            cache_status,
             diagnostics,
             offset,
             limit,
@@ -289,6 +291,7 @@ pub fn storage_hygiene_repo_detail_json(repo_root: String, mode: &str) -> Result
     serde_json::to_string(&StorageHygieneRepoDetailResponse {
         captured_at_millis: report.captured_at_millis,
         scan_mode: report.scan_mode,
+        cache_status: report.cache_status,
         diagnostics: report.diagnostics,
         repository,
         repo_footprints: report.repo_footprints,

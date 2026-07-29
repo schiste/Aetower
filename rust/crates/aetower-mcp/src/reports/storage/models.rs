@@ -5,6 +5,7 @@ pub(crate) struct StorageHygieneReport {
     pub(super) captured_at_millis: u64,
     pub(super) scan_duration_millis: u64,
     pub(super) scan_mode: String,
+    pub(super) cache_status: StorageCacheStatus,
     pub(super) diagnostics: StorageScanDiagnostics,
     pub(super) summary: StorageHygieneSummary,
     pub(super) investigation: StorageInvestigationSummary,
@@ -38,6 +39,18 @@ pub(crate) struct StorageHygieneReport {
     pub(super) cold_data: Option<StorageColdData>,
     pub(super) truncated: bool,
     pub(super) caveats: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageCacheStatus {
+    pub(super) source: String,
+    pub(super) stale: bool,
+    pub(super) partial: bool,
+    pub(super) confidence: String,
+    pub(super) confidence_score: u8,
+    pub(super) latest_scan_millis: Option<u64>,
+    pub(super) age_millis: Option<u64>,
+    pub(super) message: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -1074,6 +1087,7 @@ pub(super) struct StorageHygieneOverviewResponse {
     pub(super) captured_at_millis: u64,
     pub(super) scan_duration_millis: u64,
     pub(super) scan_mode: String,
+    pub(super) cache_status: StorageCacheStatus,
     pub(super) diagnostics: StorageScanDiagnostics,
     pub(super) summary: StorageHygieneSummary,
     pub(super) investigation: StorageInvestigationSummary,
@@ -1136,6 +1150,7 @@ pub(super) struct RepositoryInventoryDiagnostics {
 pub(super) struct StorageHygieneActionsResponse {
     pub(super) captured_at_millis: u64,
     pub(super) scan_mode: String,
+    pub(super) cache_status: StorageCacheStatus,
     pub(super) diagnostics: StorageScanDiagnostics,
     pub(super) cleanup_tiers: Vec<StorageCleanupTierSummary>,
     pub(super) cleanup_recipes: Vec<StorageCleanupRecipe>,
@@ -1150,6 +1165,7 @@ pub(super) struct StorageHygieneActionsResponse {
 pub(super) struct StorageHygieneItemsPageResponse {
     pub(super) captured_at_millis: u64,
     pub(super) scan_mode: String,
+    pub(super) cache_status: StorageCacheStatus,
     pub(super) diagnostics: StorageScanDiagnostics,
     pub(super) offset: usize,
     pub(super) limit: usize,
@@ -1166,6 +1182,7 @@ pub(super) struct StorageHygieneItemsPageResponse {
 pub(super) struct StorageHygieneRepoDetailResponse {
     pub(super) captured_at_millis: u64,
     pub(super) scan_mode: String,
+    pub(super) cache_status: StorageCacheStatus,
     pub(super) diagnostics: StorageScanDiagnostics,
     pub(super) repository: Option<StorageRepositoryInventoryItem>,
     pub(super) repo_footprints: Vec<StorageRepoFootprint>,

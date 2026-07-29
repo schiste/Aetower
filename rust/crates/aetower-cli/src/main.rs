@@ -65,7 +65,14 @@ enum Command {
     /// Host summary: CPU, memory, wakeups, energy, thermal.
     Host,
     /// Storage pressure and reclaim opportunities.
-    Storage,
+    Storage {
+        /// Return cached facts immediately and start a background refresh.
+        #[arg(long)]
+        refresh: bool,
+        /// Background refresh mode: fast_changed_only, deep_native, or forensic_verified.
+        #[arg(long, default_value = "fast_changed_only", value_name = "MODE")]
+        refresh_mode: String,
+    },
     /// Repository health: git state, agent-contract readiness, clones.
     Repos {
         #[arg(long, default_value_t = 40)]
@@ -143,12 +150,18 @@ fn run(cli: Cli) -> i32 {
             json_args(&[]),
             verbs::host,
         ),
-        Command::Storage => display(
+        Command::Storage {
+            refresh,
+            refresh_mode,
+        } => display(
             &client,
             cli.json,
             cli.watch,
             "aetower_storage_hygiene_overview",
-            json_args(&[]),
+            json_args(&[
+                ("refresh", Value::Bool(refresh)),
+                ("refresh_mode", Value::String(refresh_mode)),
+            ]),
             verbs::storage,
         ),
         Command::Repos { limit } => display(

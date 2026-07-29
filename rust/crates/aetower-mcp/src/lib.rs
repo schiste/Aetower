@@ -3520,6 +3520,14 @@ mod tests {
         fake_server_with_operator_actions(true)
     }
 
+    fn temp_storage_tool_root(name: &str) -> std::path::PathBuf {
+        let millis = current_unix_millis().unwrap_or_default();
+        std::env::temp_dir().join(format!(
+            "aetower-mcp-storage-{name}-{}-{millis}",
+            std::process::id()
+        ))
+    }
+
     fn fake_server_with_operator_actions(operator_actions_enabled: bool) -> AetowerMcpServer {
         AetowerMcpServer {
             data_source: Arc::new(FakeSource),
@@ -4001,6 +4009,138 @@ mod tests {
                 .and_then(|result| result.get("structuredContent"))
                 .is_some()
         );
+    }
+
+    #[test]
+    fn storage_hygiene_overview_tool_is_cache_first_even_when_deep_mode_requested() {
+        let root = temp_storage_tool_root("cache-first-deep-mode");
+        let target = root.join("project").join("target").join("debug");
+        fs::create_dir_all(&target).expect("create target dir");
+        fs::write(target.join("blob"), vec![0u8; 2 * 1024 * 1024]).expect("write artifact");
+
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 91,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_storage_hygiene_overview",
+                "arguments": {
+                    "roots": [root.display().to_string()],
+                    "mode": "deep_native"
+                }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let content = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .cloned()
+            .unwrap_or_else(|| panic!("structuredContent"));
+
+        assert_eq!(content["scan_mode"], "instant_cached");
+        assert_eq!(content["diagnostics"]["root_walk_millis"], 0);
+        assert_eq!(content["diagnostics"]["scanned_directory_count"], 0);
+        assert_eq!(content["summary"]["item_count"], 0);
+        assert_eq!(content["cache_status"]["source"], "persistent_index");
+        assert_eq!(content["cache_status"]["partial"], true);
+        assert!(content["cache_status"].get("background_scan").is_none());
+        assert!(
+            content["items"]
+                .as_array()
+                .is_some_and(|items| !items.iter().any(|item| item["kind"] == "rust-build")),
+            "MCP storage reads must not run typed detectors without refresh=true"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_refresh_tool_returns_cache_with_background_job() {
+        let root = temp_storage_tool_root("cache-first-refresh");
+        fs::create_dir_all(&root).expect("create root");
+
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 92,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_storage_hygiene_overview",
+                "arguments": {
+                    "roots": [root.display().to_string()],
+                    "refresh": true,
+                    "refresh_mode": "fast_changed_only"
+                }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let content = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .cloned()
+            .unwrap_or_else(|| panic!("structuredContent"));
+        let background_scan = content
+            .pointer("/cache_status/background_scan")
+            .cloned()
+            .unwrap_or_else(|| panic!("background scan"));
+
+        assert_eq!(content["scan_mode"], "instant_cached");
+        assert_eq!(content["diagnostics"]["root_walk_millis"], 0);
+        assert_eq!(background_scan["requested"], true);
+        assert_eq!(background_scan["mode"], "fast_changed_only");
+        assert!(
+            background_scan
+                .get("job_id")
+                .and_then(Value::as_str)
+                .is_some_and(|job_id| job_id.starts_with("storage-scan-"))
+        );
+        if let Some(job_id) = background_scan.get("job_id").and_then(Value::as_str) {
+            let _ = storage_scan_cancel_json(job_id);
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn storage_hygiene_deep_scan_tool_starts_background_job() {
+        let root = temp_storage_tool_root("deep-scan-job");
+        fs::create_dir_all(&root).expect("create root");
+
+        let response = match fake_server().handle_message(json!({
+            "jsonrpc": "2.0",
+            "id": 93,
+            "method": "tools/call",
+            "params": {
+                "name": "aetower_storage_hygiene_deep_scan",
+                "arguments": {
+                    "roots": [root.display().to_string()],
+                    "max_depth": 5,
+                    "limit": 80
+                }
+            }
+        })) {
+            Some(response) => response,
+            None => panic!("response"),
+        };
+        let content = response
+            .get("result")
+            .and_then(|result| result.get("structuredContent"))
+            .cloned()
+            .unwrap_or_else(|| panic!("structuredContent"));
+
+        assert_eq!(content["mode"], "deep_native");
+        assert!(content.get("summary").is_none());
+        let job_id = content
+            .get("job_id")
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("job_id"));
+        assert!(job_id.starts_with("storage-scan-"));
+        let _ = storage_scan_cancel_json(job_id);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
