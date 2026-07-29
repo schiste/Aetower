@@ -241,11 +241,13 @@ const STORAGE_INDEX_STALE_EVICTION_MAX_PASSES: usize = 128;
 
 pub(super) struct StorageSizeIndex {
     connection: Option<Connection>,
+    path: Option<PathBuf>,
     pub(super) status: String,
     /// Rows buffered by `store_indexed_row` and written in chunked
     /// transactions by `flush_pending_rows`. The walk is single-threaded per
     /// index instance, so interior mutability with `RefCell` is sufficient.
     pending_rows: RefCell<Vec<StorageIndexedFileRow>>,
+    budget_flush_count: RefCell<u64>,
 }
 
 impl Drop for StorageSizeIndex {
@@ -261,6 +263,28 @@ impl Drop for StorageSizeIndex {
         // thousands of rows.
         if let Some(connection) = self.connection.as_ref() {
             let _ = connection.execute_batch("PRAGMA optimize;");
+        }
+        self.enforce_storage_index_budget(StorageIndexBudgetLimits::default());
+    }
+}
+
+#[derive(Clone, Copy)]
+struct StorageIndexBudgetLimits {
+    target_bytes: u64,
+    hard_cap_bytes: u64,
+    max_file_rows: u64,
+    max_size_rows: u64,
+    max_growth_delta_rows: u64,
+}
+
+impl Default for StorageIndexBudgetLimits {
+    fn default() -> Self {
+        Self {
+            target_bytes: STORAGE_INDEX_TARGET_BYTES,
+            hard_cap_bytes: STORAGE_INDEX_HARD_CAP_BYTES,
+            max_file_rows: STORAGE_FILE_INDEX_MAX_ROWS,
+            max_size_rows: STORAGE_SIZE_INDEX_MAX_ROWS,
+            max_growth_delta_rows: STORAGE_GROWTH_TOP_OFFENDER_DELTA_ROWS,
         }
     }
 }
@@ -283,27 +307,29 @@ pub(super) struct RepositoryInventoryCacheState {
 }
 
 impl StorageSizeIndex {
-    fn with_status(connection: Option<Connection>, status: String) -> Self {
+    fn with_status(connection: Option<Connection>, path: Option<PathBuf>, status: String) -> Self {
         Self {
             connection,
+            path,
             status,
             pending_rows: RefCell::new(Vec::new()),
+            budget_flush_count: RefCell::new(0),
         }
     }
 
     pub(super) fn open() -> Self {
         let Some(directory) = storage_index_directory() else {
-            return Self::with_status(None, "unavailable:no_data_dir".to_owned());
+            return Self::with_status(None, None, "unavailable:no_data_dir".to_owned());
         };
         if let Err(error) = fs::create_dir_all(&directory) {
-            return Self::with_status(None, format!("unavailable:create_dir:{error}"));
+            return Self::with_status(None, None, format!("unavailable:create_dir:{error}"));
         }
         let path = directory.join(STORAGE_INDEX_FILE_NAME);
-        let Ok(connection) = Connection::open(path) else {
-            return Self::with_status(None, "unavailable:open_failed".to_owned());
+        let Ok(connection) = Connection::open(&path) else {
+            return Self::with_status(None, None, "unavailable:open_failed".to_owned());
         };
         if let Err(error) = Self::prepare_schema(&connection) {
-            return Self::with_status(None, format!("unavailable:schema:{error}"));
+            return Self::with_status(None, None, format!("unavailable:schema:{error}"));
         }
         // Index reads/writes tolerate short writer contention instead of
         // silently dropping rows. The scan-job state store deliberately keeps
@@ -315,7 +341,25 @@ impl StorageSizeIndex {
         // turned the instant_cached report path into a multi-minute burn once
         // the index reached ~350k rows.
         let _ = Self::ensure_query_planner_statistics(&connection);
-        Self::with_status(Some(connection), "ready".to_owned())
+        let index = Self::with_status(Some(connection), Some(path), "ready".to_owned());
+        index.enforce_storage_index_budget(StorageIndexBudgetLimits::default());
+        index
+    }
+
+    #[cfg(test)]
+    pub(super) fn open_in_directory_for_test(directory: &Path) -> Self {
+        if let Err(error) = fs::create_dir_all(directory) {
+            return Self::with_status(None, None, format!("unavailable:create_dir:{error}"));
+        }
+        let path = directory.join(STORAGE_INDEX_FILE_NAME);
+        let Ok(connection) = Connection::open(&path) else {
+            return Self::with_status(None, None, "unavailable:open_failed".to_owned());
+        };
+        if let Err(error) = Self::prepare_schema(&connection) {
+            return Self::with_status(None, None, format!("unavailable:schema:{error}"));
+        }
+        let _ = connection.busy_timeout(Duration::from_millis(2_000));
+        Self::with_status(Some(connection), Some(path), "ready".to_owned())
     }
 
     /// Connection-less handle whose reads and writes all no-op. Production
@@ -323,7 +367,7 @@ impl StorageSizeIndex {
     /// exercise the unavailable-index paths.
     #[cfg(test)]
     pub(super) fn disabled(reason: &str) -> Self {
-        Self::with_status(None, format!("disabled:{reason}"))
+        Self::with_status(None, None, format!("disabled:{reason}"))
     }
 
     fn prepare_schema(connection: &Connection) -> rusqlite::Result<()> {
@@ -395,6 +439,47 @@ impl StorageSizeIndex {
                 ON storage_growth_delta(bucket_millis DESC, delta_bytes DESC);
              CREATE INDEX IF NOT EXISTS idx_storage_growth_delta_path
                 ON storage_growth_delta(path, bucket_millis DESC);
+             CREATE TABLE IF NOT EXISTS storage_growth_rollup (
+                granularity TEXT NOT NULL,
+                bucket_millis INTEGER NOT NULL,
+                source_root TEXT NOT NULL,
+                repo_root TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                cleanup_tier TEXT NOT NULL,
+                total_delta_bytes INTEGER NOT NULL,
+                positive_delta_bytes INTEGER NOT NULL,
+                negative_delta_bytes INTEGER NOT NULL,
+                changed_path_count INTEGER NOT NULL,
+                max_abs_delta_bytes INTEGER NOT NULL,
+                updated_at_millis INTEGER NOT NULL,
+                PRIMARY KEY (
+                    granularity, bucket_millis, source_root, repo_root, kind, cleanup_tier
+                )
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_growth_rollup_scope
+                ON storage_growth_rollup(granularity, bucket_millis, source_root, repo_root);
+             CREATE TABLE IF NOT EXISTS storage_index_summary (
+                source_root TEXT PRIMARY KEY,
+                captured_at_millis INTEGER NOT NULL,
+                item_count INTEGER NOT NULL,
+                inventory_size_bytes INTEGER NOT NULL,
+                safe_reclaimable_bytes INTEGER NOT NULL,
+                maybe_reclaimable_bytes INTEGER NOT NULL,
+                review_required_bytes INTEGER NOT NULL,
+                dangerous_user_data_bytes INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS storage_top_offender (
+                source_root TEXT NOT NULL,
+                path TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                cleanup_tier TEXT NOT NULL,
+                physical_bytes INTEGER NOT NULL,
+                recommendation_score REAL NOT NULL DEFAULT 0,
+                last_scan_millis INTEGER NOT NULL,
+                PRIMARY KEY (source_root, path)
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_top_offender_rank
+                ON storage_top_offender(source_root, recommendation_score DESC, physical_bytes DESC);
              CREATE TABLE IF NOT EXISTS storage_repository_inventory_cache (
                 repo_root TEXT PRIMARY KEY,
                 discovered_root TEXT NOT NULL,
@@ -441,6 +526,9 @@ impl StorageSizeIndex {
                 "DROP TABLE IF EXISTS storage_size_index;
                  DROP TABLE IF EXISTS storage_file_index;
                  DROP TABLE IF EXISTS storage_growth_delta;
+                 DROP TABLE IF EXISTS storage_growth_rollup;
+                 DROP TABLE IF EXISTS storage_index_summary;
+                 DROP TABLE IF EXISTS storage_top_offender;
                  UPDATE storage_index_meta SET value = 2 WHERE key = 'schema_version';
                  CREATE TABLE storage_size_index (
                     path TEXT PRIMARY KEY,
@@ -501,6 +589,47 @@ impl StorageSizeIndex {
                     ON storage_growth_delta(bucket_millis DESC, delta_bytes DESC);
                  CREATE INDEX idx_storage_growth_delta_path
                     ON storage_growth_delta(path, bucket_millis DESC);
+                 CREATE TABLE storage_growth_rollup (
+                    granularity TEXT NOT NULL,
+                    bucket_millis INTEGER NOT NULL,
+                    source_root TEXT NOT NULL,
+                    repo_root TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    cleanup_tier TEXT NOT NULL,
+                    total_delta_bytes INTEGER NOT NULL,
+                    positive_delta_bytes INTEGER NOT NULL,
+                    negative_delta_bytes INTEGER NOT NULL,
+                    changed_path_count INTEGER NOT NULL,
+                    max_abs_delta_bytes INTEGER NOT NULL,
+                    updated_at_millis INTEGER NOT NULL,
+                    PRIMARY KEY (
+                        granularity, bucket_millis, source_root, repo_root, kind, cleanup_tier
+                    )
+                 );
+                 CREATE INDEX idx_storage_growth_rollup_scope
+                    ON storage_growth_rollup(granularity, bucket_millis, source_root, repo_root);
+                 CREATE TABLE storage_index_summary (
+                    source_root TEXT PRIMARY KEY,
+                    captured_at_millis INTEGER NOT NULL,
+                    item_count INTEGER NOT NULL,
+                    inventory_size_bytes INTEGER NOT NULL,
+                    safe_reclaimable_bytes INTEGER NOT NULL,
+                    maybe_reclaimable_bytes INTEGER NOT NULL,
+                    review_required_bytes INTEGER NOT NULL,
+                    dangerous_user_data_bytes INTEGER NOT NULL
+                 );
+                 CREATE TABLE storage_top_offender (
+                    source_root TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    cleanup_tier TEXT NOT NULL,
+                    physical_bytes INTEGER NOT NULL,
+                    recommendation_score REAL NOT NULL DEFAULT 0,
+                    last_scan_millis INTEGER NOT NULL,
+                    PRIMARY KEY (source_root, path)
+                 );
+                 CREATE INDEX idx_storage_top_offender_rank
+                    ON storage_top_offender(source_root, recommendation_score DESC, physical_bytes DESC);
                  CREATE TABLE storage_repository_inventory_cache (
                     repo_root TEXT PRIMARY KEY,
                     discovered_root TEXT NOT NULL,
@@ -542,6 +671,7 @@ impl StorageSizeIndex {
         Self::ensure_storage_file_index_columns(connection)?;
         Self::ensure_storage_file_index_page_indexes(connection)?;
         Self::ensure_storage_growth_delta_indexes(connection)?;
+        Self::ensure_storage_growth_rollups(connection)?;
         Ok(())
     }
 
@@ -560,6 +690,53 @@ impl StorageSizeIndex {
              CREATE INDEX IF NOT EXISTS idx_storage_growth_delta_agg
                 ON storage_growth_delta(bucket_millis, repo_root, source_root, path, delta_bytes);",
         )
+    }
+
+    /// One-time additive migration for indexes created before rollups existed.
+    /// This must run before budget enforcement can prune raw path deltas.
+    fn ensure_storage_growth_rollups(connection: &Connection) -> rusqlite::Result<()> {
+        let existing_rollups: i64 =
+            connection.query_row("SELECT COUNT(*) FROM storage_growth_rollup", [], |row| {
+                row.get(0)
+            })?;
+        if existing_rollups > 0 {
+            return Ok(());
+        }
+        let existing_deltas: i64 =
+            connection.query_row("SELECT COUNT(*) FROM storage_growth_delta", [], |row| {
+                row.get(0)
+            })?;
+        if existing_deltas == 0 {
+            return Ok(());
+        }
+        connection.execute_batch(&format!(
+            "INSERT OR IGNORE INTO storage_growth_rollup (
+                granularity, bucket_millis, source_root, repo_root, kind, cleanup_tier,
+                total_delta_bytes, positive_delta_bytes, negative_delta_bytes,
+                changed_path_count, max_abs_delta_bytes, updated_at_millis
+             )
+             SELECT 'hour', bucket_millis, source_root, COALESCE(repo_root, ''), kind,
+                    cleanup_tier, COALESCE(SUM(delta_bytes), 0),
+                    COALESCE(SUM(CASE WHEN delta_bytes > 0 THEN delta_bytes ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN delta_bytes < 0 THEN delta_bytes ELSE 0 END), 0),
+                    COUNT(*), COALESCE(MAX(ABS(delta_bytes)), 0), COALESCE(MAX(scan_millis), 0)
+             FROM storage_growth_delta
+             GROUP BY bucket_millis, source_root, COALESCE(repo_root, ''), kind, cleanup_tier;
+             INSERT OR IGNORE INTO storage_growth_rollup (
+                granularity, bucket_millis, source_root, repo_root, kind, cleanup_tier,
+                total_delta_bytes, positive_delta_bytes, negative_delta_bytes,
+                changed_path_count, max_abs_delta_bytes, updated_at_millis
+             )
+             SELECT 'day', (scan_millis / {DAY_MILLIS}) * {DAY_MILLIS}, source_root,
+                    COALESCE(repo_root, ''), kind, cleanup_tier,
+                    COALESCE(SUM(delta_bytes), 0),
+                    COALESCE(SUM(CASE WHEN delta_bytes > 0 THEN delta_bytes ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN delta_bytes < 0 THEN delta_bytes ELSE 0 END), 0),
+                    COUNT(*), COALESCE(MAX(ABS(delta_bytes)), 0), COALESCE(MAX(scan_millis), 0)
+             FROM storage_growth_delta
+             GROUP BY (scan_millis / {DAY_MILLIS}) * {DAY_MILLIS}, source_root,
+                      COALESCE(repo_root, ''), kind, cleanup_tier;",
+        ))
     }
 
     /// Run `ANALYZE` once for databases that have never collected planner
@@ -783,10 +960,10 @@ impl StorageSizeIndex {
     /// Write all buffered rows in one transaction. Per-row semantics match the
     /// old autocommit path exactly: a growth delta is recorded only when the
     /// physical byte count changed (new rows compare against zero), and a row
-    /// stored twice in one chunk compares against the earlier occurrence. The
-    /// growth-delta retention DELETE runs once per flush instead of once per
-    /// changed file. Failures are tolerated (best effort), matching the old
-    /// `.is_ok()` behavior.
+    /// stored twice in one chunk compares against the earlier occurrence. Raw
+    /// growth deltas are compacted into rollups and top-offender summaries once
+    /// per flush instead of retaining every path indefinitely. Failures are
+    /// tolerated (best effort), matching the old `.is_ok()` behavior.
     pub(super) fn flush_pending_rows(&self) {
         let rows = std::mem::take(&mut *self.pending_rows.borrow_mut());
         if rows.is_empty() {
@@ -830,6 +1007,7 @@ impl StorageSizeIndex {
             return;
         };
         let mut max_scan_millis = 0u64;
+        let mut affected_source_roots = BTreeSet::new();
         {
             let Ok(mut upsert) = transaction.prepare(
                 "INSERT OR REPLACE INTO storage_file_index (
@@ -852,7 +1030,26 @@ impl StorageSizeIndex {
             ) else {
                 return;
             };
+            let Ok(mut upsert_rollup) = transaction.prepare(
+                "INSERT INTO storage_growth_rollup (
+                    granularity, bucket_millis, source_root, repo_root, kind, cleanup_tier,
+                    total_delta_bytes, positive_delta_bytes, negative_delta_bytes,
+                    changed_path_count, max_abs_delta_bytes, updated_at_millis
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11)
+                 ON CONFLICT (
+                    granularity, bucket_millis, source_root, repo_root, kind, cleanup_tier
+                 ) DO UPDATE SET
+                    total_delta_bytes = total_delta_bytes + excluded.total_delta_bytes,
+                    positive_delta_bytes = positive_delta_bytes + excluded.positive_delta_bytes,
+                    negative_delta_bytes = negative_delta_bytes + excluded.negative_delta_bytes,
+                    changed_path_count = changed_path_count + excluded.changed_path_count,
+                    max_abs_delta_bytes = MAX(max_abs_delta_bytes, excluded.max_abs_delta_bytes),
+                    updated_at_millis = MAX(updated_at_millis, excluded.updated_at_millis)",
+            ) else {
+                return;
+            };
             for row in &rows {
+                affected_source_roots.insert(row.source_root.clone());
                 let previous_entry = previous.get(&row.path);
                 let previous_physical = previous_entry.map(|(bytes, _)| *bytes);
                 let previous_tier = previous_entry
@@ -917,6 +1114,7 @@ impl StorageSizeIndex {
                             row.physical_bytes.min(i64::MAX as u64) as i64,
                             delta,
                         ]);
+                        upsert_growth_rollups(&mut upsert_rollup, row, bucket_millis, delta);
                     }
                 }
                 previous.insert(
@@ -925,20 +1123,119 @@ impl StorageSizeIndex {
                 );
             }
             if max_scan_millis > 0 {
-                let retention_before = max_scan_millis
-                    .saturating_sub(STORAGE_GROWTH_RETENTION_MILLIS)
-                    .min(i64::MAX as u64) as i64;
-                let _ = transaction.execute(
-                    "DELETE FROM storage_growth_delta WHERE scan_millis < ?1",
-                    params![retention_before],
+                prune_storage_growth_history(
+                    &transaction,
+                    max_scan_millis,
+                    StorageIndexBudgetLimits::default(),
+                );
+                refresh_storage_index_summaries_and_top_offenders(
+                    &transaction,
+                    &affected_source_roots,
+                    max_scan_millis,
                 );
             }
         }
         let _ = transaction.commit();
+        let should_enforce_budget = {
+            let mut count = self.budget_flush_count.borrow_mut();
+            *count = count.saturating_add(1);
+            (*count).is_multiple_of(STORAGE_INDEX_BUDGET_CHECK_FLUSH_INTERVAL)
+                || rows.len() < STORAGE_INDEX_FLUSH_CHUNK
+        };
+        if should_enforce_budget {
+            self.enforce_storage_index_budget(StorageIndexBudgetLimits::default());
+        }
         // The index content changed, so memoized report sections are stale.
         // The generation key usually changes too; this covers the
         // same-millisecond and unchanged-stamp cases.
         super::report::invalidate_index_report_sections_memo();
+    }
+
+    fn enforce_storage_index_budget(&self, limits: StorageIndexBudgetLimits) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+
+        let mut changed = false;
+        changed |= prune_storage_file_index_rows(connection, limits.max_file_rows, u64::MAX);
+        changed |= prune_storage_size_index_rows(connection, limits.max_size_rows, u64::MAX);
+        changed |= prune_storage_growth_delta_rows(
+            connection,
+            limits.max_growth_delta_rows,
+            STORAGE_INDEX_EMERGENCY_EVICT_ROWS,
+        );
+
+        let mut bytes = self.index_total_file_bytes();
+        if bytes <= limits.target_bytes && !changed {
+            return;
+        }
+
+        if changed {
+            let _ = connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+            bytes = self.index_total_file_bytes();
+        }
+
+        let mut emergency_changed = false;
+        for _ in 0..32 {
+            if bytes <= limits.hard_cap_bytes {
+                break;
+            }
+            let mut deleted = false;
+            deleted |=
+                evict_storage_file_index_rows(connection, STORAGE_INDEX_EMERGENCY_EVICT_ROWS);
+            deleted |=
+                evict_storage_size_index_rows(connection, STORAGE_INDEX_EMERGENCY_EVICT_ROWS);
+            deleted |=
+                evict_storage_growth_delta_rows(connection, STORAGE_INDEX_EMERGENCY_EVICT_ROWS);
+            if !deleted {
+                break;
+            }
+            emergency_changed = true;
+            let _ = connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+            bytes = self.index_total_file_bytes();
+        }
+
+        if changed || emergency_changed {
+            rebuild_storage_index_summaries_and_top_offenders(connection);
+        }
+
+        if emergency_changed || self.index_total_file_bytes() > limits.hard_cap_bytes {
+            let _ = connection.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+        if changed || emergency_changed {
+            super::report::invalidate_index_report_sections_memo();
+        }
+    }
+
+    fn index_total_file_bytes(&self) -> u64 {
+        let Some(path) = self.path.as_ref() else {
+            return 0;
+        };
+        [
+            path.clone(),
+            sqlite_sidecar_path(path, "-wal"),
+            sqlite_sidecar_path(path, "-shm"),
+        ]
+        .iter()
+        .filter_map(|path| fs::metadata(path).ok())
+        .fold(0u64, |total, metadata| total.saturating_add(metadata.len()))
+    }
+
+    #[cfg(test)]
+    pub(super) fn enforce_storage_index_budget_for_test(
+        &self,
+        max_file_rows: u64,
+        max_size_rows: u64,
+        max_growth_delta_rows: u64,
+    ) {
+        self.flush_pending_rows();
+        self.enforce_storage_index_budget(StorageIndexBudgetLimits {
+            target_bytes: u64::MAX,
+            hard_cap_bytes: u64::MAX,
+            max_file_rows,
+            max_size_rows,
+            max_growth_delta_rows,
+        });
     }
 
     /// Cheap (indexed MAX lookups) fingerprint of the index content used to
@@ -1369,12 +1666,12 @@ impl StorageSizeIndex {
             .collect()
     }
 
-    /// Aggregate the full retained `storage_growth_delta` series into growth
-    /// intelligence: per-repo and per-source-root daily rates with a
-    /// half-window trend, days-to-disk-full forecasts per volume, and a
-    /// "since last scan" diff lane. Returns `None` when the index is
-    /// unavailable. Scoped to `roots` (matching `path_is_under_root`
-    /// semantics) so reports and tests stay isolated.
+    /// Aggregate retained growth rollups into growth intelligence: per-repo and
+    /// per-source-root daily rates with a half-window trend, days-to-disk-full
+    /// forecasts per volume, and a "since last scan" diff lane from the recent
+    /// raw-delta lane. Returns `None` when the index is unavailable. Scoped to
+    /// `roots` (matching `path_is_under_root` semantics) so reports and tests
+    /// stay isolated.
     pub(super) fn load_growth_insights(
         &self,
         roots: &[PathBuf],
@@ -1413,18 +1710,19 @@ impl StorageSizeIndex {
         window_days: u64,
         scope_column: &str,
     ) -> Vec<StorageGrowthRate> {
-        let mut predicate =
-            format!("bucket_millis >= ? AND {scope_column} IS NOT NULL AND {scope_column} <> ''");
+        let mut predicate = format!(
+            "granularity = 'day' AND bucket_millis >= ? AND {scope_column} IS NOT NULL AND {scope_column} <> ''"
+        );
         let mut bindings: Vec<rusqlite::types::Value> =
             vec![(window_start.min(i64::MAX as u64) as i64).into()];
-        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "source_root");
         let Ok(mut statement) = connection.prepare(&format!(
             "SELECT {scope_column} AS scope,
-                    SUM(delta_bytes) AS total_delta,
+                    SUM(total_delta_bytes) AS total_delta,
                     COUNT(DISTINCT bucket_millis / {DAY_MILLIS}) AS day_buckets,
                     MIN(bucket_millis) AS first_bucket,
                     MAX(bucket_millis) AS last_bucket
-             FROM storage_growth_delta
+             FROM storage_growth_rollup
              WHERE {predicate}
              GROUP BY scope
              ORDER BY total_delta DESC, scope ASC
@@ -1521,19 +1819,20 @@ impl StorageSizeIndex {
         scope: &str,
         midpoint_millis: u64,
     ) -> i64 {
-        let mut predicate =
-            format!("bucket_millis >= ? AND bucket_millis > ? AND {scope_column} = ?");
+        let mut predicate = format!(
+            "granularity = 'day' AND bucket_millis >= ? AND bucket_millis > ? AND {scope_column} = ?"
+        );
         let mut bindings: Vec<rusqlite::types::Value> = vec![
             (window_start.min(i64::MAX as u64) as i64).into(),
             (midpoint_millis.min(i64::MAX as u64) as i64).into(),
             scope.to_owned().into(),
         ];
-        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "source_root");
         connection
             .query_row(
                 &format!(
-                    "SELECT COALESCE(SUM(delta_bytes), 0)
-                     FROM storage_growth_delta
+                    "SELECT COALESCE(SUM(total_delta_bytes), 0)
+                     FROM storage_growth_rollup
                      WHERE {predicate}"
                 ),
                 params_from_iter(bindings.iter()),
@@ -1649,19 +1948,19 @@ impl StorageSizeIndex {
         scope_filter: Option<(&str, &str)>,
         volume_path: Option<&str>,
     ) -> Vec<(u64, i64)> {
-        let mut predicate = "bucket_millis >= ?".to_owned();
+        let mut predicate = "granularity = 'day' AND bucket_millis >= ?".to_owned();
         let mut bindings: Vec<rusqlite::types::Value> =
             vec![(window_start.min(i64::MAX as u64) as i64).into()];
-        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "source_root");
         if let Some((scope_column, scope)) = scope_filter {
             predicate.push_str(&format!(" AND {scope_column} = ?"));
             bindings.push(scope.to_owned().into());
         }
-        push_volume_predicate(&mut predicate, &mut bindings, volume_path, "path");
+        push_volume_predicate(&mut predicate, &mut bindings, volume_path, "source_root");
         let Ok(mut statement) = connection.prepare(&format!(
             "SELECT bucket_millis / {DAY_MILLIS} AS day_bucket,
-                    COALESCE(SUM(delta_bytes), 0)
-             FROM storage_growth_delta
+                    COALESCE(SUM(total_delta_bytes), 0)
+             FROM storage_growth_rollup
              WHERE {predicate}
              GROUP BY day_bucket
              ORDER BY day_bucket ASC"
@@ -1685,35 +1984,40 @@ impl StorageSizeIndex {
         window_start: u64,
         volume_path: Option<&str>,
     ) -> Vec<(u64, i64)> {
-        let mut predicate = "bucket_millis >= ?".to_owned();
+        let mut predicate = "granularity = 'day' AND bucket_millis >= ?".to_owned();
         let mut bindings: Vec<rusqlite::types::Value> =
             vec![(window_start.min(i64::MAX as u64) as i64).into()];
-        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
-        push_volume_predicate(&mut predicate, &mut bindings, volume_path, "path");
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "source_root");
+        push_volume_predicate(&mut predicate, &mut bindings, volume_path, "source_root");
         let Ok(mut statement) = connection.prepare(&format!(
             "SELECT bucket_millis / {DAY_MILLIS} AS day_bucket,
-                    path,
                     source_root,
-                    COALESCE(SUM(delta_bytes), 0)
-             FROM storage_growth_delta
+                    repo_root,
+                    COALESCE(SUM(total_delta_bytes), 0)
+             FROM storage_growth_rollup
              WHERE {predicate}
-             GROUP BY day_bucket, path, source_root
+             GROUP BY day_bucket, source_root, repo_root
              ORDER BY day_bucket ASC"
         )) else {
             return Vec::new();
         };
         let Ok(rows) = statement.query_map(params_from_iter(bindings.iter()), |row| {
             let day_bucket: i64 = row.get(0)?;
-            let path: String = row.get(1)?;
-            let source_root: String = row.get(2)?;
+            let source_root: String = row.get(1)?;
+            let repo_root: String = row.get(2)?;
             let total_delta: i64 = row.get(3)?;
-            Ok((day_bucket.max(0) as u64, path, source_root, total_delta))
+            Ok((
+                day_bucket.max(0) as u64,
+                source_root,
+                repo_root,
+                total_delta,
+            ))
         }) else {
             return Vec::new();
         };
         let mut totals = BTreeMap::<u64, i64>::new();
-        for (day_bucket, path, source_root, total_delta) in rows.flatten() {
-            if storage_path_is_cloud(&path) || storage_path_is_cloud(&source_root) {
+        for (day_bucket, source_root, repo_root, total_delta) in rows.flatten() {
+            if storage_path_is_cloud(&source_root) || storage_path_is_cloud(&repo_root) {
                 *totals.entry(day_bucket).or_default() += total_delta;
             }
         }
@@ -2202,6 +2506,343 @@ impl StorageSizeIndex {
         };
         rows.flatten().collect()
     }
+
+    #[cfg(test)]
+    pub(super) fn growth_rollup_total_with_prefix(&self, prefix: &str, granularity: &str) -> i64 {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return 0;
+        };
+        connection
+            .query_row(
+                "SELECT COALESCE(SUM(total_delta_bytes), 0)
+                 FROM storage_growth_rollup
+                 WHERE granularity = ?1 AND source_root LIKE ?2 ESCAPE '\\'",
+                params![granularity, format!("{}%", escape_like_pattern(prefix))],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+    }
+
+    #[cfg(test)]
+    pub(super) fn top_offender_count_with_prefix(&self, prefix: &str) -> u64 {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return 0;
+        };
+        connection
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM storage_top_offender
+                 WHERE source_root LIKE ?1 ESCAPE '\\'",
+                params![format!("{}%", escape_like_pattern(prefix))],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as u64)
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub(super) fn summary_inventory_with_prefix(&self, prefix: &str) -> (u64, u64) {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return (0, 0);
+        };
+        connection
+            .query_row(
+                "SELECT COALESCE(SUM(item_count), 0),
+                        COALESCE(SUM(inventory_size_bytes), 0)
+                 FROM storage_index_summary
+                 WHERE source_root LIKE ?1 ESCAPE '\\'",
+                params![format!("{}%", escape_like_pattern(prefix))],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?.max(0) as u64,
+                        row.get::<_, i64>(1)?.max(0) as u64,
+                    ))
+                },
+            )
+            .unwrap_or_default()
+    }
+}
+
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut sidecar = path.as_os_str().to_os_string();
+    sidecar.push(suffix);
+    PathBuf::from(sidecar)
+}
+
+fn upsert_growth_rollups(
+    statement: &mut rusqlite::Statement<'_>,
+    row: &StorageIndexedFileRow,
+    hour_bucket_millis: u64,
+    delta_bytes: i64,
+) {
+    let day_bucket_millis = (row.last_scan_millis / DAY_MILLIS) * DAY_MILLIS;
+    for (granularity, bucket_millis) in [("hour", hour_bucket_millis), ("day", day_bucket_millis)] {
+        let positive_delta_bytes = delta_bytes.max(0);
+        let negative_delta_bytes = delta_bytes.min(0);
+        let max_abs_delta_bytes = delta_bytes.saturating_abs();
+        let _ = statement.execute(params![
+            granularity,
+            bucket_millis.min(i64::MAX as u64) as i64,
+            &row.source_root,
+            row.repo_root.as_deref().unwrap_or(""),
+            &row.kind,
+            &row.cleanup_tier,
+            delta_bytes,
+            positive_delta_bytes,
+            negative_delta_bytes,
+            max_abs_delta_bytes,
+            row.last_scan_millis.min(i64::MAX as u64) as i64,
+        ]);
+    }
+}
+
+fn prune_storage_growth_history(
+    transaction: &rusqlite::Transaction<'_>,
+    max_scan_millis: u64,
+    limits: StorageIndexBudgetLimits,
+) {
+    let oldest_path_delta = max_scan_millis
+        .saturating_sub(STORAGE_GROWTH_TOP_OFFENDER_RETENTION_MILLIS)
+        .min(i64::MAX as u64) as i64;
+    let full_path_cutoff = max_scan_millis
+        .saturating_sub(STORAGE_GROWTH_PATH_RETENTION_MILLIS)
+        .min(i64::MAX as u64) as i64;
+    let hourly_rollup_cutoff = max_scan_millis
+        .saturating_sub(STORAGE_GROWTH_HOURLY_ROLLUP_RETENTION_MILLIS)
+        .min(i64::MAX as u64) as i64;
+    let daily_rollup_cutoff = max_scan_millis
+        .saturating_sub(STORAGE_GROWTH_DAILY_ROLLUP_RETENTION_MILLIS)
+        .min(i64::MAX as u64) as i64;
+
+    let _ = transaction.execute(
+        "DELETE FROM storage_growth_delta WHERE scan_millis < ?1",
+        params![oldest_path_delta],
+    );
+    let _ = transaction.execute(
+        "DELETE FROM storage_growth_delta
+         WHERE scan_millis < ?1
+           AND id NOT IN (
+                SELECT id
+                FROM storage_growth_delta
+                WHERE scan_millis >= ?2
+                ORDER BY ABS(delta_bytes) DESC, scan_millis DESC, id DESC
+                LIMIT ?3
+           )",
+        params![
+            full_path_cutoff,
+            oldest_path_delta,
+            limits.max_growth_delta_rows.min(i64::MAX as u64) as i64,
+        ],
+    );
+    let _ = transaction.execute(
+        "DELETE FROM storage_growth_rollup
+         WHERE granularity = 'hour' AND bucket_millis < ?1",
+        params![hourly_rollup_cutoff],
+    );
+    let _ = transaction.execute(
+        "DELETE FROM storage_growth_rollup
+         WHERE granularity = 'day' AND bucket_millis < ?1",
+        params![daily_rollup_cutoff],
+    );
+}
+
+fn refresh_storage_index_summaries_and_top_offenders(
+    transaction: &rusqlite::Transaction<'_>,
+    source_roots: &BTreeSet<String>,
+    captured_at_millis: u64,
+) {
+    for source_root in source_roots {
+        let _ = transaction.execute(
+            "INSERT OR REPLACE INTO storage_index_summary (
+                source_root, captured_at_millis, item_count, inventory_size_bytes,
+                safe_reclaimable_bytes, maybe_reclaimable_bytes, review_required_bytes,
+                dangerous_user_data_bytes
+             )
+             SELECT ?1, ?2, COUNT(*), COALESCE(SUM(physical_bytes), 0),
+                    COALESCE(SUM(CASE
+                        WHEN cleanup_tier IN ('safe', 'rebuildable') AND safety = 'safe'
+                        THEN physical_bytes ELSE 0 END), 0),
+                    COALESCE(SUM(CASE
+                        WHEN cleanup_tier IN ('safe', 'rebuildable') AND safety <> 'safe'
+                        THEN physical_bytes ELSE 0 END), 0),
+                    COALESCE(SUM(CASE
+                        WHEN cleanup_tier = 'review' OR safety = 'review'
+                        THEN physical_bytes ELSE 0 END), 0),
+                    COALESCE(SUM(CASE
+                        WHEN cleanup_tier IN ('blocked', 'dangerous')
+                          OR safety IN ('blocked', 'dangerous')
+                          OR storage_role = 'user-data'
+                        THEN physical_bytes ELSE 0 END), 0)
+             FROM storage_file_index
+             WHERE source_root = ?1",
+            params![source_root, captured_at_millis.min(i64::MAX as u64) as i64,],
+        );
+        let _ = transaction.execute(
+            "DELETE FROM storage_top_offender WHERE source_root = ?1",
+            params![source_root],
+        );
+        let _ = transaction.execute(
+            "INSERT OR REPLACE INTO storage_top_offender (
+                source_root, path, kind, cleanup_tier, physical_bytes,
+                recommendation_score, last_scan_millis
+             )
+             SELECT source_root, path, kind, cleanup_tier, physical_bytes,
+                    recommendation_score, last_scan_millis
+             FROM storage_file_index
+             WHERE source_root = ?1
+             ORDER BY recommendation_score DESC, physical_bytes DESC, last_scan_millis DESC, path ASC
+             LIMIT ?2",
+            params![source_root, STORAGE_TOP_OFFENDERS_PER_ROOT as i64],
+        );
+    }
+}
+
+fn rebuild_storage_index_summaries_and_top_offenders(connection: &Connection) {
+    let Ok(mut statement) = connection
+        .prepare("SELECT DISTINCT source_root FROM storage_file_index ORDER BY source_root")
+    else {
+        return;
+    };
+    let Ok(rows) = statement.query_map([], |row| row.get::<_, String>(0)) else {
+        return;
+    };
+    let source_roots = rows.flatten().collect::<BTreeSet<_>>();
+    let Ok(transaction) = connection.unchecked_transaction() else {
+        return;
+    };
+    let _ = transaction.execute("DELETE FROM storage_index_summary", []);
+    let _ = transaction.execute(
+        "DELETE FROM storage_top_offender
+         WHERE NOT EXISTS (
+            SELECT 1 FROM storage_file_index
+            WHERE storage_file_index.source_root = storage_top_offender.source_root
+              AND storage_file_index.path = storage_top_offender.path
+         )",
+        [],
+    );
+    refresh_storage_index_summaries_and_top_offenders(
+        &transaction,
+        &source_roots,
+        storage_now_millis(),
+    );
+    let _ = transaction.commit();
+}
+
+fn table_count(connection: &Connection, table: &str) -> u64 {
+    connection
+        .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map(|count| count.max(0) as u64)
+        .unwrap_or_default()
+}
+
+fn prune_storage_file_index_rows(
+    connection: &Connection,
+    max_rows: u64,
+    delete_limit: u64,
+) -> bool {
+    let count = table_count(connection, "storage_file_index");
+    if count <= max_rows {
+        return false;
+    }
+    evict_storage_file_index_rows(connection, count.saturating_sub(max_rows).min(delete_limit))
+}
+
+fn evict_storage_file_index_rows(connection: &Connection, delete_limit: u64) -> bool {
+    if delete_limit == 0 {
+        return false;
+    }
+    connection
+        .execute(
+            "DELETE FROM storage_file_index
+             WHERE rowid IN (
+                SELECT rowid
+                FROM storage_file_index
+                ORDER BY
+                    CASE
+                        WHEN cleanup_tier IN ('safe', 'rebuildable', 'review')
+                          OR physical_bytes >= ?2
+                          OR recommendation_score > 0
+                        THEN 1 ELSE 0 END ASC,
+                    recommendation_score ASC,
+                    physical_bytes ASC,
+                    last_scan_millis ASC,
+                    path ASC
+                LIMIT ?1
+             )",
+            params![
+                delete_limit.min(i64::MAX as u64) as i64,
+                LARGE_FILE_BYTES.min(i64::MAX as u64) as i64,
+            ],
+        )
+        .map(|deleted| deleted > 0)
+        .unwrap_or(false)
+}
+
+fn prune_storage_size_index_rows(
+    connection: &Connection,
+    max_rows: u64,
+    delete_limit: u64,
+) -> bool {
+    let count = table_count(connection, "storage_size_index");
+    if count <= max_rows {
+        return false;
+    }
+    evict_storage_size_index_rows(connection, count.saturating_sub(max_rows).min(delete_limit))
+}
+
+fn evict_storage_size_index_rows(connection: &Connection, delete_limit: u64) -> bool {
+    if delete_limit == 0 {
+        return false;
+    }
+    connection
+        .execute(
+            "DELETE FROM storage_size_index
+             WHERE rowid IN (
+                SELECT rowid
+                FROM storage_size_index
+                ORDER BY allocated_bytes ASC, size_bytes ASC, last_scan_millis ASC, path ASC
+                LIMIT ?1
+             )",
+            params![delete_limit.min(i64::MAX as u64) as i64],
+        )
+        .map(|deleted| deleted > 0)
+        .unwrap_or(false)
+}
+
+fn prune_storage_growth_delta_rows(
+    connection: &Connection,
+    max_rows: u64,
+    delete_limit: u64,
+) -> bool {
+    let count = table_count(connection, "storage_growth_delta");
+    if count <= max_rows {
+        return false;
+    }
+    evict_storage_growth_delta_rows(connection, count.saturating_sub(max_rows).min(delete_limit))
+}
+
+fn evict_storage_growth_delta_rows(connection: &Connection, delete_limit: u64) -> bool {
+    if delete_limit == 0 {
+        return false;
+    }
+    connection
+        .execute(
+            "DELETE FROM storage_growth_delta
+             WHERE id IN (
+                SELECT id
+                FROM storage_growth_delta
+                ORDER BY ABS(delta_bytes) ASC, scan_millis ASC, id ASC
+                LIMIT ?1
+             )",
+            params![delete_limit.min(i64::MAX as u64) as i64],
+        )
+        .map(|deleted| deleted > 0)
+        .unwrap_or(false)
 }
 
 #[derive(Clone, Debug)]

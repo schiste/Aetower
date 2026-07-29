@@ -903,11 +903,11 @@ fn batched_flush_row(
 
 #[test]
 fn storage_index_batched_flush_matches_per_row_growth_semantics() {
-    let _index_guard = storage_index_test_guard();
     let root = test_root("batched-flush-parity");
+    let index_dir = test_root("batched-flush-parity-index");
     let prefix = format!("{}/", root.display());
     let now_millis = storage_now_millis();
-    let storage_index = StorageSizeIndex::open();
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
     assert_eq!(storage_index.status, "ready");
     let mut metrics = StorageScanMetrics::default();
 
@@ -1020,6 +1020,7 @@ fn storage_index_batched_flush_matches_per_row_growth_semantics() {
     assert_eq!(twice_previous_tier, "rebuildable");
 
     let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(index_dir);
 }
 
 #[test]
@@ -1068,22 +1069,37 @@ fn storage_index_buffered_rows_are_visible_to_reads_without_explicit_flush() {
 }
 
 #[test]
-fn storage_index_growth_delta_retention_prunes_once_per_flush() {
-    let _index_guard = storage_index_test_guard();
-    let root = test_root("batched-flush-retention");
-    let prefix = format!("{}/", root.display());
+fn storage_index_growth_delta_retention_preserves_rollups_after_path_prune() {
+    let root = test_root("growth-rollup-path-prune");
+    let index_dir = test_root("growth-rollup-path-prune-index");
+    if let Err(error) = fs::create_dir_all(&root) {
+        panic!("create rollup retention fixture root: {error}");
+    }
+    let prefix = root.display().to_string();
     let now_millis = storage_now_millis();
-    let stale_scan_millis = now_millis.saturating_sub(40 * 24 * 60 * 60 * 1000);
-    let storage_index = StorageSizeIndex::open();
+    let stale_scan_millis = now_millis.saturating_sub(40 * DAY_MILLIS);
+    let old_bytes = 2 * MIN_ITEM_BYTES;
+    let fresh_bytes = 4 * LARGE_FILE_BYTES;
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
     assert_eq!(storage_index.status, "ready");
     let mut metrics = StorageScanMetrics::default();
 
+    let old_path = root.join("old-delta.bin");
+    let fresh_path = root.join("fresh-delta.bin");
+    for path in [&old_path, &fresh_path] {
+        if let Err(error) = fs::write(path, b"fixture") {
+            panic!("write rollup retention fixture: {error}");
+        }
+    }
     storage_index.store_indexed_row(
-        &batched_flush_row(
+        &seeded_index_row(
             &root,
-            "old-delta.bin",
-            2_048,
+            &old_path,
+            old_bytes,
             "rebuildable",
+            None,
+            Some(stale_scan_millis),
+            Some(stale_scan_millis),
             stale_scan_millis,
         ),
         &mut metrics,
@@ -1091,20 +1107,179 @@ fn storage_index_growth_delta_retention_prunes_once_per_flush() {
     storage_index.flush_pending_rows();
 
     storage_index.store_indexed_row(
-        &batched_flush_row(&root, "fresh-delta.bin", 4_096, "rebuildable", now_millis),
+        &seeded_index_row(
+            &root,
+            &fresh_path,
+            fresh_bytes,
+            "rebuildable",
+            None,
+            Some(now_millis),
+            Some(now_millis),
+            now_millis,
+        ),
         &mut metrics,
     );
     storage_index.flush_pending_rows();
+    storage_index.enforce_storage_index_budget_for_test(10_000, 10_000, 1);
 
     let deltas = storage_index.growth_deltas_with_prefix(&prefix);
     assert_eq!(
         deltas.len(),
         1,
-        "the per-flush retention delete prunes deltas older than 30 days"
+        "raw per-path deltas can be capped after they feed rollups"
     );
     assert!(deltas[0].0.ends_with("fresh-delta.bin"));
 
+    let expected_total = old_bytes.saturating_add(fresh_bytes) as i64;
+    assert_eq!(
+        storage_index.growth_rollup_total_with_prefix(&prefix, "day"),
+        expected_total,
+        "daily rollups retain the long-window growth answer"
+    );
+    let insights = storage_index
+        .load_growth_insights(std::slice::from_ref(&root), &[], now_millis, 60)
+        .unwrap_or_else(|| panic!("growth insights load from capped index"));
+    let root_rate = insights
+        .per_root_rates
+        .iter()
+        .find(|rate| rate.scope == root.display().to_string())
+        .unwrap_or_else(|| panic!("root growth rate emitted from rollups"));
+    assert_eq!(root_rate.total_delta_bytes, expected_total);
+
     let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(index_dir);
+}
+
+#[test]
+fn storage_index_open_backfills_rollups_before_raw_delta_budget() {
+    let root = test_root("growth-rollup-backfill");
+    let index_dir = test_root("growth-rollup-backfill-index");
+    if let Err(error) = fs::create_dir_all(&root) {
+        panic!("create rollup backfill fixture root: {error}");
+    }
+    let prefix = root.display().to_string();
+    let now_millis = storage_now_millis();
+    let expected_total = (9 * MIN_ITEM_BYTES) as i64;
+    let mut metrics = StorageScanMetrics::default();
+
+    {
+        let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+        assert_eq!(storage_index.status, "ready");
+        for (name, bytes) in [
+            ("legacy-a.bin", 3 * MIN_ITEM_BYTES),
+            ("legacy-b.bin", 6 * MIN_ITEM_BYTES),
+        ] {
+            let path = root.join(name);
+            if let Err(error) = fs::write(&path, b"fixture") {
+                panic!("write rollup backfill fixture: {error}");
+            }
+            storage_index.store_indexed_row(
+                &seeded_index_row(
+                    &root,
+                    &path,
+                    bytes,
+                    "rebuildable",
+                    None,
+                    Some(now_millis),
+                    Some(now_millis),
+                    now_millis,
+                ),
+                &mut metrics,
+            );
+        }
+        storage_index.flush_pending_rows();
+    }
+
+    let connection = rusqlite::Connection::open(index_dir.join(STORAGE_INDEX_FILE_NAME))
+        .unwrap_or_else(|error| panic!("open rollup backfill fixture db: {error}"));
+    connection
+        .execute("DELETE FROM storage_growth_rollup", [])
+        .unwrap_or_else(|error| panic!("clear rollups to simulate legacy index: {error}"));
+    drop(connection);
+
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    assert_eq!(storage_index.status, "ready");
+    assert_eq!(
+        storage_index.growth_rollup_total_with_prefix(&prefix, "day"),
+        expected_total,
+        "legacy raw deltas are backfilled into daily rollups"
+    );
+    storage_index.enforce_storage_index_budget_for_test(10_000, 10_000, 1);
+    assert_eq!(
+        storage_index.growth_rollup_total_with_prefix(&prefix, "day"),
+        expected_total,
+        "rollup history survives after raw deltas are capped"
+    );
+
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(index_dir);
+}
+
+#[test]
+fn storage_index_budget_keeps_summaries_and_top_offenders_while_capping_rows() {
+    let root = test_root("storage-index-budget-top-offenders");
+    let index_dir = test_root("storage-index-budget-top-offenders-index");
+    if let Err(error) = fs::create_dir_all(&root) {
+        panic!("create storage index budget fixture root: {error}");
+    }
+    let prefix = root.display().to_string();
+    let now_millis = storage_now_millis();
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    assert_eq!(storage_index.status, "ready");
+    let mut metrics = StorageScanMetrics::default();
+    let keeper_path = root.join("keeper-large-safe.bin");
+
+    for index in 0..30u64 {
+        let path = if index == 29 {
+            keeper_path.clone()
+        } else {
+            root.join(format!("small-cache-{index:02}.bin"))
+        };
+        if let Err(error) = fs::write(&path, b"fixture") {
+            panic!("write storage index budget fixture: {error}");
+        }
+        let (bytes, tier) = if path == keeper_path {
+            (2 * LARGE_FILE_BYTES, "safe")
+        } else {
+            (MIN_ITEM_BYTES + index, "")
+        };
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &root,
+                &path,
+                bytes,
+                tier,
+                None,
+                Some(now_millis.saturating_sub((index + 1) * DAY_MILLIS)),
+                Some(now_millis.saturating_sub((index + 1) * DAY_MILLIS)),
+                now_millis.saturating_add(index),
+            ),
+            &mut metrics,
+        );
+    }
+    storage_index.flush_pending_rows();
+    storage_index.enforce_storage_index_budget_for_test(8, 10_000, 10_000);
+
+    let retained_rows = storage_index.count_indexed_rows_with_prefix(&prefix);
+    assert!(
+        retained_rows <= 8,
+        "storage_file_index should respect the configured row budget, got {retained_rows}"
+    );
+    assert!(
+        storage_index
+            .indexed_row_recommendation_score(&keeper_path.display().to_string())
+            .is_some(),
+        "high-value reclaim candidates should survive before low-value rows"
+    );
+    let top_offender_count = storage_index.top_offender_count_with_prefix(&prefix);
+    assert!(top_offender_count > 0);
+    assert!(top_offender_count <= retained_rows);
+    let (summary_items, summary_bytes) = storage_index.summary_inventory_with_prefix(&prefix);
+    assert_eq!(summary_items, retained_rows);
+    assert!(summary_bytes >= 2 * LARGE_FILE_BYTES);
+
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(index_dir);
 }
 
 #[allow(clippy::too_many_arguments)]
