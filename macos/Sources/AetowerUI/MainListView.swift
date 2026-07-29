@@ -258,6 +258,13 @@ private enum MonitorRingCeiling {
     static let percent: Double = 100
 }
 
+private enum MonitorToolBandLayout {
+    /// The leading badge cluster sits before the search field. Live counts can
+    /// change every refresh, so reserve a stable slot and keep the search x
+    /// position fixed while the monitor payload updates.
+    static let badgeClusterWidth: CGFloat = 236
+}
+
 public struct MainListView: View {
     let state: AppState
     let settings: SettingsStore
@@ -458,6 +465,10 @@ public struct MainListView: View {
             }
         } badges: {
             AetowerToolBadgeGroup(monitorHeaderBadges, visibleCount: 2)
+                .frame(width: MonitorToolBandLayout.badgeClusterWidth, alignment: .leading)
+        }
+        .transaction { transaction in
+            transaction.animation = nil
         }
     }
 

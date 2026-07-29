@@ -950,6 +950,8 @@ public struct StorageView: View {
                 }
             }
 
+            storageReclaimQuickDeleteRow(report)
+
             if actions.isEmpty {
                 ContentUnavailableView(
                     "No primary reclaim actions",
@@ -966,6 +968,71 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.lg)
+    }
+
+    @ViewBuilder
+    private func storageReclaimQuickDeleteRow(_ report: StorageHygieneReportModel) -> some View {
+        let candidates = safeDirectTrashCandidates(from: visibleStorageItems(from: report))
+        if !candidates.isEmpty {
+            let readyItems = candidates.filter { !directTrashInFlightPaths.contains($0.path) }
+            let movingCount = candidates.count - readyItems.count
+            let bytes = sumItemBytes(candidates)
+
+            AetowerOperationalListRow(tone: AetowerDesign.Status.ready, minHeight: 76) {
+                HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                        HStack(spacing: AetowerDesign.Spacing.sm) {
+                            Label("Quick delete safe artifacts", systemImage: "trash")
+                                .font(AetowerDesign.Typography.controlLabel)
+                                .foregroundStyle(AetowerDesign.Ink.primary)
+                            AetowerBadge(formatBytes(bytes), tone: AetowerDesign.Status.ready)
+                            AetowerBadge(
+                                "\(candidates.count) path\(candidates.count == 1 ? "" : "s")",
+                                tone: AetowerDesign.Status.neutral
+                            )
+                            if movingCount > 0 {
+                                AetowerBadge(
+                                    "\(movingCount) moving",
+                                    systemImage: "arrow.triangle.2.circlepath",
+                                    tone: AetowerDesign.Status.warning
+                                )
+                            }
+                        }
+
+                        Text("Only policy-approved safe/rebuildable local artifacts are eligible. Aetower moves them to Finder Trash and tracks undo/delete state.")
+                            .font(AetowerDesign.Typography.caption)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: AetowerDesign.Spacing.md)
+
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Button {
+                            focusExploreBrowseTable(filter: .safe, scope: .all, sort: .recommended)
+                        } label: {
+                            Label("Review", systemImage: "magnifyingglass")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+
+                        Button {
+                            trashStorageItemsDirectly(readyItems, sourceTitle: "Safe artifacts")
+                        } label: {
+                            Label(
+                                readyItems.isEmpty ? "Moving" : "Move to Trash",
+                                systemImage: readyItems.isEmpty ? "arrow.triangle.2.circlepath" : "trash"
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(readyItems.isEmpty)
+                    }
+                    .fixedSize()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 
     private func storageReclaimPrimaryActionRow(_ action: StorageReclaimPrimaryAction) -> some View {
@@ -10382,10 +10449,15 @@ public struct StorageView: View {
         }
     }
 
-    private func directCleanItems(from items: [StorageHygieneItemModel]) -> [StorageHygieneItemModel] {
+    private func safeDirectTrashCandidates(from items: [StorageHygieneItemModel]) -> [StorageHygieneItemModel] {
         uniqueStorageItems(items).filter {
             storageItemIsSafelyReclaimableNow($0)
-                && !directTrashInFlightPaths.contains($0.path)
+        }
+    }
+
+    private func directCleanItems(from items: [StorageHygieneItemModel]) -> [StorageHygieneItemModel] {
+        safeDirectTrashCandidates(from: items).filter {
+            !directTrashInFlightPaths.contains($0.path)
         }
     }
 
