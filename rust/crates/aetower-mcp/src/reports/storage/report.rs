@@ -391,6 +391,23 @@ pub(super) fn build_storage_hygiene_report_with_options(
     metrics.scanned_directory_count = scanned_directory_count;
     metrics.discovered_repository_count = repository_roots.len().min(u64::MAX as usize) as u64;
     let mut items = collector.into_sorted_items();
+    let existing_paths = items
+        .iter()
+        .map(|item| item.path.clone())
+        .collect::<BTreeSet<_>>();
+    let detector_items = collect_typed_detector_items(
+        &requested_roots,
+        &options,
+        now_millis,
+        &storage_index,
+        &existing_paths,
+        &mut metrics,
+    );
+    let detector_seen_count = detector_items.len().min(u64::MAX as usize) as u64;
+    let detector_merged_count = merge_typed_detector_items(&mut items, detector_items);
+    metrics.candidate_seen_count = metrics
+        .candidate_seen_count
+        .saturating_add(detector_seen_count);
     if options.mode.verify_source_control() {
         let git_started = Instant::now();
         annotate_items_source_control(&mut items);
@@ -510,6 +527,11 @@ pub(super) fn build_storage_hygiene_report_with_options(
             "Some large item byte estimates are partial; those rows are marked individually as partial sizes."
                 .to_owned(),
         );
+    }
+    if detector_merged_count > 0 {
+        caveats.push(format!(
+            "Typed detectors surfaced {detector_merged_count} high-value storage bucket(s) outside the generic walk's top-K path."
+        ));
     }
 
     StorageHygieneReport {
@@ -719,7 +741,7 @@ fn index_report_sections(
 
 pub(super) fn build_storage_hygiene_report_from_index(
     roots: Vec<String>,
-    _max_depth: usize,
+    max_depth: usize,
     limit: usize,
 ) -> Result<StorageHygieneReport, String> {
     let started = Instant::now();
@@ -743,14 +765,38 @@ pub(super) fn build_storage_hygiene_report_from_index(
     );
     let limit = limit.clamp(1, MAX_LIMIT);
     let rows = storage_index.load_candidate_rows(&roots, limit, &mut metrics)?;
-    if rows.is_empty() && sections.discovered_repository_count == 0 {
-        return Err("storage index has no candidate rows yet".to_owned());
-    }
 
     let mut items = rows
         .into_iter()
         .map(|row| storage_item_for_indexed_row(row, now_millis))
         .collect::<Vec<_>>();
+    let existing_paths = items
+        .iter()
+        .map(|item| item.path.clone())
+        .collect::<BTreeSet<_>>();
+    let detector_options = StorageHygieneOptions {
+        max_depth: max_depth.clamp(1, 12),
+        limit,
+        mode: StorageScanMode::InstantCached,
+        runtime: None,
+        dirty_paths: Vec::new(),
+    };
+    let detector_items = collect_typed_detector_items(
+        &requested_roots,
+        &detector_options,
+        now_millis,
+        &storage_index,
+        &existing_paths,
+        &mut metrics,
+    );
+    let detector_seen_count = detector_items.len().min(u64::MAX as usize) as u64;
+    let detector_merged_count = merge_typed_detector_items(&mut items, detector_items);
+    metrics.candidate_seen_count = metrics
+        .candidate_seen_count
+        .saturating_add(detector_seen_count);
+    if items.is_empty() && sections.discovered_repository_count == 0 {
+        return Err("storage index has no candidate rows yet".to_owned());
+    }
     items.sort_by(|left, right| {
         right
             .size_bytes
@@ -803,8 +849,9 @@ pub(super) fn build_storage_hygiene_report_from_index(
     let app_footprints = summarize_app_footprints(&items);
     let system_data_buckets = summarize_system_data_buckets(&items);
     let treemap_roots = build_storage_treemap_roots(&items, &scanned_roots);
-    metrics.sized_entry_count = items.len().min(u64::MAX as usize) as u64;
-    metrics.candidate_seen_count = metrics.sized_entry_count;
+    let retained_item_count = items.len().min(u64::MAX as usize) as u64;
+    metrics.sized_entry_count = metrics.sized_entry_count.max(retained_item_count);
+    metrics.candidate_seen_count = metrics.candidate_seen_count.max(retained_item_count);
     let growth_deltas = storage_index.load_growth_deltas(40);
     apply_growth_deltas_to_repo_footprints(&mut repo_footprints, &growth_deltas);
     apply_clone_groups_to_repo_footprints(&mut repo_footprints, &repository_inventory);
@@ -831,8 +878,8 @@ pub(super) fn build_storage_hygiene_report_from_index(
     };
     let diagnostics = StorageScanDiagnostics {
         mode: StorageScanMode::InstantCached.as_str().to_owned(),
-        root_walk_millis: 0,
-        size_walk_millis: 0,
+        root_walk_millis: metrics.root_walk_millis,
+        size_walk_millis: metrics.size_walk_millis,
         git_millis: metrics.git_millis,
         serialize_millis: 0,
         payload_bytes: 0,
@@ -886,7 +933,8 @@ pub(super) fn build_storage_hygiene_report_from_index(
         growth_insights,
         cold_data,
         truncated: false,
-        caveats: vec![
+        caveats: {
+            let mut caveats = vec![
             "Loaded from Aetower's persistent storage index for instant display.".to_owned(),
             "Run a refresh before destructive cleanup when the displayed path changed recently."
                 .to_owned(),
@@ -894,7 +942,14 @@ pub(super) fn build_storage_hygiene_report_from_index(
                 .to_owned(),
             "Growth attribution is based on indexed size deltas and optional Aetower/Chau7 writer ledger records."
                 .to_owned(),
-        ],
+            ];
+            if detector_merged_count > 0 {
+                caveats.push(format!(
+                    "Typed detectors surfaced {detector_merged_count} high-value storage bucket(s) while loading the cached index."
+                ));
+            }
+            caveats
+        },
     })
 }
 

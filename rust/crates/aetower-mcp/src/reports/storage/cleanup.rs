@@ -489,7 +489,10 @@ pub(super) fn storage_role_for_kind(kind: &str) -> &'static str {
         | "docker-vm"
         | "colima-vm"
         | "xcode-simulator-runtime" => "environment",
+        "ai-session-data" => "agent-data",
         "trash" => "temporary",
+        "download-archive" => "download-archive",
+        "offline-media" => "offline-media",
         "large-directory" => "artifact",
         "macos-app-bundle" => "application",
         "app-support-data" | "app-container" | "app-launch-item" | "app-preferences"
@@ -758,6 +761,30 @@ pub(super) fn artifact_intelligence(kind: &str, path: &str) -> ArtifactIntellige
                 "Colima/Lima VM disks hold images, containers, and volumes; reclaim through Docker or by deleting/recreating the Colima profile after review."
                     .to_owned(),
         },
+        "ai-session-data" => ArtifactIntelligence {
+            rebuild_command: None,
+            estimated_rebuild_cost: "Review first".to_owned(),
+            estimated_rebuild_seconds: None,
+            cleanup_consequence:
+                "AI session logs can contain prompts, code, credentials, or recovery context; archive or review them before deleting."
+                    .to_owned(),
+        },
+        "download-archive" => ArtifactIntelligence {
+            rebuild_command: None,
+            estimated_rebuild_cost: "Review first".to_owned(),
+            estimated_rebuild_seconds: None,
+            cleanup_consequence:
+                "Downloaded installers and archives may be re-downloadable, but Aetower cannot prove that; confirm source or supersession first."
+                    .to_owned(),
+        },
+        "offline-media" => ArtifactIntelligence {
+            rebuild_command: None,
+            estimated_rebuild_cost: "Review first".to_owned(),
+            estimated_rebuild_seconds: None,
+            cleanup_consequence:
+                "Offline media can be re-downloaded only if the account, app, and license still allow it; remove downloads from inside the owning app."
+                    .to_owned(),
+        },
         "large-directory" => ArtifactIntelligence {
             rebuild_command: None,
             estimated_rebuild_cost: "Review first".to_owned(),
@@ -891,6 +918,9 @@ fn artifact_kind_is_rebuildable(kind: &str, cleanup_tier: &str) -> bool {
                 | "app-launch-item"
                 | "app-preferences"
                 | "app-receipt"
+                | "ai-session-data"
+                | "download-archive"
+                | "offline-media"
                 | "ios-backup"
                 | "mail-attachments"
                 | "message-attachments"
@@ -906,6 +936,9 @@ fn semantic_category_for_kind(kind: &str) -> &'static str {
         "dependency-tree" => "dependency-artifact",
         "environment" => "runtime-environment",
         "application" | "app-data" => "app-footprint",
+        "agent-data" => "ai-session-data",
+        "download-archive" => "downloaded-archive",
+        "offline-media" => "offline-media",
         "system-data" => "system-data",
         "temporary" | "log" => "temporary-or-log",
         "cold-file" => "cold-user-data",
@@ -1031,6 +1064,30 @@ fn is_release_artifact_file(name: &str) -> bool {
         || lower.ends_with(".xcresult")
 }
 
+fn is_download_archive_path(path_lower: &str, name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    path_lower.contains("/downloads/")
+        && (is_release_artifact_file(name)
+            || lower.ends_with(".iso")
+            || lower.ends_with(".rar")
+            || lower.ends_with(".7z"))
+}
+
+fn is_ai_session_storage_path(path_lower: &str) -> bool {
+    path_lower.ends_with("/.codex/sessions")
+        || path_lower.contains("/.codex/sessions/")
+        || path_lower.ends_with("/.claude/projects")
+        || path_lower.contains("/.claude/projects/")
+        || path_lower.contains("/library/application support/claude")
+}
+
+fn is_offline_media_storage_path(path_lower: &str) -> bool {
+    path_lower.contains("/library/containers/com.apple.podcasts")
+        || path_lower.contains("/library/containers/com.apple.tv")
+        || path_lower.contains("/library/containers/com.apple.music")
+        || path_lower.contains("/library/containers/com.spotify.client")
+}
+
 fn is_docker_storage_path(path_lower: &str, name: &str) -> bool {
     let name_lower = name.to_ascii_lowercase();
     let docker_root = path_lower.contains("/.docker/")
@@ -1040,6 +1097,7 @@ fn is_docker_storage_path(path_lower: &str, name: &str) -> bool {
         && matches!(
             name_lower.as_str(),
             "overlay2"
+                | "buildx"
                 | "buildkit"
                 | "containers"
                 | "image"
@@ -1057,7 +1115,10 @@ fn is_simulator_storage_path(path_lower: &str, name: &str) -> bool {
         || path_lower.contains("/coredevice/")
         || path_lower.contains("/developer/xcode/ios devicesupport/")
         || path_lower.contains("/developer/xcode/watchos devicesupport/")
-        || path_lower.contains("/developer/xcode/tvos devicesupport/"))
+        || path_lower.contains("/developer/xcode/tvos devicesupport/")
+        || path_lower.ends_with("/developer/xcode/ios devicesupport")
+        || path_lower.ends_with("/developer/xcode/watchos devicesupport")
+        || path_lower.ends_with("/developer/xcode/tvos devicesupport"))
         && matches!(
             name_lower.as_str(),
             "devices" | "runtimes" | "data" | "device support" | "ios devicesupport"
@@ -1073,6 +1134,8 @@ fn is_package_cache_path(path_lower: &str, name: &str, parent_name: &str) -> Opt
     if name_lower == ".pnpm-store"
         || (name_lower == "store" && (path_lower.contains("/pnpm/") || parent_lower == "pnpm"))
         || path_lower.contains("/.local/share/pnpm/store")
+        || path_lower.ends_with("/library/caches/pnpm")
+        || path_lower.contains("/library/caches/pnpm/")
     {
         return Some("pnpm-store");
     }
@@ -1183,6 +1246,25 @@ pub(super) fn classify_artifact(
         return Some(rule);
     }
 
+    if is_ai_session_storage_path(&path_lower) && (metadata.is_dir() || metadata.len() > 0) {
+        return Some(rule(
+            "ai-session-data",
+            "review",
+            "risky",
+            "AI agent session or local transcript storage.",
+            "Review or archive before deleting; sessions can contain prompts, generated code, credentials, and recovery context.",
+        ));
+    }
+    if is_offline_media_storage_path(&path_lower) && (metadata.is_dir() || metadata.len() > 0) {
+        return Some(rule(
+            "offline-media",
+            "review",
+            "risky",
+            "Offline media downloads or app-managed media storage.",
+            "Remove downloads from the owning app after confirming they can be re-downloaded.",
+        ));
+    }
+
     if metadata.is_file() && name.ends_with(".log") {
         return Some(rule(
             "log-file",
@@ -1217,6 +1299,15 @@ pub(super) fn classify_artifact(
             "risky",
             "App launch agent or daemon.",
             "Review launch items alongside their owning app before disabling or deleting anything.",
+        ));
+    }
+    if metadata.is_file() && is_download_archive_path(&path_lower, name) {
+        return Some(rule(
+            "download-archive",
+            "review",
+            "risky",
+            "Downloaded installer or archive file.",
+            "Review whether this download is superseded or re-downloadable before deleting.",
         ));
     }
     if metadata.is_file() && is_release_artifact_file(name) {
@@ -1403,7 +1494,7 @@ pub(super) fn classify_artifact(
         ));
     }
 
-    if path_lower.contains(" devicesupport/") {
+    if path_lower.contains(" devicesupport/") || path_lower.ends_with(" devicesupport") {
         return Some(rule(
             "xcode-device-support",
             "review",

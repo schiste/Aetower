@@ -6,6 +6,21 @@ fn storage_index_test_guard() -> std::sync::MutexGuard<'static, ()> {
     lock_or_recover(LOCK.get_or_init(|| Mutex::new(())))
 }
 
+fn write_sparse_fixture(path: &Path, bytes: u64) {
+    if let Some(parent) = path.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        panic!("create sparse fixture parent {}: {error}", parent.display());
+    }
+    let file = match fs::File::create(path) {
+        Ok(file) => file,
+        Err(error) => panic!("create sparse fixture {}: {error}", path.display()),
+    };
+    if let Err(error) = file.set_len(bytes) {
+        panic!("size sparse fixture {}: {error}", path.display());
+    }
+}
+
 #[test]
 fn storage_hygiene_detects_reclaimable_build_artifacts() {
     let root = test_root("detects-build-artifacts");
@@ -6786,6 +6801,119 @@ fn storage_hygiene_surfaces_colima_vm_storage_as_review_only() {
             .is_some_and(|blockers| blockers.iter().any(|blocker| blocker
                 .as_str()
                 .is_some_and(|blocker| blocker.contains("Colima owns this VM storage"))))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn typed_storage_detectors_surface_known_buckets_despite_scan_limits() {
+    let root = test_root("typed-storage-detectors");
+    let repositories = root.join("Repositories");
+    let rust_project = repositories.join("RustApp");
+    let swift_project = repositories.join("SwiftApp");
+    let fixtures = [
+        root.join("Library")
+            .join("Developer")
+            .join("Xcode")
+            .join("iOS DeviceSupport")
+            .join("17.0"),
+        root.join("Library")
+            .join("Developer")
+            .join("Xcode")
+            .join("DerivedData")
+            .join("Aetower-abcdef"),
+        root.join("Library")
+            .join("Developer")
+            .join("CoreSimulator")
+            .join("Caches"),
+        rust_project.join("target").join("debug"),
+        swift_project.join(".build").join("debug"),
+        root.join(".colima")
+            .join("_lima")
+            .join("_disks")
+            .join("colima"),
+        root.join(".cache").join("uv"),
+        root.join("Library").join("Caches").join("pnpm"),
+        root.join(".codex").join("sessions").join("2026").join("07"),
+        root.join("Library")
+            .join("Application Support")
+            .join("Claude")
+            .join("projects"),
+        root.join("Library")
+            .join("Containers")
+            .join("com.apple.podcasts")
+            .join("Data"),
+        root.join("Downloads"),
+    ];
+    for directory in fixtures {
+        if let Err(error) = fs::create_dir_all(&directory) {
+            panic!(
+                "create typed detector fixture {}: {error}",
+                directory.display()
+            );
+        }
+        write_sparse_fixture(&directory.join("blob"), MIN_ITEM_BYTES + 512);
+    }
+    if let Err(error) = fs::write(rust_project.join("Cargo.toml"), "[package]\nname='demo'\n") {
+        panic!("write Cargo manifest: {error}");
+    }
+    if let Err(error) = fs::write(
+        swift_project.join("Package.swift"),
+        "// swift-tools-version:6.0\n",
+    ) {
+        panic!("write Package manifest: {error}");
+    }
+    write_sparse_fixture(
+        &root.join("Downloads").join("installer.dmg"),
+        MIN_ITEM_BYTES + 512,
+    );
+    write_sparse_fixture(
+        &root.join("Downloads").join("screen-recording.webm"),
+        LARGE_FILE_BYTES + MIN_ITEM_BYTES,
+    );
+
+    let json = build_storage_hygiene_report_for_roots_mode(
+        vec![root.display().to_string()],
+        1,
+        3,
+        "fast_changed_only",
+    );
+    let report = parse_json_value(&json, "typed detector report parses");
+    let items = report["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("items is an array"));
+    let kinds = items
+        .iter()
+        .filter_map(|item| item["kind"].as_str())
+        .collect::<BTreeSet<_>>();
+
+    for expected in [
+        "xcode-device-support",
+        "xcode-derived-data",
+        "simulator-cache",
+        "rust-build",
+        "swift-build",
+        "colima-vm",
+        "uv-cache",
+        "pnpm-store",
+        "ai-session-data",
+        "offline-media",
+        "download-archive",
+        "video-file",
+    ] {
+        assert!(
+            kinds.contains(expected),
+            "{expected} should be surfaced by typed detectors; saw {kinds:?}"
+        );
+    }
+    assert!(
+        report["caveats"]
+            .as_array()
+            .is_some_and(|caveats| caveats.iter().any(|caveat| caveat
+                .as_str()
+                .is_some_and(|text| text.contains("Typed detectors surfaced")))),
+        "report should disclose typed detector contribution"
     );
 
     let _ = fs::remove_dir_all(root);

@@ -248,12 +248,12 @@ fn surface_large_directories(
     truncated
 }
 
-fn should_retain_storage_item(kind: &str, bytes: u64) -> bool {
+pub(super) fn should_retain_storage_item(kind: &str, bytes: u64) -> bool {
     bytes >= MIN_ITEM_BYTES
         || matches!(kind, "app-preferences" | "app-receipt" | "app-launch-item") && bytes > 0
 }
 
-fn storage_item_for_path(
+pub(super) fn storage_item_for_path(
     path: &Path,
     modified: Option<SystemTime>,
     accessed: Option<SystemTime>,
@@ -517,7 +517,7 @@ fn indexed_row_for_path(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn size_of_path(
+pub(super) fn size_of_path(
     path: &Path,
     metadata: &fs::Metadata,
     source_root: &Path,
@@ -770,7 +770,7 @@ pub(super) fn file_access_age_days(metadata: &fs::Metadata, now_millis: u64) -> 
         .map(|delta| delta / 86_400_000)
 }
 
-fn is_source_control_dir(path: &Path) -> bool {
+pub(super) fn is_source_control_dir(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
         Some(".git" | ".hg" | ".svn")

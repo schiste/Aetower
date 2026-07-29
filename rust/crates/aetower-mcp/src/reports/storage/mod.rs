@@ -445,6 +445,7 @@ fn rebuild_seconds_label(seconds: u64) -> String {
 mod agent_guidance;
 mod attribution;
 mod cleanup;
+mod detectors;
 mod jobs;
 mod models;
 mod projection;
@@ -479,6 +480,7 @@ use cleanup::{
     large_directory_rule, semantic_artifact_intelligence, storage_role_for_kind,
     storage_role_label, summarize_cleanup_tiers,
 };
+use detectors::{collect_typed_detector_items, merge_typed_detector_items};
 pub(crate) use jobs::StorageScanJobProgress;
 #[cfg(test)]
 use jobs::{StorageScanControl, StorageScanJobRequest, StorageScanThrottle};
@@ -555,5 +557,6 @@ use state_store::{
 use treemap::build_storage_treemap_roots;
 use walk::{
     SizeWalkResult, file_access_age_days, is_cloud_storage_path, is_network_storage_path,
-    scan_root, storage_item_for_indexed_row, unix_metadata_millis,
+    is_source_control_dir, scan_root, should_retain_storage_item, size_of_path,
+    storage_item_for_indexed_row, storage_item_for_path, unix_metadata_millis,
 };
