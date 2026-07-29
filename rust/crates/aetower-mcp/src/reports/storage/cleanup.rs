@@ -2647,20 +2647,20 @@ pub(super) fn evaluate_budget_guardrails(
 ) -> StorageBudgetGuardrails {
     let mut violations = Vec::new();
 
-    if summary.total_reclaimable_bytes > TOTAL_ARTIFACT_BUDGET_BYTES {
+    if summary.inventory_size_bytes > TOTAL_ARTIFACT_BUDGET_BYTES {
         violations.push(StorageBudgetViolation {
             id: "total-artifact-budget".to_owned(),
             scope: "global".to_owned(),
             severity: "warning".to_owned(),
             title: "Local dev artifacts exceed budget".to_owned(),
             detail: format!(
-                "Aetower found {} of local development artifacts; budget is {}.",
-                human_bytes(summary.total_reclaimable_bytes),
+                "Aetower found {} of local storage inventory candidates; budget is {}.",
+                human_bytes(summary.inventory_size_bytes),
                 human_bytes(TOTAL_ARTIFACT_BUDGET_BYTES)
             ),
             repo_root: None,
             repo_name: None,
-            observed_bytes: summary.total_reclaimable_bytes,
+            observed_bytes: summary.inventory_size_bytes,
             limit_bytes: TOTAL_ARTIFACT_BUDGET_BYTES,
             recommendation: "Review cleanup recipes and reclaim rebuildable caches before the machine starts paging or indexing excessively.".to_owned(),
         });
@@ -2867,17 +2867,19 @@ fn storage_prevention_suggestions(
         });
     }
 
-    if summary.total_reclaimable_bytes > TOTAL_ARTIFACT_BUDGET_BYTES / 2 {
+    if summary.inventory_size_bytes > TOTAL_ARTIFACT_BUDGET_BYTES / 2 {
         suggestions.push(StoragePreventionSuggestion {
             id: "developer-artifacts-drift".to_owned(),
             trigger: "artifact-budget".to_owned(),
             title: "Set a developer artifact cleanup habit".to_owned(),
             detail: format!(
-                "{} of local artifacts are visible now; review rebuildable outputs before package stores.",
-                human_bytes(summary.total_reclaimable_bytes)
+                "{} of local inventory candidates are visible now; review rebuildable outputs before package stores.",
+                human_bytes(summary.inventory_size_bytes)
             ),
             action_label: "Review developer artifacts".to_owned(),
-            estimated_reclaimable_bytes: summary.total_reclaimable_bytes,
+            estimated_reclaimable_bytes: summary
+                .maybe_reclaimable_bytes
+                .saturating_add(summary.review_required_bytes),
             safety: "review".to_owned(),
             requires_approval: true,
         });

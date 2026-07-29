@@ -781,6 +781,11 @@ private extension String {
 
 struct StorageHygieneSummaryModel: Decodable, Sendable {
     let itemCount: Int
+    let inventorySizeBytes: UInt64
+    let maybeReclaimableBytes: UInt64
+    let safelyReclaimableNowBytes: UInt64
+    let reviewRequiredBytes: UInt64
+    let dangerousUserDataBytes: UInt64
     let totalReclaimableBytes: UInt64
     let safeCandidateCount: Int
     let reviewCandidateCount: Int
@@ -789,6 +794,48 @@ struct StorageHygieneSummaryModel: Decodable, Sendable {
     let largestItemPath: String?
     let largestItemBytes: UInt64
     let attributedRepoCount: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case itemCount
+        case inventorySizeBytes
+        case maybeReclaimableBytes
+        case safelyReclaimableNowBytes
+        case reviewRequiredBytes
+        case dangerousUserDataBytes
+        case totalReclaimableBytes
+        case safeCandidateCount
+        case reviewCandidateCount
+        case staleCandidateCount
+        case scannedDirectoryCount
+        case largestItemPath
+        case largestItemBytes
+        case attributedRepoCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        itemCount = try container.decode(Int.self, forKey: .itemCount)
+        totalReclaimableBytes = try container.decode(UInt64.self, forKey: .totalReclaimableBytes)
+        inventorySizeBytes =
+            try container.decodeIfPresent(UInt64.self, forKey: .inventorySizeBytes)
+            ?? totalReclaimableBytes
+        safelyReclaimableNowBytes =
+            try container.decodeIfPresent(UInt64.self, forKey: .safelyReclaimableNowBytes)
+            ?? totalReclaimableBytes
+        maybeReclaimableBytes =
+            try container.decodeIfPresent(UInt64.self, forKey: .maybeReclaimableBytes) ?? 0
+        reviewRequiredBytes =
+            try container.decodeIfPresent(UInt64.self, forKey: .reviewRequiredBytes) ?? 0
+        dangerousUserDataBytes =
+            try container.decodeIfPresent(UInt64.self, forKey: .dangerousUserDataBytes) ?? 0
+        safeCandidateCount = try container.decode(Int.self, forKey: .safeCandidateCount)
+        reviewCandidateCount = try container.decode(Int.self, forKey: .reviewCandidateCount)
+        staleCandidateCount = try container.decode(Int.self, forKey: .staleCandidateCount)
+        scannedDirectoryCount = try container.decode(UInt64.self, forKey: .scannedDirectoryCount)
+        largestItemPath = try container.decodeIfPresent(String.self, forKey: .largestItemPath)
+        largestItemBytes = try container.decode(UInt64.self, forKey: .largestItemBytes)
+        attributedRepoCount = try container.decode(Int.self, forKey: .attributedRepoCount)
+    }
 }
 
 struct StorageScanDiagnosticsModel: Decodable, Sendable {

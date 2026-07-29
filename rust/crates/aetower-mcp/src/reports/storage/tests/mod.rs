@@ -21,6 +21,20 @@ fn write_sparse_fixture(path: &Path, bytes: u64) {
     }
 }
 
+fn write_allocated_fixture(path: &Path, bytes: u64) {
+    if let Some(parent) = path.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        panic!(
+            "create allocated fixture parent {}: {error}",
+            parent.display()
+        );
+    }
+    if let Err(error) = fs::write(path, vec![0u8; bytes as usize]) {
+        panic!("write allocated fixture {}: {error}", path.display());
+    }
+}
+
 #[test]
 fn storage_hygiene_detects_reclaimable_build_artifacts() {
     let root = test_root("detects-build-artifacts");
@@ -268,10 +282,10 @@ fn complete_scan_retains_all_normal_candidates_beyond_fast_cap() {
         Some(candidate_count as u64)
     );
     assert_eq!(complete["diagnostics"]["top_k_retained"], false);
-    let complete_bytes = complete["summary"]["total_reclaimable_bytes"]
+    let complete_bytes = complete["summary"]["inventory_size_bytes"]
         .as_u64()
         .unwrap_or_default();
-    let fast_bytes = fast["summary"]["total_reclaimable_bytes"]
+    let fast_bytes = fast["summary"]["inventory_size_bytes"]
         .as_u64()
         .unwrap_or_default();
     assert!(
@@ -3127,7 +3141,7 @@ fn storage_hygiene_runs_repository_inventory_before_artifact_scan() {
     assert_eq!(coverage[0]["repository_count"].as_u64(), Some(1));
     assert!(!items.is_empty());
     assert!(
-        value["summary"]["total_reclaimable_bytes"]
+        value["summary"]["inventory_size_bytes"]
             .as_u64()
             .is_some_and(|bytes| bytes >= MIN_ITEM_BYTES)
     );
@@ -4148,7 +4162,7 @@ fn storage_hygiene_reclaimable_regression_detects_build_logs_and_caches() {
     let value = parse_json_value(&json, "reclaimable regression JSON parses");
 
     assert!(
-        value["summary"]["total_reclaimable_bytes"]
+        value["summary"]["safely_reclaimable_now_bytes"]
             .as_u64()
             .is_some_and(|bytes| bytes >= MIN_ITEM_BYTES)
     );
@@ -6914,6 +6928,150 @@ fn typed_storage_detectors_surface_known_buckets_despite_scan_limits() {
                 .as_str()
                 .is_some_and(|text| text.contains("Typed detectors surfaced")))),
         "report should disclose typed detector contribution"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_summary_uses_strict_reclaim_buckets() {
+    let root = test_root("strict-reclaim-buckets");
+    let project = root.join("Project");
+    let safe_artifact = project.join("target").join("debug").join("blob");
+    let maybe_artifact = root
+        .join("Library")
+        .join("Developer")
+        .join("Xcode")
+        .join("iOS DeviceSupport")
+        .join("17.0")
+        .join("Symbols")
+        .join("blob");
+    let review_artifact = root.join("Downloads").join("old-installer.zip");
+    let app_artifact = root
+        .join("Applications")
+        .join("Demo.app")
+        .join("Contents")
+        .join("Resources")
+        .join("blob");
+    let colima_artifact = root
+        .join(".colima")
+        .join("_lima")
+        .join("_disks")
+        .join("colima")
+        .join("datadisk");
+    let claude_artifact = root
+        .join("Library")
+        .join("Application Support")
+        .join("Claude")
+        .join("projects")
+        .join("session.jsonl");
+    let codex_artifact = root
+        .join(".codex")
+        .join("sessions")
+        .join("2026")
+        .join("07")
+        .join("session.jsonl");
+    let podcasts_artifact = root
+        .join("Library")
+        .join("Containers")
+        .join("com.apple.podcasts")
+        .join("Data")
+        .join("episode.mp3");
+
+    if let Err(error) = fs::create_dir_all(&project) {
+        panic!("create strict reclaim project: {error}");
+    }
+    if let Err(error) = fs::write(project.join("Cargo.toml"), "[package]\nname='strict'\n") {
+        panic!("write strict reclaim manifest: {error}");
+    }
+    for path in [
+        safe_artifact,
+        maybe_artifact,
+        review_artifact,
+        app_artifact,
+        colima_artifact,
+        claude_artifact,
+        codex_artifact,
+        podcasts_artifact,
+    ] {
+        write_allocated_fixture(&path, MIN_ITEM_BYTES + 512);
+    }
+    mark_tree_old(&root);
+
+    let json = build_storage_hygiene_report_for_roots_mode(
+        vec![root.display().to_string()],
+        8,
+        300,
+        "deep_native",
+    );
+    let report = parse_json_value(&json, "strict reclaim bucket report parses");
+    let summary = &report["summary"];
+    let inventory = summary["inventory_size_bytes"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("inventory_size_bytes is present"));
+    let safe_now = summary["safely_reclaimable_now_bytes"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("safely_reclaimable_now_bytes is present"));
+    let maybe = summary["maybe_reclaimable_bytes"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("maybe_reclaimable_bytes is present"));
+    let review = summary["review_required_bytes"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("review_required_bytes is present"));
+    let dangerous = summary["dangerous_user_data_bytes"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("dangerous_user_data_bytes is present"));
+
+    assert_eq!(
+        inventory,
+        safe_now
+            .saturating_add(maybe)
+            .saturating_add(review)
+            .saturating_add(dangerous)
+    );
+    assert_eq!(
+        summary["total_reclaimable_bytes"].as_u64(),
+        Some(safe_now),
+        "legacy total_reclaimable_bytes must mean safe-now bytes"
+    );
+    assert!(safe_now > 0, "safe bucket should contain build output");
+    assert!(
+        maybe > 0,
+        "maybe bucket should contain generated storage that needs state review"
+    );
+    assert!(
+        review > 0,
+        "review bucket should contain ambiguous downloads/content"
+    );
+    assert!(
+        dangerous > 0,
+        "dangerous bucket should contain app, AI, media, or VM state"
+    );
+
+    let items = report["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("items is an array"));
+    let dangerous_kind_bytes = items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item["kind"].as_str(),
+                Some("macos-app-bundle" | "ai-session-data" | "offline-media" | "colima-vm")
+            )
+        })
+        .filter_map(|item| item["size_bytes"].as_u64())
+        .fold(0u64, |total, bytes| total.saturating_add(bytes));
+    assert!(
+        dangerous_kind_bytes > 0,
+        "explicit dangerous/user-data fixtures should be retained"
+    );
+    assert!(
+        dangerous >= dangerous_kind_bytes,
+        "explicit app/AI/media/VM bytes must stay out of safe reclaim"
+    );
+    assert!(
+        safe_now < inventory,
+        "safe-now bytes must not include review or dangerous inventory"
     );
 
     let _ = fs::remove_dir_all(root);

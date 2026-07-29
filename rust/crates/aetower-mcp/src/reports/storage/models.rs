@@ -43,6 +43,11 @@ pub(crate) struct StorageHygieneReport {
 #[derive(Clone, Debug, Default, Serialize)]
 pub(super) struct StorageHygieneSummary {
     pub(super) item_count: usize,
+    pub(super) inventory_size_bytes: u64,
+    pub(super) maybe_reclaimable_bytes: u64,
+    pub(super) safely_reclaimable_now_bytes: u64,
+    pub(super) review_required_bytes: u64,
+    pub(super) dangerous_user_data_bytes: u64,
     pub(super) total_reclaimable_bytes: u64,
     pub(super) safe_candidate_count: usize,
     pub(super) review_candidate_count: usize,

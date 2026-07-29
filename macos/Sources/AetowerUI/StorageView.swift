@@ -807,7 +807,7 @@ public struct StorageView: View {
         }
         switch section {
         case .reclaim:
-            return formatBytes(report.summary.totalReclaimableBytes)
+            return formatBytes(report.summary.safelyReclaimableNowBytes)
         case .similar:
             let summary = similarityReviewSummary(for: report)
             return "\(summary.groupCount) group\(summary.groupCount == 1 ? "" : "s")"
@@ -831,7 +831,7 @@ public struct StorageView: View {
         }
         switch section {
         case .reclaim:
-            return report.summary.totalReclaimableBytes > 0 ? AetowerDesign.Tone.disk : AetowerDesign.Status.ready
+            return report.summary.safelyReclaimableNowBytes > 0 ? AetowerDesign.Tone.disk : AetowerDesign.Status.ready
         case .similar:
             let summary = similarityReviewSummary(for: report)
             return summary.groupCount > 0 ? AetowerDesign.Status.warning : AetowerDesign.Status.ready
@@ -854,7 +854,7 @@ public struct StorageView: View {
         guard let report = state.storageHygieneReport else {
             return state.storageHygieneIsLoading ? "Loading" : "No scan"
         }
-        return formatBytes(report.summary.totalReclaimableBytes)
+        return formatBytes(report.summary.safelyReclaimableNowBytes)
     }
 
     private var storageItemCountLabel: String {
@@ -912,7 +912,6 @@ public struct StorageView: View {
         let riskyBytes = actions.first { $0.id == "risky-review" }?.bytes ?? 0
         let safeAction = actions.first { $0.id == "safe-reclaim" }
         let developerAction = actions.first { $0.id == "developer-artifacts" }
-        let directReclaimItems = directCleanItems(from: actions.flatMap(\.stageItems))
         let directSafeItems = safeAction.map { directCleanItems(from: $0.stageItems) } ?? []
         let directDeveloperItems = developerAction.map { directCleanItems(from: $0.stageItems) } ?? []
         let actionableBytes = actionableReclaimableBytes(from: report)
@@ -949,24 +948,22 @@ public struct StorageView: View {
                 ) {
                     storageReclaimMetric(
                         "Detected",
-                        value: formatBytes(report.summary.totalReclaimableBytes),
-                        detail: "all candidates",
+                        value: formatBytes(report.summary.inventorySizeBytes),
+                        detail: "inventory",
                         systemImage: "externaldrive.badge.minus",
                         tone: AetowerDesign.Tone.disk,
                         primaryActionKind: .clean,
                         reviewEnabled: report.summary.itemCount > 0,
-                        primaryEnabled: !directReclaimItems.isEmpty,
+                        primaryEnabled: false,
                         reviewAction: {
                             focusExploreBrowseTable(filter: .all, scope: .all, sort: .recommended)
                         },
-                        primaryAction: {
-                            trashStorageItemsDirectly(directReclaimItems, sourceTitle: "Reclaimable")
-                        }
+                        primaryAction: {}
                     )
                     storageReclaimMetric(
                         "Actionable",
-                        value: formatBytes(actionableBytes),
-                        detail: "Trash-ready subset",
+                        value: formatBytes(report.summary.safelyReclaimableNowBytes),
+                        detail: "safe now",
                         systemImage: "checkmark.shield",
                         tone: AetowerDesign.Status.ready,
                         primaryActionKind: .clean,
@@ -997,8 +994,8 @@ public struct StorageView: View {
                     )
                     storageReclaimMetric(
                         "Review",
-                        value: formatBytes(riskyBytes),
-                        detail: "\(report.summary.reviewCandidateCount) blocked/manual",
+                        value: formatBytes(report.summary.dangerousUserDataBytes),
+                        detail: "\(formatBytes(report.summary.reviewRequiredBytes)) review",
                         systemImage: "exclamationmark.triangle",
                         tone: AetowerDesign.Status.warning,
                         primaryActionKind: .clean,
@@ -2847,7 +2844,7 @@ public struct StorageView: View {
     }
 
     private func actionableReclaimableBytes(from report: StorageHygieneReportModel) -> UInt64 {
-        sumItemBytes(visibleStorageItems(from: report).filter(storageItemIsTrashActionable))
+        sumItemBytes(visibleStorageItems(from: report).filter(storageItemIsSafelyReclaimableNow))
     }
 
     private func sumBytes(_ left: UInt64, _ right: UInt64) -> UInt64 {
@@ -4677,8 +4674,8 @@ public struct StorageView: View {
     /// "Reclaim safely" panel so the primary number and CTA appear once.
     private func storageDiskPressureHeader(_ report: StorageHygieneReportModel) -> some View {
         let volume = primaryVolume(report)
-        let detectedBytes = report.summary.totalReclaimableBytes
-        let actionableBytes = actionableReclaimableBytes(from: report)
+        let detectedBytes = report.summary.inventorySizeBytes
+        let actionableBytes = report.summary.safelyReclaimableNowBytes
         let safeBundle = report.cleanupBundles.first
         let hasCTA = safeBundle.map(cleanupBundleHasActionableCommands) ?? false
 
@@ -4734,9 +4731,9 @@ public struct StorageView: View {
                     }
                     heroStat("\(report.summary.safeCandidateCount)", "safe", AetowerDesign.Status.ready)
                     heroStat("\(report.summary.reviewCandidateCount)", "to review", AetowerDesign.Status.warning)
-                    heroStat(formatBytes(actionableBytes), "actionable", AetowerDesign.Status.ready)
+                    heroStat(formatBytes(report.summary.maybeReclaimableBytes), "maybe", AetowerDesign.Status.warning)
                     Spacer()
-                    heroStat(formatBytes(detectedBytes), "detected candidates", AetowerDesign.Tone.disk, trailing: true)
+                    heroStat(formatBytes(detectedBytes), "inventory", AetowerDesign.Tone.disk, trailing: true)
                 }
             }
         }
@@ -4808,7 +4805,7 @@ public struct StorageView: View {
                 Spacer(minLength: AetowerDesign.Spacing.md)
 
                 VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
-                    Text(primaryBundle.map { formatBytes($0.estimatedReclaimableBytes) } ?? formatBytes(report.summary.totalReclaimableBytes))
+                    Text(primaryBundle.map { formatBytes($0.estimatedReclaimableBytes) } ?? formatBytes(report.summary.safelyReclaimableNowBytes))
                         .font(.system(size: 26, weight: .semibold, design: .rounded))
                     Text(primaryBundle.map { "\($0.confidenceScore)% confidence" } ?? "estimated reclaimable")
                         .font(.caption2)
@@ -4822,9 +4819,24 @@ public struct StorageView: View {
                 spacing: AetowerDesign.Spacing.sm
             ) {
                 footprintMetric(
-                    "Reclaimable",
-                    value: formatBytes(report.summary.totalReclaimableBytes),
-                    detail: "\(report.summary.itemCount) candidate\(report.summary.itemCount == 1 ? "" : "s")"
+                    "Safe now",
+                    value: formatBytes(report.summary.safelyReclaimableNowBytes),
+                    detail: "Trash-ready candidates"
+                )
+                footprintMetric(
+                    "Maybe",
+                    value: formatBytes(report.summary.maybeReclaimableBytes),
+                    detail: "generated, verify first"
+                )
+                footprintMetric(
+                    "Review",
+                    value: formatBytes(report.summary.reviewRequiredBytes),
+                    detail: "manual decision"
+                )
+                footprintMetric(
+                    "Danger",
+                    value: formatBytes(report.summary.dangerousUserDataBytes),
+                    detail: "user/app/VM data"
                 )
                 footprintMetric(
                     "Safe items",
@@ -5309,18 +5321,25 @@ public struct StorageView: View {
             spacing: AetowerDesign.Spacing.md
         ) {
             summaryCard(
-                "Reclaimable",
-                value: formatBytes(report.summary.totalReclaimableBytes),
-                detail: "bounded estimate",
+                "Safe now",
+                value: formatBytes(report.summary.safelyReclaimableNowBytes),
+                detail: "Trash-ready estimate",
                 systemImage: "externaldrive.badge.minus",
                 tone: AetowerDesign.Tone.disk
+            )
+            summaryCard(
+                "Inventory",
+                value: formatBytes(report.summary.inventorySizeBytes),
+                detail: "bounded local estimate",
+                systemImage: "shippingbox",
+                tone: AetowerDesign.Tone.cpu
             )
             summaryCard(
                 "Candidates",
                 value: "\(report.summary.itemCount)",
                 detail: "\(report.summary.safeCandidateCount) expected artifacts",
-                systemImage: "shippingbox",
-                tone: AetowerDesign.Tone.cpu
+                systemImage: "list.bullet.rectangle",
+                tone: AetowerDesign.Tone.memory
             )
             summaryCard(
                 "Review",
@@ -5448,8 +5467,8 @@ public struct StorageView: View {
                 spacing: AetowerDesign.Spacing.sm
             ) {
                 footprintMetric(
-                    "Total artifacts",
-                    value: formatBytes(report.summary.totalReclaimableBytes),
+                    "Inventory",
+                    value: formatBytes(report.summary.inventorySizeBytes),
                     detail: "budget \(formatBytes(report.budgetGuardrails.totalArtifactBudgetBytes))"
                 )
                 footprintMetric(
@@ -9775,6 +9794,15 @@ public struct StorageView: View {
             && storagePrivilegedCleanupBlocker(for: item.path) == nil
     }
 
+    private func storageItemIsSafelyReclaimableNow(_ item: StorageHygieneItemModel) -> Bool {
+        storageItemIsTrashActionable(item)
+            && item.safety == "safe"
+            && (item.cleanupTier == "safe" || item.cleanupTier == "rebuildable")
+            && !item.hasHardlinks
+            && !item.cloudPlaceholder
+            && !item.protectedPath
+    }
+
     private var basketSummaryLabel: String {
         cleanupBasket.isEmpty
             ? "Ready"
@@ -10041,8 +10069,7 @@ public struct StorageView: View {
 
     private func directCleanItems(from items: [StorageHygieneItemModel]) -> [StorageHygieneItemModel] {
         uniqueStorageItems(items).filter {
-            storageItemIsTrashActionable($0)
-                && $0.safety == "safe"
+            storageItemIsSafelyReclaimableNow($0)
                 && !directTrashInFlightPaths.contains($0.path)
         }
     }

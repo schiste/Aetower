@@ -4381,8 +4381,12 @@ public final class AppState {
                         value: String(report.summary.itemCount)
                     ),
                     DiagnosticsField(
-                        key: "reclaimable_bytes",
-                        value: String(report.summary.totalReclaimableBytes)
+                        key: "safely_reclaimable_now_bytes",
+                        value: String(report.summary.safelyReclaimableNowBytes)
+                    ),
+                    DiagnosticsField(
+                        key: "inventory_size_bytes",
+                        value: String(report.summary.inventorySizeBytes)
                     ),
                     DiagnosticsField(
                         key: "repository_inventory_count",

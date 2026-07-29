@@ -1354,6 +1354,80 @@ pub(super) fn storage_item_next_step(item: &StorageHygieneItem) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StorageReclaimBucket {
+    SafelyReclaimableNow,
+    MaybeReclaimable,
+    ReviewRequired,
+    DangerousUserData,
+}
+
+fn storage_reclaim_bucket(item: &StorageHygieneItem) -> StorageReclaimBucket {
+    if storage_item_is_dangerous_user_data(item) {
+        StorageReclaimBucket::DangerousUserData
+    } else if storage_item_is_safely_reclaimable_now(item) {
+        StorageReclaimBucket::SafelyReclaimableNow
+    } else if storage_item_is_maybe_reclaimable(item) {
+        StorageReclaimBucket::MaybeReclaimable
+    } else {
+        StorageReclaimBucket::ReviewRequired
+    }
+}
+
+fn storage_item_is_safely_reclaimable_now(item: &StorageHygieneItem) -> bool {
+    item.size_bytes > 0
+        && item.cleanup_allowed
+        && item.default_cleanup_action == "trash"
+        && item.cleanup_blockers.is_empty()
+        && item.safety == "safe"
+        && matches!(item.cleanup_tier.as_str(), "safe" | "rebuildable")
+        && !item.size_truncated
+        && !item.cloud_placeholder
+        && !item.has_hardlinks
+        && !item.protected_path
+}
+
+fn storage_item_is_dangerous_user_data(item: &StorageHygieneItem) -> bool {
+    if item.protected_path
+        || matches!(
+            item.git_status.as_str(),
+            "tracked" | "modified" | "deleted" | "renamed" | "conflicted"
+        )
+    {
+        return true;
+    }
+
+    matches!(
+        item.kind.as_str(),
+        "macos-app-bundle"
+            | "app-support-data"
+            | "app-container"
+            | "app-launch-item"
+            | "app-preferences"
+            | "app-receipt"
+            | "ai-session-data"
+            | "offline-media"
+            | "colima-vm"
+            | "docker-vm"
+            | "ios-backup"
+            | "mail-attachments"
+            | "message-attachments"
+            | "local-snapshot"
+    ) || matches!(
+        item.storage_role.as_str(),
+        "application" | "app-data" | "agent-data" | "offline-media" | "system-data"
+    )
+}
+
+fn storage_item_is_maybe_reclaimable(item: &StorageHygieneItem) -> bool {
+    matches!(item.cleanup_tier.as_str(), "safe" | "rebuildable")
+        || (item.cleanup_tier != "risky"
+            && matches!(
+                item.storage_role.as_str(),
+                "cache" | "build-artifact" | "dependency-tree" | "temporary" | "environment"
+            ))
+}
+
 fn summarize_storage_items(
     items: &[StorageHygieneItem],
     scanned_directory_count: u64,
@@ -1365,13 +1439,32 @@ fn summarize_storage_items(
     };
 
     for item in items {
-        summary.total_reclaimable_bytes = summary
-            .total_reclaimable_bytes
-            .saturating_add(item.size_bytes);
-        if item.safety == "safe" {
-            summary.safe_candidate_count += 1;
-        } else {
-            summary.review_candidate_count += 1;
+        summary.inventory_size_bytes = summary.inventory_size_bytes.saturating_add(item.size_bytes);
+        match storage_reclaim_bucket(item) {
+            StorageReclaimBucket::SafelyReclaimableNow => {
+                summary.safely_reclaimable_now_bytes = summary
+                    .safely_reclaimable_now_bytes
+                    .saturating_add(item.size_bytes);
+                summary.safe_candidate_count += 1;
+            }
+            StorageReclaimBucket::MaybeReclaimable => {
+                summary.maybe_reclaimable_bytes = summary
+                    .maybe_reclaimable_bytes
+                    .saturating_add(item.size_bytes);
+                summary.review_candidate_count += 1;
+            }
+            StorageReclaimBucket::ReviewRequired => {
+                summary.review_required_bytes = summary
+                    .review_required_bytes
+                    .saturating_add(item.size_bytes);
+                summary.review_candidate_count += 1;
+            }
+            StorageReclaimBucket::DangerousUserData => {
+                summary.dangerous_user_data_bytes = summary
+                    .dangerous_user_data_bytes
+                    .saturating_add(item.size_bytes);
+                summary.review_candidate_count += 1;
+            }
         }
         if item.stale {
             summary.stale_candidate_count += 1;
@@ -1384,6 +1477,8 @@ fn summarize_storage_items(
             summary.largest_item_path = Some(item.path.clone());
         }
     }
+
+    summary.total_reclaimable_bytes = summary.safely_reclaimable_now_bytes;
 
     summary
 }
