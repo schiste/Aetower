@@ -899,9 +899,221 @@ public struct StorageView: View {
     /// Primary surface: disk pressure up top, then the staged-cleanup workflow.
     private func storageReclaimHome(_ report: StorageHygieneReportModel) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
-            storageReclaimSummaryBand(report)
+            storageReclaimActionQueue(report)
             storageQuickWinsSection(report)
             storageReclaimSupportingData(report)
+        }
+    }
+
+    private func storageReclaimActionQueue(_ report: StorageHygieneReportModel) -> some View {
+        let actions = StorageReclaimPolicy.primaryActions(items: visibleStorageItems(from: report))
+        let actionBytes = actions.reduce(UInt64(0)) { total, action in
+            sumBytes(total, action.bytes)
+        }
+        let volume = primaryVolume(report)
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+            HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.md) {
+                Label("Reclaim actions", systemImage: "bolt.fill")
+                    .font(AetowerDesign.Typography.sectionTitle)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                AetowerBadge(formatBytes(actionBytes), tone: AetowerDesign.Tone.disk)
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                Text(storageScanFreshnessLabel(report))
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+            }
+
+            if let volume, volume.totalBytes > 0 {
+                let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Label(volumeDisplayName(volume), systemImage: "internaldrive.fill")
+                            .font(AetowerDesign.Typography.caption.weight(.semibold))
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                        Spacer()
+                        Text("\(formatBytes(free)) free")
+                            .font(AetowerDesign.Typography.caption.weight(.semibold))
+                            .foregroundStyle(AetowerDesign.Tone.disk)
+                        Text("of \(formatBytes(volume.totalBytes))")
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                    }
+                    diskCapacityBar(
+                        total: volume.totalBytes,
+                        free: free,
+                        reclaimable: min(actionBytes, volume.totalBytes),
+                        tone: AetowerDesign.Tone.disk
+                    )
+                }
+            }
+
+            if actions.isEmpty {
+                ContentUnavailableView(
+                    "No primary reclaim actions",
+                    systemImage: "externaldrive.badge.questionmark",
+                    description: Text("Run a Complete or Forensic scan to surface Xcode, Docker, build output, Colima, and Codex cleanup candidates.")
+                )
+                .frame(maxWidth: .infinity, minHeight: 180)
+            } else {
+                VStack(spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(actions) { action in
+                        storageReclaimPrimaryActionRow(action)
+                    }
+                }
+            }
+        }
+        .padding(AetowerDesign.Spacing.lg)
+    }
+
+    private func storageReclaimPrimaryActionRow(_ action: StorageReclaimPrimaryAction) -> some View {
+        let actionTone = storageReclaimActionTone(action.kind)
+        let safetyTone = storageReclaimSafetyTone(action.safety)
+        let decision = storagePrimaryReclaimDecision(for: action)
+
+        return AetowerOperationalListRow(tone: actionTone, minHeight: 118) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                        Label(storageReclaimActionTitle(action), systemImage: action.systemImage)
+                            .font(AetowerDesign.Typography.controlLabel)
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                            .lineLimit(1)
+                        AetowerBadge(action.safety.label, systemImage: "shield.lefthalf.filled", tone: safetyTone)
+                        AetowerBadge("\(action.itemCount) path\(action.itemCount == 1 ? "" : "s")", tone: AetowerDesign.Status.neutral)
+                        Spacer(minLength: AetowerDesign.Spacing.sm)
+                    }
+
+                    Text(action.detail)
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("Consequence: \(action.consequence)")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let sample = action.items.first {
+                        HStack(spacing: AetowerDesign.Spacing.xs) {
+                            Image(systemName: icon(for: sample))
+                                .foregroundStyle(AetowerDesign.Ink.tertiary)
+                                .frame(width: AetowerDesign.Size.iconSlot)
+                            Text(sample.path)
+                                .font(AetowerDesign.Typography.compactData(size: 10))
+                                .foregroundStyle(AetowerDesign.Ink.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: AetowerDesign.Spacing.xs)
+                            Text(formatBytes(sample.sizeBytes))
+                                .font(AetowerDesign.Typography.metadataStrong)
+                                .foregroundStyle(AetowerDesign.Ink.secondary)
+                        }
+                    }
+
+                    if let command = action.command {
+                        AetowerBadge(command, systemImage: "terminal", tone: AetowerDesign.Tone.network)
+                    }
+                }
+
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Button {
+                        performStorageReclaimPrimaryAction(action)
+                    } label: {
+                        Label(
+                            storageReclaimPrimaryButtonTitle(for: action, decision: decision),
+                            systemImage: storageReclaimPrimaryButtonIcon(for: action, decision: decision)
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+
+                    Button {
+                        reviewStorageReclaimPrimaryAction(action)
+                    } label: {
+                        Label("Review", systemImage: "magnifyingglass")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button {
+                        classificationExplanation = explanation(for: action)
+                    } label: {
+                        Label("Explain", systemImage: "info.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .fixedSize()
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func storageReclaimActionTitle(_ action: StorageReclaimPrimaryAction) -> String {
+        "\(action.verb.rawValue) \(formatBytes(action.bytes)) \(action.noun)"
+    }
+
+    private func storageReclaimActionTone(_ kind: StorageReclaimPrimaryKind) -> Color {
+        switch kind {
+        case .xcodeDeviceSupport:
+            return AetowerDesign.Tone.cpu
+        case .dockerBuildCache:
+            return AetowerDesign.Tone.network
+        case .buildOutputs:
+            return AetowerDesign.Status.ready
+        case .colimaVM:
+            return AetowerDesign.Tone.disk
+        case .codexSessions:
+            return AetowerDesign.Tone.memory
+        }
+    }
+
+    private func storageReclaimSafetyTone(_ safety: StorageReclaimPrimarySafety) -> Color {
+        switch safety {
+        case .safe:
+            return AetowerDesign.Status.ready
+        case .review:
+            return AetowerDesign.Status.warning
+        case .toolCleanup:
+            return AetowerDesign.Tone.network
+        }
+    }
+
+    private func storagePrimaryReclaimDecision(for action: StorageReclaimPrimaryAction) -> StorageReclaimActionDecision {
+        StorageReclaimPolicy.primaryActionDecision(
+            hasStageableContent: action.canStageTrash,
+            canMoveToTrash: action.canMoveToTrash
+        )
+    }
+
+    private func storageReclaimPrimaryButtonTitle(
+        for action: StorageReclaimPrimaryAction,
+        decision: StorageReclaimActionDecision
+    ) -> String {
+        switch action.kind {
+        case .dockerBuildCache:
+            return "Copy Docker plan"
+        case .colimaVM:
+            return "Review VM"
+        case .codexSessions:
+            return "Review sessions"
+        case .xcodeDeviceSupport, .buildOutputs:
+            return decision.title
+        }
+    }
+
+    private func storageReclaimPrimaryButtonIcon(
+        for action: StorageReclaimPrimaryAction,
+        decision: StorageReclaimActionDecision
+    ) -> String {
+        switch action.kind {
+        case .dockerBuildCache:
+            return "doc.on.doc"
+        case .colimaVM, .codexSessions:
+            return "magnifyingglass"
+        case .xcodeDeviceSupport, .buildOutputs:
+            return decision.systemImage
         }
     }
 
@@ -2194,6 +2406,50 @@ public struct StorageView: View {
         }
     }
 
+    private func performStorageReclaimPrimaryAction(_ action: StorageReclaimPrimaryAction) {
+        switch action.kind {
+        case .dockerBuildCache:
+            copy(storageReclaimPrimaryActionPlan(action))
+        case .colimaVM, .codexSessions:
+            reviewStorageReclaimPrimaryAction(action)
+        case .xcodeDeviceSupport, .buildOutputs:
+            let decision = storagePrimaryReclaimDecision(for: action)
+            switch decision {
+            case .moveToTrash:
+                stageStorageReclaimPrimaryAction(action, presentExecution: true)
+            case .stageOnly:
+                stageStorageReclaimPrimaryAction(action)
+            case .copyPlan:
+                copy(storageReclaimPrimaryActionPlan(action))
+            }
+        }
+    }
+
+    private func reviewStorageReclaimPrimaryAction(_ action: StorageReclaimPrimaryAction) {
+        switch action.kind {
+        case .xcodeDeviceSupport:
+            focusExploreBrowseTable(filter: .rebuildable, scope: .all, sort: .largest)
+            searchText = "DeviceSupport"
+        case .dockerBuildCache:
+            focusExploreBrowseTable(filter: .expensive, scope: .all, sort: .largest)
+            searchText = "docker build"
+        case .buildOutputs:
+            focusExploreBrowseTable(filter: .rebuildable, scope: .all, sort: .largest)
+        case .colimaVM:
+            focusExploreBrowseTable(filter: .expensive, scope: .all, sort: .largest)
+            searchText = "colima"
+        case .codexSessions:
+            focusExploreBrowseTable(filter: .all, scope: .all, sort: .largest)
+            searchText = "codex"
+        }
+
+        if let firstItem = action.items.first {
+            selectedReclaimFilePath = firstItem.path
+            selectedReclaimFolderPath = nil
+            reclaimListMode = .files
+        }
+    }
+
     private func focusExploreBrowseTable(
         filter: StorageFilter,
         scope: StorageArtifactScope,
@@ -2551,6 +2807,35 @@ public struct StorageView: View {
         }
         .padding(AetowerDesign.Spacing.xl)
         .frame(width: 720, height: 560, alignment: .topLeading)
+    }
+
+    private func explanation(for action: StorageReclaimPrimaryAction) -> StorageClassificationExplanation {
+        var evidence = [
+            "Detector family: \(action.kind.rawValue).",
+            "Estimated space: \(formatBytes(action.bytes)) across \(action.itemCount) path\(action.itemCount == 1 ? "" : "s").",
+            "Safety: \(action.safety.label).",
+        ]
+        if action.canStageTrash {
+            evidence.append("Aetower can stage eligible paths through the cleanup basket.")
+        } else {
+            evidence.append("Aetower will not directly Trash this family from the first screen.")
+        }
+        if let command = action.command {
+            evidence.append("Suggested operator command: \(command).")
+        }
+        evidence.append(contentsOf: action.items.prefix(6).map { item in
+            "\(formatBytes(item.sizeBytes)) | \(item.cleanupTier) | \(item.path)"
+        })
+
+        return StorageClassificationExplanation(
+            id: "primary-reclaim|\(action.id)",
+            title: "\(action.verb.rawValue) \(action.noun)",
+            path: action.items.first?.path ?? "",
+            classification: "\(action.itemCount) item(s) · \(formatBytes(action.bytes)) · \(action.safety.label)",
+            consequence: action.consequence,
+            evidence: evidence,
+            blockers: action.items.flatMap(\.cleanupBlockers).prefix(8).map { $0 }
+        )
     }
 
     private func explanation(for action: StorageHomeAction) -> StorageClassificationExplanation {
@@ -10067,6 +10352,30 @@ public struct StorageView: View {
         }
     }
 
+    private func stageStorageReclaimPrimaryAction(
+        _ action: StorageReclaimPrimaryAction,
+        presentExecution: Bool = false
+    ) {
+        let stageableItems = uniqueStorageItems(action.items)
+            .filter(StorageReclaimPolicy.itemIsTrashActionable)
+        let limitedItems = Array(stageableItems.prefix(80))
+        let stagedPaths = Set(limitedItems.map(\.path))
+        var staged = 0
+
+        for item in limitedItems where stageCleanupItem(item, showBasket: false) {
+            staged += 1
+        }
+
+        let alreadyStaged = cleanupBasket.contains { stagedPaths.contains($0.path) }
+        if presentExecution, staged > 0 || alreadyStaged {
+            presentCleanupExecution(basketTrashExecutionRequest())
+        } else if staged > 0 {
+            showCleanupBasket = true
+        } else {
+            copy(storageReclaimPrimaryActionPlan(action))
+        }
+    }
+
     private func directCleanItems(from items: [StorageHygieneItemModel]) -> [StorageHygieneItemModel] {
         uniqueStorageItems(items).filter {
             storageItemIsSafelyReclaimableNow($0)
@@ -10286,6 +10595,57 @@ public struct StorageView: View {
             "## Policy",
             "Aetower is warning-only by default. Auto-trash is \(report.budgetGuardrails.autoTrashSafeTierEnabled ? "enabled for Safe-tier only" : "disabled").",
         ].joined(separator: "\n")
+    }
+
+    private func storageReclaimPrimaryActionPlan(_ action: StorageReclaimPrimaryAction) -> String {
+        var lines = [
+            "# Aetower reclaim action",
+            "",
+            "- Action: \(storageReclaimActionTitle(action))",
+            "- Family: \(action.kind.rawValue)",
+            "- Safety: \(action.safety.label)",
+            "- Items: \(action.itemCount)",
+            "- Consequence: \(action.consequence)",
+            "",
+            "## Recommended path",
+            storageReclaimPrimaryRecommendedPath(action),
+        ]
+
+        if let command = action.command {
+            lines.append(contentsOf: [
+                "",
+                "## Tool command",
+                command,
+            ])
+        }
+
+        if !action.items.isEmpty {
+            lines.append(contentsOf: ["", "## Top paths"])
+            for item in action.items.prefix(16) {
+                lines.append("- \(formatBytes(item.sizeBytes)) | \(item.cleanupTier) | \(item.path)")
+                if !item.cleanupBlockers.isEmpty {
+                    lines.append("  - Blocked: \(item.cleanupBlockers.joined(separator: "; "))")
+                }
+                lines.append("  - Why: \(item.reason)")
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func storageReclaimPrimaryRecommendedPath(_ action: StorageReclaimPrimaryAction) -> String {
+        switch action.kind {
+        case .xcodeDeviceSupport:
+            return "Review the listed device OS folders, stage obsolete versions into the cleanup basket, then move them to Finder Trash."
+        case .dockerBuildCache:
+            return "Run Docker cleanup tooling after checking `docker system df`; Aetower does not directly Trash Docker cache internals."
+        case .buildOutputs:
+            return "Stage eligible build outputs into the cleanup basket and move them to Finder Trash; rebuild the affected project when needed."
+        case .colimaVM:
+            return "Inspect Colima/Docker usage first. Prefer pruning containers, images, volumes, or recreating the VM intentionally."
+        case .codexSessions:
+            return "Review session contents before deletion because they may contain prompts, code, credentials, or recovery context."
+        }
     }
 
     private func storageHomeActionPlan(_ action: StorageHomeAction) -> String {
