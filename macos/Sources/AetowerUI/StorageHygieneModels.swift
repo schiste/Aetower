@@ -75,6 +75,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
     let capturedAtMillis: UInt64
     let scanDurationMillis: UInt64
     let scanMode: String
+    let cacheStatus: StorageCacheStatusModel
     var diagnostics: StorageScanDiagnosticsModel
     let summary: StorageHygieneSummaryModel
     let investigation: StorageInvestigationSummaryModel
@@ -111,6 +112,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         case capturedAtMillis
         case scanDurationMillis
         case scanMode
+        case cacheStatus
         case diagnostics
         case summary
         case investigation
@@ -149,6 +151,8 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         capturedAtMillis = try container.decode(UInt64.self, forKey: .capturedAtMillis)
         scanDurationMillis = try container.decode(UInt64.self, forKey: .scanDurationMillis)
         scanMode = try container.decodeIfPresent(String.self, forKey: .scanMode) ?? "fast_changed_only"
+        cacheStatus =
+            try container.decodeIfPresent(StorageCacheStatusModel.self, forKey: .cacheStatus) ?? .unknown
         diagnostics =
             try container.decodeIfPresent(StorageScanDiagnosticsModel.self, forKey: .diagnostics) ?? .empty
         summary = try container.decode(StorageHygieneSummaryModel.self, forKey: .summary)
@@ -213,6 +217,14 @@ struct StorageHygieneReportModel: Decodable, Sendable {
             try container.decodeIfPresent([StorageVolumeStateModel].self, forKey: .volumeStates) ?? []
         truncated = try container.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
         caveats = try container.decodeIfPresent([String].self, forKey: .caveats) ?? []
+    }
+
+    var isPartialResult: Bool {
+        cacheStatus.partial
+            || truncated
+            || repositoryInventoryTruncated
+            || !repositoryInventoryComplete
+            || items.contains(where: \.sizeTruncated)
     }
 }
 
@@ -836,6 +848,28 @@ struct StorageHygieneSummaryModel: Decodable, Sendable {
         largestItemBytes = try container.decode(UInt64.self, forKey: .largestItemBytes)
         attributedRepoCount = try container.decode(Int.self, forKey: .attributedRepoCount)
     }
+}
+
+struct StorageCacheStatusModel: Decodable, Sendable {
+    let source: String
+    let stale: Bool
+    let partial: Bool
+    let confidence: String
+    let confidenceScore: UInt8
+    let latestScanMillis: UInt64?
+    let ageMillis: UInt64?
+    let message: String
+
+    static let unknown = StorageCacheStatusModel(
+        source: "unknown",
+        stale: false,
+        partial: false,
+        confidence: "unknown",
+        confidenceScore: 0,
+        latestScanMillis: nil,
+        ageMillis: nil,
+        message: ""
+    )
 }
 
 struct StorageScanDiagnosticsModel: Decodable, Sendable {

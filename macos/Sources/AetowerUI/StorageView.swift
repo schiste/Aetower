@@ -596,6 +596,7 @@ public struct StorageView: View {
     private var storageEstimateSystemImage: String {
         switch state.storageEstimateStatus.confidence {
         case .verified: return "checkmark.seal"
+        case .partial: return "exclamationmark.triangle"
         case .estimated: return "waveform.path.ecg"
         case .stale: return "eye"
         case .refreshing: return "arrow.triangle.2.circlepath"
@@ -606,6 +607,7 @@ public struct StorageView: View {
     private var storageEstimateTone: Color {
         switch state.storageEstimateStatus.confidence {
         case .verified: return AetowerDesign.Status.ready
+        case .partial: return AetowerDesign.Status.warning
         case .estimated: return AetowerDesign.Tone.disk
         case .stale: return AetowerDesign.Status.warning
         case .refreshing: return AetowerDesign.Status.ready
@@ -919,7 +921,7 @@ public struct StorageView: View {
                     .foregroundStyle(AetowerDesign.Ink.primary)
                 AetowerBadge(formatBytes(actionBytes), tone: AetowerDesign.Tone.disk)
                 Spacer(minLength: AetowerDesign.Spacing.md)
-                Text(storageScanFreshnessLabel(report))
+                Text("\(storageScanResultLabel(report)) · \(storageScanFreshnessLabel(report))")
                     .font(AetowerDesign.Typography.caption.weight(.semibold))
                     .foregroundStyle(AetowerDesign.Ink.secondary)
             }
@@ -1236,8 +1238,8 @@ public struct StorageView: View {
                     )
                     storageReclaimMetric(
                         "Scan",
-                        value: storageScanFreshnessLabel(report),
-                        detail: "\(report.scanDurationMillis) ms",
+                        value: storageScanResultLabel(report),
+                        detail: "\(storageScanFreshnessLabel(report)) · \(report.scanDurationMillis) ms",
                         systemImage: "clock.arrow.circlepath",
                         tone: AetowerDesign.Status.neutral,
                         primaryActionKind: .scan,
@@ -1341,6 +1343,10 @@ public struct StorageView: View {
             return "\(hours)h ago"
         }
         return capturedAt.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func storageScanResultLabel(_ report: StorageHygieneReportModel) -> String {
+        StorageScanModeSelection.resultLabel(for: report.scanMode, partial: report.isPartialResult)
     }
 
     private func storageReclaimTableSection(_ report: StorageHygieneReportModel) -> some View {

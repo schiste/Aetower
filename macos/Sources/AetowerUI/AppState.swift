@@ -36,6 +36,7 @@ struct PreparedStorageHygieneResult: Sendable {
 
 enum StorageEstimateConfidence: String, Sendable {
     case verified
+    case partial
     case estimated
     case stale
     case refreshing
@@ -2250,12 +2251,15 @@ public final class AppState {
         let summary = StorageRootChangeJournal.summary(sampleLimit: 3)
         let lastRefresh = currentReport?.capturedAtMillis
             ?? (lastStorageEstimateRefreshMillis == 0 ? nil : lastStorageEstimateRefreshMillis)
+        let partialReport = currentReport?.isPartialResult == true
 
         guard summary.hasChanges, let lastChange = summary.lastChangeMillis else {
             storageEstimateStatus = StorageEstimateStatus(
-                confidence: .verified,
-                title: "Verified",
-                detail: "Latest storage totals come from a completed scan.",
+                confidence: partialReport ? .partial : .verified,
+                title: partialReport ? "Partial" : "Verified",
+                detail: partialReport
+                    ? storagePartialEstimateDetail(currentReport)
+                    : "Latest storage totals come from a completed scan.",
                 dirtyPathCount: 0,
                 lastChangeMillis: nil,
                 lastRefreshMillis: lastRefresh
@@ -2265,9 +2269,11 @@ public final class AppState {
 
         if let currentReport, lastChange <= currentReport.capturedAtMillis {
             storageEstimateStatus = StorageEstimateStatus(
-                confidence: .verified,
-                title: "Verified",
-                detail: "Latest storage totals include the recorded filesystem changes.",
+                confidence: partialReport ? .partial : .verified,
+                title: partialReport ? "Partial" : "Verified",
+                detail: partialReport
+                    ? storagePartialEstimateDetail(currentReport)
+                    : "Latest storage totals include the recorded filesystem changes.",
                 dirtyPathCount: 0,
                 lastChangeMillis: lastChange,
                 lastRefreshMillis: currentReport.capturedAtMillis
@@ -2299,6 +2305,19 @@ public final class AppState {
             lastChangeMillis: lastChange,
             lastRefreshMillis: lastRefresh
         )
+    }
+
+    private func storagePartialEstimateDetail(_ report: StorageHygieneReportModel?) -> String {
+        guard let report else {
+            return "Latest storage totals are incomplete; rerun when the machine is idle."
+        }
+        if !report.cacheStatus.message.isEmpty {
+            return report.cacheStatus.message
+        }
+        if report.scanMode == "forensic_partial" || report.scanMode == "forensic_verified" {
+            return "Forensic scan is partial; at least one cap or budget stopped full verification."
+        }
+        return "Latest storage totals are incomplete; rerun when the machine is idle."
     }
 
     /// Drop cached on-demand reports whose entity/pid has left the live
@@ -4356,6 +4375,7 @@ public final class AppState {
             let storageBudgetStatus = report.diagnostics.performanceBudget?.status ?? "unknown"
             let storageBudgetCritical = report.scanMode != "instant_cached"
                 && storageBudgetStatus == "critical"
+            let partialReport = report.isPartialResult
             let repositoryInventoryPartial =
                 report.repositoryInventoryTruncated || !report.repositoryInventoryComplete
             let storageDiagnosticsEventType: String
@@ -4363,11 +4383,13 @@ public final class AppState {
                 storageDiagnosticsEventType = "storage-hygiene-storage-walk-truncated"
             } else if repositoryInventoryPartial {
                 storageDiagnosticsEventType = "storage-hygiene-scan-completed-inventory-partial"
+            } else if partialReport {
+                storageDiagnosticsEventType = "storage-hygiene-scan-completed-partial"
             } else {
                 storageDiagnosticsEventType = "storage-hygiene-scan-completed"
             }
             recordLocalDiagnosticsEvent(
-                level: report.truncated || storageBudgetCritical ? .warn : .info,
+                level: partialReport || storageBudgetCritical ? .warn : .info,
                 subsystem: .ui,
                 eventType: storageDiagnosticsEventType,
                 message: "Completed read-only developer storage hygiene scan.",
@@ -4506,6 +4528,10 @@ public final class AppState {
                     DiagnosticsField(
                         key: "truncated",
                         value: report.truncated ? "true" : "false"
+                    ),
+                    DiagnosticsField(
+                        key: "partial",
+                        value: partialReport ? "true" : "false"
                     ),
                     DiagnosticsField(
                         key: "storage_walk_truncated",

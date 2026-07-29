@@ -59,7 +59,30 @@ enum StorageScanModeSelection: String, CaseIterable, Identifiable {
     }
 
     static func label(for rawMode: String) -> String {
-        StorageScanModeSelection(rawValue: rawMode)?.label ?? rawMode
+        switch rawMode {
+        case "forensic_partial":
+            return "Forensic partial"
+        case "deep_partial":
+            return "Complete partial"
+        default:
+            return StorageScanModeSelection(rawValue: rawMode)?.label ?? rawMode
+        }
+    }
+
+    static func resultLabel(for rawMode: String, partial: Bool) -> String {
+        if partial {
+            switch rawMode {
+            case "forensic_verified", "forensic_partial":
+                return "Forensic partial"
+            case "deep_native", "deep_partial":
+                return "Complete partial"
+            case "fast_changed_only":
+                return "Quick partial"
+            default:
+                return "\(label(for: rawMode)) partial"
+            }
+        }
+        return label(for: rawMode)
     }
 }
 

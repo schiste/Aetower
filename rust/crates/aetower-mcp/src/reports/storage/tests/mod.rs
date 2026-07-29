@@ -6519,6 +6519,92 @@ fn size_walk_budget_is_scaled_per_mode() {
 }
 
 #[test]
+fn forensic_scan_result_stays_verified_only_when_complete() {
+    let root = test_root("forensic-result-complete");
+    if let Err(error) = fs::create_dir_all(&root) {
+        panic!("create forensic fixture root: {error}");
+    }
+
+    let report = build_storage_hygiene_report_with_options(
+        vec![root.display().to_string()],
+        StorageHygieneOptions {
+            max_depth: 5,
+            limit: 10,
+            mode: StorageScanMode::ForensicVerified,
+            runtime: None,
+            dirty_paths: Vec::new(),
+        },
+    );
+
+    assert_eq!(report.scan_mode, "forensic_verified");
+    assert_eq!(report.diagnostics.mode, "forensic_verified");
+    assert!(!report.cache_status.partial);
+    assert!(!report.truncated);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn forensic_scan_result_is_labeled_partial_when_budget_stops_verification() {
+    let root = test_root("forensic-result-partial");
+    let target = root.join("project").join("target");
+    if let Err(error) = fs::create_dir_all(&target) {
+        panic!("create forensic partial fixture: {error}");
+    }
+    if let Err(error) = fs::write(
+        target.join("blob"),
+        vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+    ) {
+        panic!("write forensic partial artifact: {error}");
+    }
+
+    let progress = Arc::new(Mutex::new(StorageScanJobProgress::new(0, None)));
+    let control = Arc::new(StorageScanControl::new());
+    control.cancel();
+    let runtime = StorageScanRuntimeContext::new(
+        control,
+        Arc::clone(&progress),
+        StorageScanThrottle {
+            sleep_every_checkpoints: 0,
+            sleep_millis: 0,
+            reason: None,
+        },
+    );
+    let report = build_storage_hygiene_report_with_options(
+        vec![root.display().to_string()],
+        StorageHygieneOptions {
+            max_depth: 5,
+            limit: 10,
+            mode: StorageScanMode::ForensicVerified,
+            runtime: Some(runtime),
+            dirty_paths: Vec::new(),
+        },
+    );
+
+    assert_eq!(report.scan_mode, "forensic_partial");
+    assert_eq!(report.diagnostics.mode, "forensic_verified");
+    assert!(report.cache_status.partial);
+    assert!(
+        report
+            .cache_status
+            .message
+            .contains("Forensic scan ended partial")
+    );
+    assert!(
+        report
+            .caveats
+            .iter()
+            .any(|caveat| caveat.contains("Forensic result is partial"))
+    );
+    assert_eq!(
+        StorageScanMode::parse("forensic_partial"),
+        StorageScanMode::ForensicVerified
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn forensic_walk_survives_a_slow_pre_walk_phase() {
     // Regression: the walk used to share SCAN_TIME_BUDGET with the git /
     // inventory phase, so a forensic scan over many repositories consumed the

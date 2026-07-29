@@ -116,6 +116,51 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertEqual(display.cache.report.roots, [root])
     }
 
+    @MainActor
+    func testPartialForensicReportDoesNotPublishVerifiedEstimate() throws {
+        let temporarySupportURL = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("aetower-partial-forensic-\(UUID().uuidString)", isDirectory: true)
+        StorageSupportDirectoryOverride.applicationSupportURL = temporarySupportURL
+        defer {
+            StorageSupportDirectoryOverride.applicationSupportURL = nil
+            try? FileManager.default.removeItem(at: temporarySupportURL)
+        }
+
+        let root = temporarySupportURL.appendingPathComponent("Repositories", isDirectory: true).path
+        let rawJSON = Self.minimalStorageReportJSON(
+            root: root,
+            scanMode: "forensic_partial",
+            cachePartial: true,
+            cacheMessage: "Forensic scan ended partial because a traversal budget stopped verification.",
+            truncated: true
+        )
+        let report = try AetowerJSON.snakeCaseDecoder().decode(
+            StorageHygieneReportModel.self,
+            from: Data(rawJSON.utf8)
+        )
+        let state = AppState()
+
+        state.publishPreparedStorageHygieneResult(
+            PreparedStorageHygieneResult(
+                report: report,
+                baseline: StorageHygieneBaselineModel(report: report),
+                rawJSON: rawJSON,
+                errorMessage: nil,
+                payloadBytes: UInt64(rawJSON.utf8.count),
+                decodeMillis: 0,
+                cacheSaveMillis: 0
+            )
+        )
+
+        XCTAssertEqual(report.cacheStatus.source, "live_scan")
+        XCTAssertTrue(report.cacheStatus.partial)
+        XCTAssertTrue(report.isPartialResult)
+        XCTAssertEqual(state.storageEstimateStatus.confidence.rawValue, "partial")
+        XCTAssertEqual(state.storageEstimateStatus.title, "Partial")
+        XCTAssertTrue(state.storageEstimateStatus.detail.contains("Forensic scan ended partial"))
+    }
+
     func testStorageReportDecodesCleanupLanes() throws {
         let root = "/Users/example"
         let json = """
@@ -803,12 +848,28 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertNil(legacy.attribution.writerDisplay)
     }
 
-    private static func minimalStorageReportJSON(root: String) -> String {
+    private static func minimalStorageReportJSON(
+        root: String,
+        scanMode: String = "deep_native",
+        cachePartial: Bool = false,
+        cacheMessage: String = "Fresh live scan completed within the configured budget.",
+        truncated: Bool = false
+    ) -> String {
         """
         {
           "captured_at_millis": 1782860000000,
           "scan_duration_millis": 42,
-          "scan_mode": "deep_native",
+          "scan_mode": "\(scanMode)",
+          "cache_status": {
+            "source": "live_scan",
+            "stale": false,
+            "partial": \(cachePartial ? "true" : "false"),
+            "confidence": "\(cachePartial ? "medium" : "high")",
+            "confidence_score": \(cachePartial ? 75 : 95),
+            "latest_scan_millis": 1782860000000,
+            "age_millis": 0,
+            "message": "\(cacheMessage)"
+          },
           "summary": {
             "item_count": 0,
             "total_reclaimable_bytes": 0,
@@ -849,7 +910,7 @@ final class StorageHygieneModelsTests: XCTestCase {
             "caveats": []
           },
           "roots": ["\(root)"],
-          "truncated": false,
+          "truncated": \(truncated ? "true" : "false"),
           "caveats": []
         }
         """

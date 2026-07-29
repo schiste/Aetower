@@ -260,7 +260,11 @@ fn storage_cache_confidence(
     }
 }
 
-fn storage_live_cache_status(now_millis: u64, partial: bool) -> StorageCacheStatus {
+fn storage_live_cache_status(
+    now_millis: u64,
+    mode: StorageScanMode,
+    partial: bool,
+) -> StorageCacheStatus {
     let (confidence, confidence_score) =
         storage_cache_confidence("live_scan", Some(now_millis), false, partial, true);
     StorageCacheStatus {
@@ -271,7 +275,10 @@ fn storage_live_cache_status(now_millis: u64, partial: bool) -> StorageCacheStat
         confidence_score,
         latest_scan_millis: Some(now_millis),
         age_millis: Some(0),
-        message: if partial {
+        message: if partial && mode == StorageScanMode::ForensicVerified {
+            "Forensic scan ended partial because a traversal, sizing, or inventory budget stopped before full verification."
+                .to_owned()
+        } else if partial {
             "Fresh live scan completed under a bounded budget; some sections may be partial."
                 .to_owned()
         } else {
@@ -568,13 +575,11 @@ pub(super) fn build_storage_hygiene_report_with_options(
         &items,
         &growth_deltas,
     );
-    let cache_status = storage_live_cache_status(
-        now_millis,
-        storage_walk_truncated
-            || storage_sizing_truncated
-            || repository_inventory_completeness.truncated
-            || !repository_inventory_completeness.complete,
-    );
+    let scan_partial = storage_walk_truncated
+        || storage_sizing_truncated
+        || repository_inventory_completeness.truncated
+        || !repository_inventory_completeness.complete;
+    let cache_status = storage_live_cache_status(now_millis, options.mode, scan_partial);
     let retained_count = items.len().min(u64::MAX as usize) as u64;
     let diagnostics = StorageScanDiagnostics {
         mode: options.mode.as_str().to_owned(),
@@ -623,6 +628,12 @@ pub(super) fn build_storage_hygiene_report_with_options(
                 .to_owned(),
         );
     }
+    if options.mode == StorageScanMode::ForensicVerified && scan_partial {
+        caveats.push(
+            "Forensic result is partial: at least one traversal, sizing, or repository-inventory budget stopped before full verification."
+                .to_owned(),
+        );
+    }
     if detector_merged_count > 0 {
         caveats.push(format!(
             "Typed detectors surfaced {detector_merged_count} high-value storage bucket(s) outside the generic walk's top-K path."
@@ -632,7 +643,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
-        scan_mode: options.mode.as_str().to_owned(),
+        scan_mode: options.mode.result_scan_mode(scan_partial).to_owned(),
         cache_status,
         diagnostics,
         summary,

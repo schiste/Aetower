@@ -52,6 +52,11 @@ final class StorageReclaimPolicyTests: XCTestCase {
         )
         XCTAssertEqual(StorageScanModeSelection.label(for: "fast_changed_only"), "Quick")
         XCTAssertEqual(StorageScanModeSelection.label(for: "deep_native"), "Complete")
+        XCTAssertEqual(StorageScanModeSelection.label(for: "forensic_partial"), "Forensic partial")
+        XCTAssertEqual(
+            StorageScanModeSelection.resultLabel(for: "forensic_verified", partial: true),
+            "Forensic partial"
+        )
         XCTAssertEqual(StorageScanModeSelection.label(for: "unknown_mode"), "unknown_mode")
     }
 

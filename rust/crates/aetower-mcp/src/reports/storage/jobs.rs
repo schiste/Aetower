@@ -13,7 +13,9 @@ impl StorageScanMode {
         match value.trim().to_ascii_lowercase().as_str() {
             "instant" | "instant_cached" | "instant-cached" => Self::InstantCached,
             "deep" | "deep_native" | "deep-native" => Self::DeepNative,
+            "deep_partial" | "deep-partial" => Self::DeepNative,
             "forensic" | "forensic_verified" | "forensic-verified" => Self::ForensicVerified,
+            "forensic_partial" | "forensic-partial" => Self::ForensicVerified,
             _ => Self::FastChangedOnly,
         }
     }
@@ -24,6 +26,13 @@ impl StorageScanMode {
             Self::FastChangedOnly => "fast_changed_only",
             Self::DeepNative => "deep_native",
             Self::ForensicVerified => "forensic_verified",
+        }
+    }
+
+    pub(super) fn result_scan_mode(self, partial: bool) -> &'static str {
+        match (self, partial) {
+            (Self::ForensicVerified, true) => "forensic_partial",
+            _ => self.as_str(),
         }
     }
 
