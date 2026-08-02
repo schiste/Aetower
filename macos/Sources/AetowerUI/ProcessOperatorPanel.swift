@@ -1389,19 +1389,6 @@ struct ProcessOperatorPanel: View {
         return missingValue
     }
 
-    private func descending<T: Comparable>(_ left: T, _ right: T, tieBreak: () -> Bool) -> Bool {
-        if left != right {
-            return left > right
-        }
-        return tieBreak()
-    }
-
-    private func ascending<T: Comparable>(_ left: T, _ right: T, tieBreak: () -> Bool) -> Bool {
-        if left != right {
-            return left < right
-        }
-        return tieBreak()
-    }
 }
 
 private struct OperatorProcess: Identifiable {

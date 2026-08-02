@@ -1123,14 +1123,14 @@ func compareProcessComponents(
     }
 }
 
-private func descending<T: Comparable>(_ left: T, _ right: T, tieBreak: () -> Bool) -> Bool {
+func descending<T: Comparable>(_ left: T, _ right: T, tieBreak: () -> Bool) -> Bool {
     if left != right {
         return left > right
     }
     return tieBreak()
 }
 
-private func ascending<T: Comparable>(_ left: T, _ right: T, tieBreak: () -> Bool) -> Bool {
+func ascending<T: Comparable>(_ left: T, _ right: T, tieBreak: () -> Bool) -> Bool {
     if left != right {
         return left < right
     }
