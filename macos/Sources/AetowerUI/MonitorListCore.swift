@@ -868,7 +868,14 @@ func expandedMemberEntities(for group: EntityGroup, by sortKey: SortKey) -> [Ent
 }
 
 func expandedProcessComponents(for group: EntityGroup, by sortKey: SortKey) -> [MonitorProcessComponentRef] {
-    sortEntities(group.members, by: sortKey)
+    processComponentRefs(for: group.members, by: sortKey)
+}
+
+func processComponentRefs(
+    for entities: [EntitySnapshot],
+    by sortKey: SortKey
+) -> [MonitorProcessComponentRef] {
+    sortEntities(entities, by: sortKey)
         .enumerated()
         .flatMap { ownerIndex, owner in
             let lineageRefs = owner.processLineage.map {

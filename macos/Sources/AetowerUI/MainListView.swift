@@ -1056,24 +1056,7 @@ public struct MainListView: View {
     }
 
     private func sidePanelProcessRefs(for entities: [EntitySnapshot]) -> [MonitorProcessComponentRef] {
-        sortEntities(entities, by: sortKey)
-            .enumerated()
-            .flatMap { ownerIndex, owner in
-                let lineageRefs = owner.processLineage.map {
-                    MonitorProcessComponentRef(owner: owner, lineage: $0, ownerSortIndex: ownerIndex)
-                }
-                if !lineageRefs.isEmpty {
-                    return lineageRefs
-                }
-
-                return owner.components.compactMap { component -> MonitorProcessComponentRef? in
-                    guard component.kind != .adapterContext, component.processId != nil else {
-                        return nil
-                    }
-                    return MonitorProcessComponentRef(owner: owner, component: component, ownerSortIndex: ownerIndex)
-                }
-            }
-            .sorted { compareProcessComponents($0, $1, by: sortKey) }
+        processComponentRefs(for: entities, by: sortKey)
     }
 
     private func sidePanelProcessRefDetail(_ processRef: MonitorProcessComponentRef) -> String {
