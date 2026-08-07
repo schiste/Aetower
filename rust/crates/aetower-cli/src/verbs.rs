@@ -3,7 +3,7 @@
 //! Each function takes the tool's JSON payload (as returned by
 //! [`crate::client::Client::fetch`]) and renders a compact operator view. Field
 //! names here are matched to the live MCP payloads (`aetower_host_summary`,
-//! `aetower_storage_hygiene_overview`, `aetower_repository_inventory`, …); the
+//! `aetower_storage_situation`, `aetower_repository_inventory`, …); the
 //! `--json` path bypasses all of this and prints the raw structured payload.
 
 use serde_json::Value;
@@ -188,7 +188,7 @@ pub fn host(payload: &Value) -> String {
         .join("\n")
 }
 
-/// `aetower storage` — disk pressure + reclaim lanes (`aetower_storage_hygiene_overview`).
+/// `aetower storage` — disk pressure + cache-first top offenders (`aetower_storage_situation`).
 pub fn storage(payload: &Value) -> String {
     let mut out = String::new();
 
@@ -273,22 +273,52 @@ pub fn storage(payload: &Value) -> String {
     }
     out.push_str("\n\n");
 
-    let cols = [
-        Column::left("LANE"),
-        Column::right("ITEMS"),
-        Column::right("RECLAIMABLE"),
-    ];
-    let rows: Vec<Vec<String>> = get_arr(payload, "cleanup_tiers")
-        .iter()
-        .map(|t| {
-            vec![
-                get_str(t, "label"),
-                get_u64(t, "item_count").to_string(),
-                human_bytes(get_u64(t, "bytes")),
-            ]
-        })
-        .collect();
-    out.push_str(&table::render(&cols, &rows, "No reclaim lanes found."));
+    let cleanup_tiers = get_arr(payload, "cleanup_tiers");
+    if cleanup_tiers.is_empty() {
+        let cols = [
+            Column::left("PATH"),
+            Column::left("TIER"),
+            Column::right("SIZE"),
+            Column::left("STALE"),
+        ];
+        let rows: Vec<Vec<String>> = get_arr(payload, "top_offenders")
+            .iter()
+            .map(|item| {
+                vec![
+                    truncate(&get_str(item, "path"), 56),
+                    get_str(item, "cleanup_tier"),
+                    human_bytes(get_u64(item, "physical_bytes")),
+                    if get_bool(item, "stale") {
+                        "yes".to_owned()
+                    } else {
+                        "no".to_owned()
+                    },
+                ]
+            })
+            .collect();
+        out.push_str(&table::render(
+            &cols,
+            &rows,
+            "No cached storage offenders found.",
+        ));
+    } else {
+        let cols = [
+            Column::left("LANE"),
+            Column::right("ITEMS"),
+            Column::right("RECLAIMABLE"),
+        ];
+        let rows: Vec<Vec<String>> = cleanup_tiers
+            .iter()
+            .map(|t| {
+                vec![
+                    get_str(t, "label"),
+                    get_u64(t, "item_count").to_string(),
+                    human_bytes(get_u64(t, "bytes")),
+                ]
+            })
+            .collect();
+        out.push_str(&table::render(&cols, &rows, "No reclaim lanes found."));
+    }
     out
 }
 

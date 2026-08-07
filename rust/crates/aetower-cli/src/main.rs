@@ -157,7 +157,7 @@ fn run(cli: Cli) -> i32 {
             &client,
             cli.json,
             cli.watch,
-            "aetower_storage_hygiene_overview",
+            "aetower_storage_situation",
             json_args(&[
                 ("refresh", Value::Bool(refresh)),
                 ("refresh_mode", Value::String(refresh_mode)),
