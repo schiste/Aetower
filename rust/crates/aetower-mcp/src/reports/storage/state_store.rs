@@ -237,6 +237,25 @@ pub(super) struct StorageItemRowsPage {
     pub(super) total_available: u64,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageDirtyPathRecord {
+    pub(super) path: String,
+    pub(super) source: String,
+    pub(super) flags: u64,
+    pub(super) first_seen_millis: u64,
+    pub(super) last_seen_millis: u64,
+    pub(super) event_count: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub(super) struct StorageDirtyPathSummary {
+    pub(super) dirty_path_count: u64,
+    pub(super) oldest_dirty_millis: Option<u64>,
+    pub(super) latest_dirty_millis: Option<u64>,
+    pub(super) latest_event_id: Option<u64>,
+    pub(super) sample_paths: Vec<String>,
+}
+
 const STORAGE_INDEX_STALE_EVICTION_MAX_PASSES: usize = 128;
 
 pub(super) struct StorageSizeIndex {
@@ -514,7 +533,34 @@ impl StorageSizeIndex {
              CREATE INDEX IF NOT EXISTS idx_storage_scan_job_state_signature
                 ON storage_scan_job_state(signature, updated_at_millis DESC);
              CREATE INDEX IF NOT EXISTS idx_storage_scan_job_state_status
-                ON storage_scan_job_state(status, updated_at_millis DESC);",
+                ON storage_scan_job_state(status, updated_at_millis DESC);
+             CREATE TABLE IF NOT EXISTS storage_dirty_path (
+                path TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                flags INTEGER NOT NULL DEFAULT 0,
+                first_seen_millis INTEGER NOT NULL,
+                last_seen_millis INTEGER NOT NULL,
+                event_count INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'dirty',
+                last_error TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_dirty_path_status
+                ON storage_dirty_path(status, last_seen_millis DESC);
+             CREATE TABLE IF NOT EXISTS storage_event_cursor (
+                source TEXT PRIMARY KEY,
+                last_event_id INTEGER,
+                updated_at_millis INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                detail TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS storage_path_fingerprint (
+                path TEXT PRIMARY KEY,
+                fingerprint BLOB NOT NULL,
+                source TEXT NOT NULL,
+                measured_at_millis INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_path_fingerprint_measured
+                ON storage_path_fingerprint(measured_at_millis DESC);",
         )?;
         let schema: i64 = connection.query_row(
             "SELECT value FROM storage_index_meta WHERE key = 'schema_version'",
@@ -664,7 +710,34 @@ impl StorageSizeIndex {
                  CREATE INDEX IF NOT EXISTS idx_storage_scan_job_state_signature
                     ON storage_scan_job_state(signature, updated_at_millis DESC);
                  CREATE INDEX IF NOT EXISTS idx_storage_scan_job_state_status
-                    ON storage_scan_job_state(status, updated_at_millis DESC);",
+                    ON storage_scan_job_state(status, updated_at_millis DESC);
+                 CREATE TABLE IF NOT EXISTS storage_dirty_path (
+                    path TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    flags INTEGER NOT NULL DEFAULT 0,
+                    first_seen_millis INTEGER NOT NULL,
+                    last_seen_millis INTEGER NOT NULL,
+                    event_count INTEGER NOT NULL DEFAULT 1,
+                    status TEXT NOT NULL DEFAULT 'dirty',
+                    last_error TEXT
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_storage_dirty_path_status
+                    ON storage_dirty_path(status, last_seen_millis DESC);
+                 CREATE TABLE IF NOT EXISTS storage_event_cursor (
+                    source TEXT PRIMARY KEY,
+                    last_event_id INTEGER,
+                    updated_at_millis INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    detail TEXT NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS storage_path_fingerprint (
+                    path TEXT PRIMARY KEY,
+                    fingerprint BLOB NOT NULL,
+                    source TEXT NOT NULL,
+                    measured_at_millis INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_storage_path_fingerprint_measured
+                    ON storage_path_fingerprint(measured_at_millis DESC);",
             )?;
         }
         Self::ensure_repository_inventory_cache_columns(connection)?;
@@ -848,6 +921,24 @@ impl StorageSizeIndex {
         }
         let connection = self.connection.as_ref()?;
         let path = path.display().to_string();
+        let fingerprint = StoragePathFingerprint::from_metadata(metadata).encode();
+        let result = connection
+            .query_row(
+                "SELECT s.size_bytes, s.allocated_bytes, s.entries, s.truncated
+                 FROM storage_size_index s
+                 INNER JOIN storage_path_fingerprint f
+                    ON f.path = s.path
+                 WHERE s.path = ?1
+                   AND s.kind = ?2
+                   AND f.fingerprint = ?3",
+                params![&path, kind, fingerprint],
+                size_walk_result_from_sql,
+            )
+            .ok();
+        if result.is_some() {
+            metrics.storage_index_hits = metrics.storage_index_hits.saturating_add(1);
+            return result;
+        }
         let device = metadata.dev() as i64;
         let inode = metadata.ino() as i64;
         let modified_millis = unix_metadata_millis(metadata.mtime(), metadata.mtime_nsec());
@@ -863,22 +954,7 @@ impl StorageSizeIndex {
                    AND changed_millis = ?5
                    AND kind = ?6",
                 params![path, device, inode, modified_millis, changed_millis, kind],
-                |row| {
-                    let size_bytes: i64 = row.get(0)?;
-                    let allocated_bytes: i64 = row.get(1)?;
-                    let entries: i64 = row.get(2)?;
-                    let truncated: i64 = row.get(3)?;
-                    Ok(SizeWalkResult {
-                        bytes: size_bytes.max(0) as u64,
-                        allocated_bytes: allocated_bytes.max(0) as u64,
-                        entries: entries.max(0) as u64,
-                        truncated: truncated != 0,
-                        max_hardlink_count: 1,
-                        has_hardlinks: false,
-                        sparse_or_shared: allocated_bytes > 0 && allocated_bytes < size_bytes,
-                        cloud_placeholder: size_bytes > 0 && allocated_bytes == 0,
-                    })
-                },
+                size_walk_result_from_sql,
             )
             .ok();
         if result.is_some() {
@@ -904,6 +980,7 @@ impl StorageSizeIndex {
             return;
         };
         let path = path.display().to_string();
+        let fingerprint = StoragePathFingerprint::from_metadata(metadata).encode();
         let device = metadata.dev() as i64;
         let inode = metadata.ino() as i64;
         let modified_millis = unix_metadata_millis(metadata.mtime(), metadata.mtime_nsec());
@@ -915,7 +992,7 @@ impl StorageSizeIndex {
                     size_bytes, allocated_bytes, entries, truncated, last_scan_millis
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
-                    path,
+                    &path,
                     device,
                     inode,
                     modified_millis,
@@ -932,7 +1009,297 @@ impl StorageSizeIndex {
             .is_ok()
         {
             metrics.storage_index_writes = metrics.storage_index_writes.saturating_add(1);
+            self.store_path_fingerprint(&path, fingerprint, now_millis, "size_walk");
+            self.mark_dirty_path_clean(&path, now_millis);
         }
+    }
+
+    pub(super) fn record_filesystem_events(
+        &self,
+        records: &[StorageFilesystemEventRecord],
+        roots: &[PathBuf],
+        now_millis: u64,
+    ) -> StorageDirtyPathSummary {
+        let Some(connection) = self.connection.as_ref() else {
+            return StorageDirtyPathSummary::default();
+        };
+        let Ok(mut upsert) = connection.prepare(
+            "INSERT INTO storage_dirty_path (
+                path, source, flags, first_seen_millis, last_seen_millis, event_count, status
+             ) VALUES (?1, ?2, ?3, ?4, ?4, 1, 'dirty')
+             ON CONFLICT(path) DO UPDATE SET
+                source = excluded.source,
+                flags = storage_dirty_path.flags | excluded.flags,
+                last_seen_millis = MAX(storage_dirty_path.last_seen_millis, excluded.last_seen_millis),
+                event_count = storage_dirty_path.event_count + 1,
+                status = 'dirty',
+                last_error = NULL
+             WHERE excluded.last_seen_millis > storage_dirty_path.last_seen_millis
+                OR storage_dirty_path.status <> 'dirty'",
+        ) else {
+            return StorageDirtyPathSummary::default();
+        };
+        let mut inserted = 0u64;
+        let mut latest_event_id = None;
+        let last_event_id = self.event_cursor("aetower-fsevents");
+        for record in records {
+            if let (Some(event_id), Some(cursor)) = (record.event_id, last_event_id)
+                && event_id <= cursor
+            {
+                continue;
+            }
+            let Some(path) = record
+                .path
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            if !roots.is_empty() && !roots.iter().any(|root| path_is_under_root(path, root)) {
+                continue;
+            }
+            let source = record.source.as_deref().unwrap_or("aetower-fsevents");
+            let flags = record.flags.unwrap_or_default().min(i64::MAX as u64) as i64;
+            let event_millis = record.timestamp_millis.unwrap_or(now_millis);
+            if upsert
+                .execute(params![
+                    path,
+                    source,
+                    flags,
+                    event_millis.min(i64::MAX as u64) as i64,
+                ])
+                .unwrap_or(0)
+                > 0
+            {
+                inserted = inserted.saturating_add(1);
+                latest_event_id = latest_event_id.max(record.event_id);
+            }
+        }
+        drop(upsert);
+        if inserted > 0 {
+            let detail = format!("ingested {inserted} filesystem event paths");
+            self.update_event_cursor(
+                "aetower-fsevents",
+                latest_event_id,
+                now_millis,
+                "ready",
+                &detail,
+            );
+            super::report::invalidate_index_report_sections_memo();
+        }
+        self.dirty_path_summary(roots, 5)
+    }
+
+    pub(super) fn load_dirty_path_records(
+        &self,
+        roots: &[PathBuf],
+        limit: usize,
+    ) -> Vec<StorageDirtyPathRecord> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let mut records = Vec::new();
+        let Ok(mut statement) = connection.prepare(
+            "SELECT path, source, flags, first_seen_millis, last_seen_millis, event_count
+             FROM storage_dirty_path
+             WHERE status = 'dirty'
+             ORDER BY last_seen_millis DESC, path ASC
+             LIMIT ?1",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            params![limit.saturating_mul(4).clamp(1, 4096) as i64],
+            dirty_path_record_from_sql,
+        ) else {
+            return Vec::new();
+        };
+        for record in rows.flatten() {
+            if !roots.is_empty()
+                && !roots
+                    .iter()
+                    .any(|root| path_is_under_root(&record.path, root))
+            {
+                continue;
+            }
+            if records.iter().any(|existing: &StorageDirtyPathRecord| {
+                path_is_under_root(&record.path, Path::new(&existing.path))
+            }) {
+                continue;
+            }
+            records.push(record);
+            if records.len() >= limit {
+                break;
+            }
+        }
+        records
+    }
+
+    pub(super) fn load_dirty_path_strings(&self, roots: &[PathBuf], limit: usize) -> Vec<String> {
+        self.load_dirty_path_records(roots, limit)
+            .into_iter()
+            .map(|record| record.path)
+            .collect()
+    }
+
+    pub(super) fn dirty_path_summary(
+        &self,
+        roots: &[PathBuf],
+        sample_limit: usize,
+    ) -> StorageDirtyPathSummary {
+        let Some(connection) = self.connection.as_ref() else {
+            return StorageDirtyPathSummary::default();
+        };
+        let mut records = self.load_dirty_path_records(roots, sample_limit);
+        let mut dirty_path_count = 0u64;
+        let mut oldest_dirty_millis = None::<u64>;
+        let mut latest_dirty_millis = None::<u64>;
+        let Ok(mut statement) = connection.prepare(
+            "SELECT path, first_seen_millis, last_seen_millis
+             FROM storage_dirty_path
+             WHERE status = 'dirty'",
+        ) else {
+            return StorageDirtyPathSummary::default();
+        };
+        if let Ok(rows) = statement.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let first_seen_millis: i64 = row.get(1)?;
+            let last_seen_millis: i64 = row.get(2)?;
+            Ok((
+                path,
+                first_seen_millis.max(0) as u64,
+                last_seen_millis.max(0) as u64,
+            ))
+        }) {
+            for row in rows.flatten() {
+                if !roots.is_empty() && !roots.iter().any(|root| path_is_under_root(&row.0, root)) {
+                    continue;
+                }
+                dirty_path_count = dirty_path_count.saturating_add(1);
+                oldest_dirty_millis = Some(
+                    oldest_dirty_millis
+                        .map(|value| value.min(row.1))
+                        .unwrap_or(row.1),
+                );
+                latest_dirty_millis = Some(
+                    latest_dirty_millis
+                        .map(|value| value.max(row.2))
+                        .unwrap_or(row.2),
+                );
+            }
+        }
+        let latest_event_id = self.event_cursor("aetower-fsevents");
+        if records.len() > sample_limit {
+            records.truncate(sample_limit);
+        }
+        StorageDirtyPathSummary {
+            dirty_path_count,
+            oldest_dirty_millis,
+            latest_dirty_millis,
+            latest_event_id,
+            sample_paths: records.into_iter().map(|record| record.path).collect(),
+        }
+    }
+
+    pub(super) fn mark_dirty_paths_clean(&self, paths: &[String], now_millis: u64) {
+        for path in paths {
+            self.mark_dirty_path_clean(path, now_millis);
+        }
+    }
+
+    fn mark_dirty_path_clean(&self, path: &str, now_millis: u64) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        let child_prefix = format!("{path}/");
+        let _ = connection.execute(
+            "UPDATE storage_dirty_path
+             SET status = 'clean',
+                 last_seen_millis = MAX(last_seen_millis, ?2)
+             WHERE path = ?1
+                OR substr(path, 1, ?3) = ?4",
+            params![
+                path,
+                now_millis.min(i64::MAX as u64) as i64,
+                child_prefix.len().min(i64::MAX as usize) as i64,
+                child_prefix,
+            ],
+        );
+    }
+
+    fn store_path_fingerprint(
+        &self,
+        path: &str,
+        fingerprint: Vec<u8>,
+        measured_at_millis: u64,
+        source: &str,
+    ) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        let _ = connection.execute(
+            "INSERT INTO storage_path_fingerprint (
+                path, fingerprint, source, measured_at_millis
+             ) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(path) DO UPDATE SET
+                fingerprint = excluded.fingerprint,
+                source = excluded.source,
+                measured_at_millis = excluded.measured_at_millis",
+            params![
+                path,
+                fingerprint,
+                source,
+                measured_at_millis.min(i64::MAX as u64) as i64,
+            ],
+        );
+    }
+
+    fn update_event_cursor(
+        &self,
+        source: &str,
+        last_event_id: Option<u64>,
+        updated_at_millis: u64,
+        status: &str,
+        detail: &str,
+    ) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        let _ = connection.execute(
+            "INSERT INTO storage_event_cursor (
+                source, last_event_id, updated_at_millis, status, detail
+             ) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(source) DO UPDATE SET
+                last_event_id = COALESCE(excluded.last_event_id, storage_event_cursor.last_event_id),
+                updated_at_millis = excluded.updated_at_millis,
+                status = excluded.status,
+                detail = excluded.detail",
+            params![
+                source,
+                last_event_id.map(|value| value.min(i64::MAX as u64) as i64),
+                updated_at_millis.min(i64::MAX as u64) as i64,
+                status,
+                detail,
+            ],
+        );
+    }
+
+    fn event_cursor(&self, source: &str) -> Option<u64> {
+        let connection = self.connection.as_ref()?;
+        connection
+            .query_row(
+                "SELECT last_event_id
+                 FROM storage_event_cursor
+                 WHERE source = ?1",
+                params![source],
+                |row| {
+                    row.get::<_, Option<i64>>(0)
+                        .map(|value| value.map(|value| value.max(0) as u64))
+                },
+            )
+            .ok()
+            .flatten()
     }
 
     /// Buffer one indexed row; rows are written in chunked transactions by
@@ -3299,6 +3666,38 @@ fn indexed_file_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<Storag
         entries: entries.max(0) as u64,
         truncated: row.get::<_, i64>(18)? != 0,
         last_scan_millis: last_scan_millis.max(0) as u64,
+    })
+}
+
+fn size_walk_result_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<SizeWalkResult> {
+    let size_bytes: i64 = row.get(0)?;
+    let allocated_bytes: i64 = row.get(1)?;
+    let entries: i64 = row.get(2)?;
+    let truncated: i64 = row.get(3)?;
+    Ok(SizeWalkResult {
+        bytes: size_bytes.max(0) as u64,
+        allocated_bytes: allocated_bytes.max(0) as u64,
+        entries: entries.max(0) as u64,
+        truncated: truncated != 0,
+        max_hardlink_count: 1,
+        has_hardlinks: false,
+        sparse_or_shared: allocated_bytes > 0 && allocated_bytes < size_bytes,
+        cloud_placeholder: size_bytes > 0 && allocated_bytes == 0,
+    })
+}
+
+fn dirty_path_record_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<StorageDirtyPathRecord> {
+    let flags: i64 = row.get(2)?;
+    let first_seen_millis: i64 = row.get(3)?;
+    let last_seen_millis: i64 = row.get(4)?;
+    let event_count: i64 = row.get(5)?;
+    Ok(StorageDirtyPathRecord {
+        path: row.get(0)?,
+        source: row.get(1)?,
+        flags: flags.max(0) as u64,
+        first_seen_millis: first_seen_millis.max(0) as u64,
+        last_seen_millis: last_seen_millis.max(0) as u64,
+        event_count: event_count.max(0) as u64,
     })
 }
 

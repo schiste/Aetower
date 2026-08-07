@@ -458,6 +458,7 @@ mod agent_guidance;
 mod attribution;
 mod cleanup;
 mod detectors;
+mod fingerprint;
 mod jobs;
 mod models;
 mod projection;
@@ -493,6 +494,7 @@ use cleanup::{
     storage_role_label, summarize_cleanup_tiers,
 };
 use detectors::{collect_typed_detector_items, merge_typed_detector_items};
+use fingerprint::StoragePathFingerprint;
 pub(crate) use jobs::StorageScanJobProgress;
 #[cfg(test)]
 use jobs::{StorageScanControl, StorageScanJobRequest, StorageScanThrottle};
@@ -564,8 +566,9 @@ pub use report::{
     storage_hygiene_mode_json,
 };
 use state_store::{
-    RepositoryInventoryCacheEntry, RepositoryInventoryCacheState, StorageIndexedFileRow,
-    StorageScanPersistedRecord, StorageScanPersistedState, StorageScanStateStore, StorageSizeIndex,
+    RepositoryInventoryCacheEntry, RepositoryInventoryCacheState, StorageDirtyPathSummary,
+    StorageIndexedFileRow, StorageScanPersistedRecord, StorageScanPersistedState,
+    StorageScanStateStore, StorageSizeIndex,
 };
 use treemap::build_storage_treemap_roots;
 use walk::{

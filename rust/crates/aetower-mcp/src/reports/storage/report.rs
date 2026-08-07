@@ -356,7 +356,7 @@ pub(crate) fn build_storage_hygiene_report_with_mode(
 
 pub(super) fn build_storage_hygiene_report_with_options(
     roots: Vec<String>,
-    options: StorageHygieneOptions,
+    mut options: StorageHygieneOptions,
 ) -> StorageHygieneReport {
     let started = Instant::now();
     let now_millis = crate::current_unix_millis().unwrap_or_default();
@@ -372,6 +372,17 @@ pub(super) fn build_storage_hygiene_report_with_options(
     // sizes (`StorageScanMode::serve_sizes_from_index`).
     let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
+    let dirty_summary = storage_index.record_filesystem_events(
+        &load_storage_filesystem_event_records(),
+        &requested_roots,
+        now_millis,
+    );
+    let persisted_dirty_paths = storage_index.load_dirty_path_strings(&requested_roots, 512);
+    if !persisted_dirty_paths.is_empty() {
+        let mut merged_dirty_paths = options.dirty_paths.clone();
+        merged_dirty_paths.extend(persisted_dirty_paths);
+        options.dirty_paths = normalize_dirty_paths(merged_dirty_paths);
+    }
     let repository_cache = StorageSizeIndex::open();
     let cached_repository_entries =
         repository_cache.load_repository_inventory_cache(&requested_roots);
@@ -490,6 +501,9 @@ pub(super) fn build_storage_hygiene_report_with_options(
         storage_walk_truncated |= root_scan.walk_truncated;
         storage_sizing_truncated |= root_scan.sizing_truncated;
     }
+    if !storage_walk_truncated && !storage_sizing_truncated && !scanned_roots.is_empty() {
+        storage_index.mark_dirty_paths_clean(&scanned_roots, now_millis);
+    }
 
     let generic_candidate_seen_count = collector.seen;
     metrics.scanned_directory_count = scanned_directory_count;
@@ -596,7 +610,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
         storage_index_misses: metrics.storage_index_misses,
         storage_index_writes: metrics.storage_index_writes,
         native_metadata_strategy: options.mode.native_metadata_strategy().to_owned(),
-        fsevents_status: "swift_cache_invalidation".to_owned(),
+        fsevents_status: dirty_queue_status_label(&dirty_summary, &options.dirty_paths),
         lazy_git_status: !options.mode.collect_git_status(),
         top_k_retained: metrics.candidate_seen_count > retained_count,
         performance_budget: StoragePerformanceBudgetDiagnostics::default(),
@@ -858,6 +872,12 @@ pub(super) fn build_storage_hygiene_report_from_index(
     };
     let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
+    let dirty_summary = storage_index.record_filesystem_events(
+        &load_storage_filesystem_event_records(),
+        &requested_roots,
+        now_millis,
+    );
+    let dirty_paths = storage_index.load_dirty_path_strings(&requested_roots, 512);
     let volume_states = summarize_volume_states(&requested_roots);
     let (sections, sections_from_memo) = index_report_sections(
         &storage_index,
@@ -880,6 +900,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         .into_iter()
         .map(|row| storage_item_for_indexed_row(row, now_millis))
         .collect::<Vec<_>>();
+    mark_dirty_indexed_items_stale(&mut items, &dirty_paths);
     items.sort_by(|left, right| {
         right
             .size_bytes
@@ -960,8 +981,9 @@ pub(super) fn build_storage_hygiene_report_from_index(
         || growth_insights.as_ref().is_some_and(|insights| {
             !insights.per_repo_rates.is_empty() || !insights.per_root_rates.is_empty()
         });
-    let cache_status =
+    let mut cache_status =
         storage_index_cache_status(&storage_index, now_millis, true, has_cached_facts);
+    apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
     let sections_marker = if sections_from_memo {
         "+sections_memo"
     } else {
@@ -985,7 +1007,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         storage_index_misses: metrics.storage_index_misses,
         storage_index_writes: 0,
         native_metadata_strategy: "persistent_index".to_owned(),
-        fsevents_status: "dirty_paths_refresh_full_scan".to_owned(),
+        fsevents_status: dirty_queue_status_label(&dirty_summary, &dirty_paths),
         lazy_git_status: true,
         top_k_retained: true,
         performance_budget: StoragePerformanceBudgetDiagnostics::default(),
@@ -1025,18 +1047,83 @@ pub(super) fn build_storage_hygiene_report_from_index(
         growth_insights,
         cold_data,
         truncated: false,
-        caveats: vec![
-            "Loaded from Aetower's persistent storage index for instant display.".to_owned(),
-            "Run a refresh before destructive cleanup when the displayed path changed recently."
-                .to_owned(),
-            "Cached reclaimable bytes use local allocated blocks; refresh for the latest APFS sparse/cloud/hardlink accounting."
-                .to_owned(),
-            "Growth attribution is based on indexed size deltas and optional Aetower/Chau7 writer ledger records."
-                .to_owned(),
-            "Typed storage detectors run during refresh scans; cache-first reads do not probe detector paths."
-                .to_owned(),
-        ],
+        caveats: indexed_report_caveats(&dirty_summary),
     })
+}
+
+fn mark_dirty_indexed_items_stale(items: &mut [StorageHygieneItem], dirty_paths: &[String]) {
+    if dirty_paths.is_empty() {
+        return;
+    }
+    for item in items {
+        if path_matches_dirty_prefix(Path::new(&item.path), dirty_paths) {
+            item.stale = true;
+            item.evidence.push(
+                "Path was touched by the filesystem watcher after the cached scan.".to_owned(),
+            );
+        }
+    }
+}
+
+fn apply_dirty_summary_to_cache_status(
+    cache_status: &mut StorageCacheStatus,
+    dirty_summary: &StorageDirtyPathSummary,
+) {
+    if dirty_summary.dirty_path_count == 0 {
+        return;
+    }
+    cache_status.stale = true;
+    cache_status.confidence = "medium".to_owned();
+    cache_status.confidence_score = cache_status.confidence_score.min(74);
+    cache_status.message = format!(
+        "{} changed storage path{} pending incremental refresh.",
+        dirty_summary.dirty_path_count,
+        if dirty_summary.dirty_path_count == 1 {
+            ""
+        } else {
+            "s"
+        }
+    );
+}
+
+fn dirty_queue_status_label(
+    dirty_summary: &StorageDirtyPathSummary,
+    dirty_paths: &[String],
+) -> String {
+    if dirty_summary.dirty_path_count == 0 && dirty_paths.is_empty() {
+        return "dirty_queue_clean".to_owned();
+    }
+    format!(
+        "dirty_queue:{}_pending:{}_loaded",
+        dirty_summary.dirty_path_count,
+        dirty_paths.len()
+    )
+}
+
+fn indexed_report_caveats(dirty_summary: &StorageDirtyPathSummary) -> Vec<String> {
+    let mut caveats = vec![
+        "Loaded from Aetower's persistent storage index for instant display.".to_owned(),
+        "Run a refresh before destructive cleanup when the displayed path changed recently."
+            .to_owned(),
+        "Cached reclaimable bytes use local allocated blocks; refresh for the latest APFS sparse/cloud/hardlink accounting."
+            .to_owned(),
+        "Growth attribution is based on indexed size deltas and optional Aetower/Chau7 writer ledger records."
+            .to_owned(),
+        "Typed storage detectors run during refresh scans; cache-first reads do not probe detector paths."
+            .to_owned(),
+    ];
+    if dirty_summary.dirty_path_count > 0 {
+        caveats.push(format!(
+            "{} changed storage path{} pending incremental refresh.",
+            dirty_summary.dirty_path_count,
+            if dirty_summary.dirty_path_count == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
+    }
+    caveats
 }
 
 /// Assemble the cold-data reclaim lane from the persistent index: one band for

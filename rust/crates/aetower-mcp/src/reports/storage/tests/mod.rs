@@ -5860,6 +5860,89 @@ fn index_report_generation_advances_when_rows_flush() {
     );
 }
 
+#[test]
+fn storage_dirty_queue_records_and_clears_subtree_events() {
+    let root = test_root("dirty-queue-records");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let nested = watched.join("nested").join("changed.bin");
+    fs::create_dir_all(nested.parent().unwrap()).expect("create watched fixture");
+    fs::write(&nested, b"changed").expect("write changed fixture");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let records = vec![StorageFilesystemEventRecord {
+        timestamp_millis: Some(now_millis),
+        path: Some(nested.display().to_string()),
+        event_id: Some(42),
+        flags: Some(1),
+        source: Some("test-fsevents".to_owned()),
+    }];
+
+    let summary = storage_index.record_filesystem_events(
+        &records,
+        std::slice::from_ref(&watched),
+        now_millis,
+    );
+    let dirty_paths = storage_index.load_dirty_path_strings(std::slice::from_ref(&watched), 16);
+
+    assert_eq!(summary.dirty_path_count, 1);
+    assert_eq!(summary.latest_event_id, Some(42));
+    assert_eq!(dirty_paths, vec![nested.display().to_string()]);
+
+    storage_index.mark_dirty_paths_clean(&[watched.display().to_string()], now_millis + 1);
+    let clean_summary = storage_index.dirty_path_summary(&[watched], 16);
+    assert_eq!(clean_summary.dirty_path_count, 0);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_size_index_fingerprint_rejects_changed_file_metadata() {
+    let root = test_root("fingerprint-cache-invalidates");
+    let index_dir = root.join("index");
+    let file = root.join("artifact.bin");
+    fs::create_dir_all(&root).expect("create root");
+    fs::write(&file, b"baseline").expect("write baseline");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let mut metrics = StorageScanMetrics::default();
+    let metadata = fs::symlink_metadata(&file).expect("baseline metadata");
+    let baseline = SizeWalkResult {
+        bytes: metadata.len(),
+        allocated_bytes: metadata.blocks().saturating_mul(512),
+        entries: 1,
+        truncated: false,
+        max_hardlink_count: metadata.nlink(),
+        has_hardlinks: metadata.nlink() > 1,
+        sparse_or_shared: false,
+        cloud_placeholder: false,
+    };
+    storage_index.store(
+        &file,
+        &metadata,
+        "indexed-file",
+        None,
+        &baseline,
+        storage_now_millis(),
+        &mut metrics,
+    );
+    assert!(
+        storage_index
+            .lookup(&file, &metadata, "indexed-file", &[], &mut metrics)
+            .is_some()
+    );
+
+    fs::write(&file, b"baseline plus more bytes").expect("write changed");
+    let changed_metadata = fs::symlink_metadata(&file).expect("changed metadata");
+
+    assert!(
+        storage_index
+            .lookup(&file, &changed_metadata, "indexed-file", &[], &mut metrics)
+            .is_none()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
 fn must_ok<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
     match result {
         Ok(value) => value,
