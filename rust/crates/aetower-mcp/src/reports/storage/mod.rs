@@ -524,12 +524,13 @@ use models::{
     StorageRedundancyGroup, StorageRedundancyItem, StorageRepoArtifactFolder,
     StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryInventoryItem,
     StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry, StorageScanMetrics,
-    StorageSimilarityActionProjection, StorageSkippedRoot, StorageSourceCoverage,
+    StorageSimilarityActionProjection, StorageSituationResponse, StorageSituationSummary,
+    StorageSituationTopOffender, StorageSkippedRoot, StorageSourceCoverage,
     StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
 };
 pub use projection::{
     storage_growth_insights_json, storage_hygiene_actions_json, storage_hygiene_items_page_json,
-    storage_hygiene_overview_json, storage_hygiene_repo_detail_json,
+    storage_hygiene_overview_json, storage_hygiene_repo_detail_json, storage_situation_json,
 };
 pub use repo::repository_inventory_json;
 use repo::{
@@ -548,10 +549,10 @@ use report::{
     CleanupPathHolder, apply_active_cleanup_holders, build_storage_cold_data, per_root_walk_slice,
 };
 use report::{
-    StorageCandidateCollector, build_storage_hygiene_report_from_index,
-    build_storage_hygiene_report_with_options, finalize_storage_report_json, highest_cleanup_tier,
-    normalize_dirty_paths, normalize_roots, path_matches_dirty_prefix,
-    refresh_storage_performance_budget, skipped_root_permission_state,
+    StorageCandidateCollector, apply_dirty_summary_to_cache_status,
+    build_storage_hygiene_report_from_index, build_storage_hygiene_report_with_options,
+    finalize_storage_report_json, highest_cleanup_tier, normalize_dirty_paths, normalize_roots,
+    path_matches_dirty_prefix, refresh_storage_performance_budget, skipped_root_permission_state,
     storage_byte_accounting_label, storage_index_cache_status, storage_item_evidence,
     storage_item_next_step, storage_local_reclaimable_bytes,
     storage_performance_budget_diagnostics, storage_source_kind, storage_source_label,
@@ -567,8 +568,8 @@ pub use report::{
 };
 use state_store::{
     RepositoryInventoryCacheEntry, RepositoryInventoryCacheState, StorageDirtyPathSummary,
-    StorageIndexedFileRow, StorageScanPersistedRecord, StorageScanPersistedState,
-    StorageScanStateStore, StorageSizeIndex,
+    StorageIndexSummaryRow, StorageIndexedFileRow, StorageScanPersistedRecord,
+    StorageScanPersistedState, StorageScanStateStore, StorageSizeIndex,
 };
 use treemap::build_storage_treemap_roots;
 use walk::{

@@ -54,6 +54,42 @@ pub(super) struct StorageCacheStatus {
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
+pub(super) struct StorageSituationSummary {
+    pub(super) source_root_count: usize,
+    pub(super) item_count: u64,
+    pub(super) inventory_size_bytes: u64,
+    pub(super) safely_reclaimable_now_bytes: u64,
+    pub(super) maybe_reclaimable_bytes: u64,
+    pub(super) review_required_bytes: u64,
+    pub(super) dangerous_user_data_bytes: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageSituationTopOffender {
+    pub(super) path: String,
+    pub(super) source_root: String,
+    pub(super) kind: String,
+    pub(super) cleanup_tier: String,
+    pub(super) physical_bytes: u64,
+    pub(super) recommendation_score: f64,
+    pub(super) last_scan_millis: u64,
+    pub(super) stale: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct StorageSituationResponse {
+    pub(super) captured_at_millis: u64,
+    pub(super) cache_status: StorageCacheStatus,
+    pub(super) storage_index_status: String,
+    pub(super) roots: Vec<String>,
+    pub(super) dirty_paths: StorageDirtyPathSummary,
+    pub(super) summary: StorageSituationSummary,
+    pub(super) top_offenders: Vec<StorageSituationTopOffender>,
+    pub(super) volume_states: Vec<StorageVolumeState>,
+    pub(super) caveats: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
 pub(super) struct StorageHygieneSummary {
     pub(super) item_count: usize,
     pub(super) inventory_size_bytes: u64,

@@ -360,6 +360,24 @@ fn storage_hygiene_projection_apis_return_compact_shapes() {
             .is_some_and(|items| items.len() == 1)
     );
 
+    let situation = must_ok(
+        storage_situation_json(vec![root.display().to_string()], 4),
+        "situation serializes",
+    );
+    let situation = parse_json_value(&situation, "situation JSON parses");
+    assert_eq!(situation["cache_status"]["source"], "persistent_index");
+    assert!(
+        situation["summary"]["inventory_size_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes >= MIN_ITEM_BYTES)
+    );
+    assert!(
+        situation["top_offenders"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty() && items.len() <= 4)
+    );
+    assert!(situation["dirty_paths"]["dirty_path_count"].is_u64());
+
     let _ = fs::remove_dir_all(root);
 }
 

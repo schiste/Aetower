@@ -355,6 +355,22 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
             AetowerMcpServer::tool_repository_scorecard,
         ),
         ToolDescriptor::with_args(
+            "aetower_storage_situation",
+            "Return the fastest cache-first storage situation: last known summary bytes, top offenders, dirty-path freshness, volume state, and cache status. Never walks the filesystem; set refresh=true to start an optional background scan.",
+            vec![
+                string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths. Defaults to common developer and Xcode cache locations."),
+                uint("limit", Some(1), Some(40), Some(12)).described("Number of top offenders to return."),
+                uint("max_depth", Some(1), Some(12), Some(5)).described("Depth for the optional background refresh only."),
+                string("mode").described("Read mode is always cache-first; non-instant values only affect the optional background refresh."),
+                boolean("refresh", Some(false)).described("Return cached facts immediately and start a background scan."),
+                boolean("background_scan", Some(false)).described("Alias for refresh; useful for clients that name side effects explicitly."),
+                string("refresh_mode").described("Background scan mode: fast_changed_only, deep_native, or forensic_verified. Defaults to fast_changed_only unless mode is non-instant."),
+                string("throttle_hint").described("Optional background throttle hint such as normal, battery, thermal-pressure, network, or cloud."),
+                string_array("dirty_paths", Some(64)).described("Optional paths to prioritize during the background refresh."),
+            ],
+            AetowerMcpServer::tool_storage_situation,
+        ),
+        ToolDescriptor::with_args(
             "aetower_storage_hygiene",
             "Return cache-first local storage hygiene facts from Aetower's persistent index. Read-only: never launches or waits on a deep scan; set refresh=true to start an optional background scan.",
             vec![

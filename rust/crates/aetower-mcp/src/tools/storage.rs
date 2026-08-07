@@ -5,6 +5,45 @@ use serde_json::{Value, json};
 use crate::*;
 
 impl AetowerMcpServer {
+    pub(crate) fn tool_storage_situation(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            roots: Vec<String>,
+            #[serde(default = "default_storage_situation_limit")]
+            limit: usize,
+            #[serde(default = "default_storage_scan_depth")]
+            max_depth: usize,
+            #[serde(default = "default_storage_scan_mode")]
+            mode: String,
+            #[serde(default)]
+            refresh: bool,
+            #[serde(default)]
+            background_scan: bool,
+            #[serde(default)]
+            refresh_mode: String,
+            #[serde(default = "default_storage_throttle_hint")]
+            throttle_hint: String,
+            #[serde(default)]
+            dirty_paths: Vec<String>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let json = crate::reports::storage::storage_situation_json(args.roots.clone(), args.limit)
+            .map_err(|error| tool_error(format!("storage_situation_failed: {error}")))?;
+        let background_scan = start_optional_storage_refresh(
+            args.roots,
+            args.max_depth,
+            args.limit,
+            &args.mode,
+            &args.refresh_mode,
+            args.refresh || args.background_scan,
+            &args.throttle_hint,
+            args.dirty_paths,
+        );
+        parse_tool_json_with_background_scan(&json, background_scan)
+    }
+
     pub(crate) fn tool_storage_hygiene(&self, arguments: Value) -> Result<Value, Value> {
         #[derive(Deserialize)]
         struct Args {
@@ -369,6 +408,10 @@ fn default_storage_scan_depth() -> usize {
 
 fn default_storage_scan_limit() -> usize {
     80
+}
+
+fn default_storage_situation_limit() -> usize {
+    12
 }
 
 fn default_storage_scan_mode() -> String {

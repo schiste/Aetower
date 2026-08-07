@@ -1065,7 +1065,7 @@ fn mark_dirty_indexed_items_stale(items: &mut [StorageHygieneItem], dirty_paths:
     }
 }
 
-fn apply_dirty_summary_to_cache_status(
+pub(super) fn apply_dirty_summary_to_cache_status(
     cache_status: &mut StorageCacheStatus,
     dirty_summary: &StorageDirtyPathSummary,
 ) {

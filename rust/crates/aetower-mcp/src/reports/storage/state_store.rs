@@ -256,6 +256,28 @@ pub(super) struct StorageDirtyPathSummary {
     pub(super) sample_paths: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub(super) struct StorageIndexSummaryRow {
+    pub(super) source_root: String,
+    pub(super) item_count: u64,
+    pub(super) inventory_size_bytes: u64,
+    pub(super) safe_reclaimable_bytes: u64,
+    pub(super) maybe_reclaimable_bytes: u64,
+    pub(super) review_required_bytes: u64,
+    pub(super) dangerous_user_data_bytes: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct StorageTopOffenderRow {
+    pub(super) source_root: String,
+    pub(super) path: String,
+    pub(super) kind: String,
+    pub(super) cleanup_tier: String,
+    pub(super) physical_bytes: u64,
+    pub(super) recommendation_score: f64,
+    pub(super) last_scan_millis: u64,
+}
+
 const STORAGE_INDEX_STALE_EVICTION_MAX_PASSES: usize = 128;
 
 pub(super) struct StorageSizeIndex {
@@ -2762,6 +2784,75 @@ impl StorageSizeIndex {
         Some((item_count, total_bytes, rows))
     }
 
+    pub(super) fn load_index_summaries(&self, roots: &[PathBuf]) -> Vec<StorageIndexSummaryRow> {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut statement) = connection.prepare(
+            "SELECT source_root, item_count, inventory_size_bytes,
+                    safe_reclaimable_bytes, maybe_reclaimable_bytes, review_required_bytes,
+                    dangerous_user_data_bytes
+             FROM storage_index_summary
+             ORDER BY captured_at_millis DESC, source_root ASC",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map([], storage_index_summary_row_from_sql) else {
+            return Vec::new();
+        };
+        rows.flatten()
+            .filter(|row| {
+                roots.is_empty()
+                    || roots
+                        .iter()
+                        .any(|root| path_is_under_root(&row.source_root, root))
+            })
+            .collect()
+    }
+
+    pub(super) fn load_top_offenders(
+        &self,
+        roots: &[PathBuf],
+        limit: usize,
+    ) -> Vec<StorageTopOffenderRow> {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let read_limit = limit.saturating_mul(4).clamp(1, 1_000);
+        let Ok(mut statement) = connection.prepare(
+            "SELECT source_root, path, kind, cleanup_tier, physical_bytes,
+                    recommendation_score, last_scan_millis
+             FROM storage_top_offender
+             ORDER BY recommendation_score DESC, physical_bytes DESC, path ASC
+             LIMIT ?1",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            params![read_limit as i64],
+            storage_top_offender_row_from_sql,
+        ) else {
+            return Vec::new();
+        };
+        let mut offenders = Vec::with_capacity(limit.min(read_limit));
+        for row in rows.flatten() {
+            if !roots.is_empty()
+                && !roots
+                    .iter()
+                    .any(|root| path_is_under_root(&row.source_root, root))
+            {
+                continue;
+            }
+            offenders.push(row);
+            if offenders.len() >= limit {
+                break;
+            }
+        }
+        offenders
+    }
+
     #[cfg(test)]
     pub(super) fn pending_row_count(&self) -> usize {
         self.pending_rows.borrow().len()
@@ -3698,6 +3789,34 @@ fn dirty_path_record_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<Stora
         first_seen_millis: first_seen_millis.max(0) as u64,
         last_seen_millis: last_seen_millis.max(0) as u64,
         event_count: event_count.max(0) as u64,
+    })
+}
+
+fn storage_index_summary_row_from_sql(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<StorageIndexSummaryRow> {
+    Ok(StorageIndexSummaryRow {
+        source_root: row.get(0)?,
+        item_count: row.get::<_, i64>(1)?.max(0) as u64,
+        inventory_size_bytes: row.get::<_, i64>(2)?.max(0) as u64,
+        safe_reclaimable_bytes: row.get::<_, i64>(3)?.max(0) as u64,
+        maybe_reclaimable_bytes: row.get::<_, i64>(4)?.max(0) as u64,
+        review_required_bytes: row.get::<_, i64>(5)?.max(0) as u64,
+        dangerous_user_data_bytes: row.get::<_, i64>(6)?.max(0) as u64,
+    })
+}
+
+fn storage_top_offender_row_from_sql(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<StorageTopOffenderRow> {
+    Ok(StorageTopOffenderRow {
+        source_root: row.get(0)?,
+        path: row.get(1)?,
+        kind: row.get(2)?,
+        cleanup_tier: row.get(3)?,
+        physical_bytes: row.get::<_, i64>(4)?.max(0) as u64,
+        recommendation_score: row.get(5)?,
+        last_scan_millis: row.get::<_, i64>(6)?.max(0) as u64,
     })
 }
 

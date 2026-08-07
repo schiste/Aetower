@@ -71,6 +71,89 @@ pub fn storage_growth_insights_json(
     .map_err(|error| error.to_string())
 }
 
+pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String, String> {
+    let now_millis = storage_now_millis();
+    let roots = normalize_roots(roots);
+    let storage_index = StorageSizeIndex::open();
+    let dirty_summary = storage_index.record_filesystem_events(
+        &load_storage_filesystem_event_records(),
+        &roots,
+        now_millis,
+    );
+    let dirty_paths = storage_index.load_dirty_path_strings(&roots, 512);
+    let summaries = storage_index.load_index_summaries(&roots);
+    let situation_summary = summarize_storage_situation(&summaries);
+    let top_offenders = storage_index
+        .load_top_offenders(&roots, limit.clamp(1, 40))
+        .into_iter()
+        .map(|row| {
+            let stale = path_matches_dirty_prefix(Path::new(&row.path), &dirty_paths);
+            StorageSituationTopOffender {
+                path: row.path,
+                source_root: row.source_root,
+                kind: row.kind,
+                cleanup_tier: row.cleanup_tier,
+                physical_bytes: row.physical_bytes,
+                recommendation_score: row.recommendation_score,
+                last_scan_millis: row.last_scan_millis,
+                stale,
+            }
+        })
+        .collect::<Vec<_>>();
+    let has_cached_facts =
+        situation_summary.item_count > 0 || !top_offenders.is_empty() || !summaries.is_empty();
+    let mut cache_status =
+        storage_index_cache_status(&storage_index, now_millis, true, has_cached_facts);
+    apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
+    let response = StorageSituationResponse {
+        captured_at_millis: now_millis,
+        cache_status,
+        storage_index_status: storage_index.status.clone(),
+        roots: roots.iter().map(|root| root.display().to_string()).collect(),
+        dirty_paths: dirty_summary,
+        summary: situation_summary,
+        top_offenders,
+        volume_states: summarize_volume_states(&roots),
+        caveats: vec![
+            "Cache-first storage situation: uses Aetower's persistent index summaries and top offenders without walking the filesystem."
+                .to_owned(),
+            "Rows marked stale were touched by the filesystem watcher and need an incremental refresh before cleanup."
+                .to_owned(),
+            "Summary bytes are the last known indexed facts; run a refresh to incorporate dirty paths."
+                .to_owned(),
+        ],
+    };
+    serde_json::to_string(&response).map_err(|error| error.to_string())
+}
+
+fn summarize_storage_situation(rows: &[StorageIndexSummaryRow]) -> StorageSituationSummary {
+    rows.iter().fold(
+        StorageSituationSummary {
+            source_root_count: rows.len(),
+            ..StorageSituationSummary::default()
+        },
+        |mut summary, row| {
+            summary.item_count = summary.item_count.saturating_add(row.item_count);
+            summary.inventory_size_bytes = summary
+                .inventory_size_bytes
+                .saturating_add(row.inventory_size_bytes);
+            summary.safely_reclaimable_now_bytes = summary
+                .safely_reclaimable_now_bytes
+                .saturating_add(row.safe_reclaimable_bytes);
+            summary.maybe_reclaimable_bytes = summary
+                .maybe_reclaimable_bytes
+                .saturating_add(row.maybe_reclaimable_bytes);
+            summary.review_required_bytes = summary
+                .review_required_bytes
+                .saturating_add(row.review_required_bytes);
+            summary.dangerous_user_data_bytes = summary
+                .dangerous_user_data_bytes
+                .saturating_add(row.dangerous_user_data_bytes);
+            summary
+        },
+    )
+}
+
 pub fn storage_hygiene_actions_json(
     roots: Vec<String>,
     max_depth: usize,
