@@ -404,6 +404,15 @@ pub(super) fn build_storage_hygiene_report_with_options(
         &repository_inventory_scan.repositories_by_root,
         &cached_repository_entries,
     );
+    let detector_items = collect_typed_detector_items(
+        &requested_roots,
+        &options,
+        now_millis,
+        &storage_index,
+        &BTreeSet::new(),
+        &mut metrics,
+    );
+    let detector_seen_count = detector_items.len().min(u64::MAX as usize) as u64;
     let mut scanned_roots = Vec::new();
     let mut skipped_roots = Vec::new();
     let mut scanned_directory_count = 0;
@@ -482,26 +491,14 @@ pub(super) fn build_storage_hygiene_report_with_options(
         storage_sizing_truncated |= root_scan.sizing_truncated;
     }
 
-    metrics.candidate_seen_count = collector.seen;
+    let generic_candidate_seen_count = collector.seen;
     metrics.scanned_directory_count = scanned_directory_count;
     metrics.discovered_repository_count = repository_roots.len().min(u64::MAX as usize) as u64;
     let mut items = collector.into_sorted_items();
-    let existing_paths = items
-        .iter()
-        .map(|item| item.path.clone())
-        .collect::<BTreeSet<_>>();
-    let detector_items = collect_typed_detector_items(
-        &requested_roots,
-        &options,
-        now_millis,
-        &storage_index,
-        &existing_paths,
-        &mut metrics,
-    );
-    let detector_seen_count = detector_items.len().min(u64::MAX as usize) as u64;
     let detector_merged_count = merge_typed_detector_items(&mut items, detector_items);
     metrics.candidate_seen_count = metrics
         .candidate_seen_count
+        .max(generic_candidate_seen_count)
         .saturating_add(detector_seen_count);
     if options.mode.verify_source_control() {
         let git_started = Instant::now();
@@ -636,7 +633,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
     }
     if detector_merged_count > 0 {
         caveats.push(format!(
-            "Typed detectors surfaced {detector_merged_count} high-value storage bucket(s) outside the generic walk's top-K path."
+            "Typed detectors surfaced {detector_merged_count} high-value storage bucket(s) before the generic walk finished."
         ));
     }
 

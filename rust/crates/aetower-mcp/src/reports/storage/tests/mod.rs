@@ -7234,6 +7234,79 @@ fn typed_storage_detectors_surface_known_buckets_despite_scan_limits() {
 }
 
 #[test]
+fn storage_hygiene_does_not_treat_plain_reports_directory_as_test_output() {
+    let root = test_root("plain-reports-is-source");
+    let reports = root
+        .join("rust")
+        .join("crates")
+        .join("aetower-mcp")
+        .join("src")
+        .join("reports");
+    if let Err(error) = fs::create_dir_all(&reports) {
+        panic!("create source reports directory: {error}");
+    }
+
+    let metadata = match fs::symlink_metadata(&reports) {
+        Ok(metadata) => metadata,
+        Err(error) => panic!("stat source reports directory: {error}"),
+    };
+    let now_millis = crate::current_unix_millis().unwrap_or_default();
+    let rule = classify_artifact(&reports, &metadata, now_millis);
+
+    assert!(
+        rule.as_ref()
+            .is_none_or(|rule| rule.kind.as_ref() != "test-output"),
+        "plain src/reports must not be classified as disposable test output: {rule:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_hygiene_blocks_repo_linked_lazy_cleanup_until_verified() {
+    let root = test_root("repo-linked-lazy-cleanup-blocked");
+    let project = root.join("project");
+    let test_output = project.join("playwright-report");
+    create_git_repo(&project, "main");
+    write_allocated_fixture(&test_output.join("blob"), MIN_ITEM_BYTES + 512);
+    mark_tree_old(&root);
+
+    let json = build_storage_hygiene_report_for_roots_mode(
+        vec![root.display().to_string()],
+        5,
+        80,
+        "deep_native",
+    );
+    let report = parse_json_value(&json, "lazy repo-linked report parses");
+    let item = report["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("items is an array"))
+        .iter()
+        .find(|item| {
+            item["path"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("playwright-report"))
+        })
+        .unwrap_or_else(|| panic!("repo-linked test output is visible: {json}"));
+
+    assert_eq!(item["kind"], "test-output");
+    assert_eq!(item["git_status"], "repo-linked-unchecked");
+    assert_eq!(item["cleanup_tier"], "risky");
+    assert_eq!(item["safety"], "review");
+    assert_eq!(item["cleanup_allowed"], false);
+    assert!(
+        item["cleanup_blockers"]
+            .as_array()
+            .is_some_and(|blockers| blockers.iter().any(|blocker| blocker
+                .as_str()
+                .is_some_and(|blocker| blocker.contains("source-control verified")))),
+        "repo-linked lazy scan should explain why cleanup is blocked: {item:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_summary_uses_strict_reclaim_buckets() {
     let root = test_root("strict-reclaim-buckets");
     let project = root.join("Project");

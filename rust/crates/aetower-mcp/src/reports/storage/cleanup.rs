@@ -326,6 +326,14 @@ pub(super) fn apply_cleanup_guardrails(items: &mut [StorageHygieneItem], now_mil
                 "Path is tracked or actively changed in Git; source work is protected.",
             );
         }
+        if item.git_status == "repo-linked-unchecked" {
+            item.cleanup_tier = "risky".to_owned();
+            item.safety = "review".to_owned();
+            block_cleanup(
+                item,
+                "Repo-linked path has not been source-control verified; run a verified scan or review manually before cleanup.",
+            );
+        }
         if item.git_status == "untracked" && is_source_like_storage_item(item) {
             item.cleanup_tier = "risky".to_owned();
             item.safety = "review".to_owned();
@@ -1728,7 +1736,7 @@ pub(super) fn classify_artifact(
             "Test coverage output.",
             "Safe to remove if you do not need the local coverage report.",
         )),
-        ".nyc_output" | "playwright-report" | "test-results" | "junit" | "reports" => Some(rule(
+        ".nyc_output" | "playwright-report" | "test-results" | "junit" => Some(rule(
             "test-output",
             "safe",
             "safe",
