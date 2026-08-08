@@ -6192,6 +6192,47 @@ fn storage_dirty_queue_records_and_clears_subtree_events() {
 }
 
 #[test]
+fn storage_dirty_queue_marks_unknown_gap_for_dropped_events() {
+    let root = test_root("dirty-queue-unknown-gap");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let nested = watched.join("nested").join("changed.bin");
+    fs::create_dir_all(nested.parent().unwrap()).expect("create watched fixture");
+    fs::write(&nested, b"changed").expect("write changed fixture");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let records = vec![StorageFilesystemEventRecord {
+        timestamp_millis: Some(now_millis),
+        path: Some(nested.display().to_string()),
+        event_id: Some(51),
+        flags: Some(0x0000_0002),
+        source: Some("test-fsevents".to_owned()),
+    }];
+
+    let summary = storage_index.record_filesystem_events(
+        &records,
+        std::slice::from_ref(&watched),
+        now_millis,
+    );
+
+    assert_eq!(summary.dirty_path_count, 1);
+    assert_eq!(summary.latest_event_id, Some(51));
+    assert!(summary.unknown_gap);
+    assert_eq!(
+        summary.unknown_gap_roots,
+        vec![watched.display().to_string()]
+    );
+
+    storage_index.mark_dirty_paths_clean(&[watched.display().to_string()], now_millis + 1);
+    let clean_summary = storage_index.dirty_path_summary(&[watched], 16);
+    assert_eq!(clean_summary.dirty_path_count, 0);
+    assert!(!clean_summary.unknown_gap);
+    assert!(clean_summary.unknown_gap_roots.is_empty());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_size_index_fingerprint_rejects_changed_file_metadata() {
     let root = test_root("fingerprint-cache-invalidates");
     let index_dir = root.join("index");

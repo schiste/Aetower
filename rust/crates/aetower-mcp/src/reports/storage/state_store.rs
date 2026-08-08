@@ -320,6 +320,10 @@ pub(super) struct StorageDirtyPathSummary {
     pub(super) latest_dirty_millis: Option<u64>,
     pub(super) latest_event_id: Option<u64>,
     pub(super) sample_paths: Vec<String>,
+    #[serde(default)]
+    pub(super) unknown_gap: bool,
+    #[serde(default)]
+    pub(super) unknown_gap_roots: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -644,6 +648,17 @@ impl StorageSizeIndex {
                 status TEXT NOT NULL,
                 detail TEXT NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS storage_unknown_gap (
+                root_path TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                first_seen_millis INTEGER NOT NULL,
+                last_seen_millis INTEGER NOT NULL,
+                last_event_id INTEGER,
+                unresolved INTEGER NOT NULL DEFAULT 1
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_unknown_gap_unresolved
+                ON storage_unknown_gap(unresolved, last_seen_millis DESC);
              CREATE TABLE IF NOT EXISTS storage_path_fingerprint (
                 path TEXT PRIMARY KEY,
                 fingerprint BLOB NOT NULL,
@@ -836,6 +851,17 @@ impl StorageSizeIndex {
                     status TEXT NOT NULL,
                     detail TEXT NOT NULL
                  );
+                 CREATE TABLE IF NOT EXISTS storage_unknown_gap (
+                    root_path TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    first_seen_millis INTEGER NOT NULL,
+                    last_seen_millis INTEGER NOT NULL,
+                    last_event_id INTEGER,
+                    unresolved INTEGER NOT NULL DEFAULT 1
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_storage_unknown_gap_unresolved
+                    ON storage_unknown_gap(unresolved, last_seen_millis DESC);
                  CREATE TABLE IF NOT EXISTS storage_path_fingerprint (
                     path TEXT PRIMARY KEY,
                     fingerprint BLOB NOT NULL,
@@ -1364,14 +1390,78 @@ impl StorageSizeIndex {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn record_filesystem_events(
         &self,
         records: &[StorageFilesystemEventRecord],
         roots: &[PathBuf],
         now_millis: u64,
     ) -> StorageDirtyPathSummary {
+        self.record_filesystem_events_for_source(
+            records,
+            roots,
+            now_millis,
+            STORAGE_LEDGER_FSEVENTS_SOURCE,
+        );
+        self.dirty_path_summary(roots, 5)
+    }
+
+    pub(super) fn ingest_filesystem_events(
+        &self,
+        ledger_records: &[StorageFilesystemEventRecord],
+        roots: &[PathBuf],
+        now_millis: u64,
+    ) -> StorageDirtyPathSummary {
+        self.record_native_filesystem_events(roots, now_millis);
+        self.record_filesystem_events_for_source(
+            ledger_records,
+            roots,
+            now_millis,
+            STORAGE_LEDGER_FSEVENTS_SOURCE,
+        );
+        self.dirty_path_summary(roots, 5)
+    }
+
+    fn record_native_filesystem_events(&self, roots: &[PathBuf], now_millis: u64) {
+        if self.connection.is_none() {
+            return;
+        }
+        let batch = poll_native_storage_filesystem_events(
+            roots,
+            self.event_cursor(STORAGE_NATIVE_FSEVENTS_SOURCE),
+            now_millis,
+        );
+        self.record_filesystem_events_for_source(
+            &batch.records,
+            roots,
+            now_millis,
+            STORAGE_NATIVE_FSEVENTS_SOURCE,
+        );
+        self.mark_unknown_gap_roots(
+            &batch.unknown_gap_roots,
+            now_millis,
+            STORAGE_NATIVE_FSEVENTS_SOURCE,
+            batch.status.as_str(),
+            batch.cursor,
+        );
+        self.update_event_cursor(
+            STORAGE_NATIVE_FSEVENTS_SOURCE,
+            batch.cursor,
+            now_millis,
+            batch.status.as_str(),
+            batch.detail.as_str(),
+        );
+    }
+
+    fn record_filesystem_events_for_source(
+        &self,
+        records: &[StorageFilesystemEventRecord],
+        roots: &[PathBuf],
+        now_millis: u64,
+        cursor_source: &str,
+    ) -> u64 {
         let Some(connection) = self.connection.as_ref() else {
-            return StorageDirtyPathSummary::default();
+            return 0;
         };
         let Ok(mut upsert) = connection.prepare(
             "INSERT INTO storage_dirty_path (
@@ -1392,11 +1482,12 @@ impl StorageSizeIndex {
              WHERE excluded.last_seen_millis > storage_dirty_path.last_seen_millis
                 OR storage_dirty_path.status <> 'dirty'",
         ) else {
-            return StorageDirtyPathSummary::default();
+            return 0;
         };
         let mut inserted = 0u64;
         let mut latest_event_id = None;
-        let last_event_id = self.event_cursor("aetower-fsevents");
+        let mut unknown_gap_roots = BTreeSet::new();
+        let last_event_id = self.event_cursor(cursor_source);
         for record in records {
             if let (Some(event_id), Some(cursor)) = (record.event_id, last_event_id)
                 && event_id <= cursor
@@ -1414,14 +1505,17 @@ impl StorageSizeIndex {
             if !roots.is_empty() && !roots.iter().any(|root| path_is_under_root(path, root)) {
                 continue;
             }
-            let source = record.source.as_deref().unwrap_or("aetower-fsevents");
-            let flags = record.flags.unwrap_or_default().min(i64::MAX as u64) as i64;
+            let source = record.source.as_deref().unwrap_or(cursor_source);
+            let flags = record.flags.unwrap_or_default();
+            if storage_event_flags_indicate_unknown_gap(flags) {
+                collect_unknown_gap_roots_for_event_path(path, roots, &mut unknown_gap_roots);
+            }
             let event_millis = record.timestamp_millis.unwrap_or(now_millis);
             if upsert
                 .execute(params![
                     path,
                     source,
-                    flags,
+                    flags.min(i64::MAX as u64) as i64,
                     record
                         .event_id
                         .map(|value| value.min(i64::MAX as u64) as i64),
@@ -1435,18 +1529,19 @@ impl StorageSizeIndex {
             }
         }
         drop(upsert);
+        self.mark_unknown_gap_roots(
+            &unknown_gap_roots,
+            now_millis,
+            cursor_source,
+            "event_stream_gap_flag",
+            latest_event_id,
+        );
         if inserted > 0 {
             let detail = format!("ingested {inserted} filesystem event paths");
-            self.update_event_cursor(
-                "aetower-fsevents",
-                latest_event_id,
-                now_millis,
-                "ready",
-                &detail,
-            );
+            self.update_event_cursor(cursor_source, latest_event_id, now_millis, "ready", &detail);
             super::report::invalidate_index_report_sections_memo();
         }
-        self.dirty_path_summary(roots, 5)
+        inserted
     }
 
     pub(super) fn load_dirty_path_records(
@@ -1547,7 +1642,14 @@ impl StorageSizeIndex {
                 );
             }
         }
-        let latest_event_id = self.event_cursor("aetower-fsevents");
+        let latest_event_id = [
+            self.event_cursor(STORAGE_LEDGER_FSEVENTS_SOURCE),
+            self.event_cursor(STORAGE_NATIVE_FSEVENTS_SOURCE),
+        ]
+        .into_iter()
+        .flatten()
+        .max();
+        let unknown_gap_roots = self.load_unknown_gap_roots(roots, sample_limit);
         if records.len() > sample_limit {
             records.truncate(sample_limit);
         }
@@ -1557,6 +1659,8 @@ impl StorageSizeIndex {
             latest_dirty_millis,
             latest_event_id,
             sample_paths: records.into_iter().map(|record| record.path).collect(),
+            unknown_gap: !unknown_gap_roots.is_empty(),
+            unknown_gap_roots,
         }
     }
 
@@ -1584,6 +1688,99 @@ impl StorageSizeIndex {
                 child_prefix,
             ],
         );
+        let _ = connection.execute(
+            "UPDATE storage_unknown_gap
+             SET unresolved = 0,
+                 last_seen_millis = MAX(last_seen_millis, ?2)
+             WHERE unresolved <> 0
+               AND (root_path = ?1 OR substr(root_path, 1, ?3) = ?4)",
+            params![
+                path,
+                now_millis.min(i64::MAX as u64) as i64,
+                child_prefix.len().min(i64::MAX as usize) as i64,
+                child_prefix,
+            ],
+        );
+    }
+
+    fn mark_unknown_gap_roots(
+        &self,
+        roots: &BTreeSet<String>,
+        now_millis: u64,
+        source: &str,
+        reason: &str,
+        last_event_id: Option<u64>,
+    ) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        if roots.is_empty() {
+            return;
+        }
+        let Ok(mut statement) = connection.prepare(
+            "INSERT INTO storage_unknown_gap (
+                root_path, source, reason, first_seen_millis, last_seen_millis,
+                last_event_id, unresolved
+             ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, 1)
+             ON CONFLICT(root_path) DO UPDATE SET
+                source = excluded.source,
+                reason = excluded.reason,
+                last_seen_millis = excluded.last_seen_millis,
+                last_event_id = COALESCE(excluded.last_event_id, storage_unknown_gap.last_event_id),
+                unresolved = 1",
+        ) else {
+            return;
+        };
+        for root in roots {
+            let _ = statement.execute(params![
+                root,
+                source,
+                reason,
+                now_millis.min(i64::MAX as u64) as i64,
+                last_event_id.map(|value| value.min(i64::MAX as u64) as i64),
+            ]);
+        }
+        super::report::invalidate_index_report_sections_memo();
+    }
+
+    fn load_unknown_gap_roots(&self, roots: &[PathBuf], limit: usize) -> Vec<String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut statement) = connection.prepare(
+            "SELECT root_path
+             FROM storage_unknown_gap
+             WHERE unresolved <> 0
+             ORDER BY last_seen_millis DESC, root_path ASC
+             LIMIT ?1",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            params![limit.saturating_mul(4).clamp(1, 512) as i64],
+            |row| row.get::<_, String>(0),
+        ) else {
+            return Vec::new();
+        };
+        let mut unknown_gap_roots = Vec::new();
+        for root in rows.flatten() {
+            if !roots.is_empty()
+                && !roots.iter().any(|requested_root| {
+                    path_is_under_root(&root, requested_root)
+                        || path_is_under_root(
+                            &requested_root.display().to_string(),
+                            Path::new(root.as_str()),
+                        )
+                })
+            {
+                continue;
+            }
+            unknown_gap_roots.push(root);
+            if unknown_gap_roots.len() >= limit {
+                break;
+            }
+        }
+        unknown_gap_roots
     }
 
     fn store_path_fingerprint(
@@ -1629,7 +1826,11 @@ impl StorageSizeIndex {
                 source, last_event_id, updated_at_millis, status, detail
              ) VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(source) DO UPDATE SET
-                last_event_id = COALESCE(excluded.last_event_id, storage_event_cursor.last_event_id),
+                last_event_id = CASE
+                    WHEN excluded.last_event_id IS NULL THEN storage_event_cursor.last_event_id
+                    WHEN storage_event_cursor.last_event_id IS NULL THEN excluded.last_event_id
+                    ELSE MAX(storage_event_cursor.last_event_id, excluded.last_event_id)
+                END,
                 updated_at_millis = excluded.updated_at_millis,
                 status = excluded.status,
                 detail = excluded.detail",
@@ -4579,6 +4780,24 @@ fn escape_like_pattern(value: &str) -> String {
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")
+}
+
+fn collect_unknown_gap_roots_for_event_path(
+    path: &str,
+    roots: &[PathBuf],
+    unknown_gap_roots: &mut BTreeSet<String>,
+) {
+    if roots.is_empty() {
+        unknown_gap_roots.insert(path.to_owned());
+        return;
+    }
+    let event_path = Path::new(path);
+    for root in roots {
+        let root_display = root.display().to_string();
+        if path_is_under_root(path, root) || path_is_under_root(&root_display, event_path) {
+            unknown_gap_roots.insert(root_display);
+        }
+    }
 }
 
 fn indexed_file_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<StorageIndexedFileRow> {

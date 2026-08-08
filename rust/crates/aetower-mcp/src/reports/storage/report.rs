@@ -373,7 +373,7 @@ pub(super) fn build_storage_hygiene_report_with_options(
     // sizes (`StorageScanMode::serve_sizes_from_index`).
     let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
-    let dirty_summary = storage_index.record_filesystem_events(
+    let dirty_summary = storage_index.ingest_filesystem_events(
         &load_storage_filesystem_event_records(),
         &requested_roots,
         now_millis,
@@ -873,7 +873,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
     };
     let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
-    let dirty_summary = storage_index.record_filesystem_events(
+    let dirty_summary = storage_index.ingest_filesystem_events(
         &load_storage_filesystem_event_records(),
         &requested_roots,
         now_millis,
@@ -1070,6 +1070,22 @@ pub(super) fn apply_dirty_summary_to_cache_status(
     cache_status: &mut StorageCacheStatus,
     dirty_summary: &StorageDirtyPathSummary,
 ) {
+    if dirty_summary.unknown_gap {
+        cache_status.stale = true;
+        cache_status.partial = true;
+        cache_status.confidence = "low".to_owned();
+        cache_status.confidence_score = cache_status.confidence_score.min(39);
+        cache_status.message = format!(
+            "Filesystem watcher reported an unknown gap under {} root{}; verify with a refresh before cleanup.",
+            dirty_summary.unknown_gap_roots.len().max(1),
+            if dirty_summary.unknown_gap_roots.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        );
+        return;
+    }
     if dirty_summary.dirty_path_count == 0 {
         return;
     }
@@ -1092,7 +1108,19 @@ fn dirty_queue_status_label(
     dirty_paths: &[String],
 ) -> String {
     if dirty_summary.dirty_path_count == 0 && dirty_paths.is_empty() {
-        return "dirty_queue_clean".to_owned();
+        return if dirty_summary.unknown_gap {
+            "dirty_queue_unknown_gap".to_owned()
+        } else {
+            "dirty_queue_clean".to_owned()
+        };
+    }
+    if dirty_summary.unknown_gap {
+        return format!(
+            "dirty_queue_unknown_gap:{}_roots:{}_pending:{}_loaded",
+            dirty_summary.unknown_gap_roots.len(),
+            dirty_summary.dirty_path_count,
+            dirty_paths.len()
+        );
     }
     format!(
         "dirty_queue:{}_pending:{}_loaded",
@@ -1118,6 +1146,17 @@ fn indexed_report_caveats(dirty_summary: &StorageDirtyPathSummary) -> Vec<String
             "{} changed storage path{} pending incremental refresh.",
             dirty_summary.dirty_path_count,
             if dirty_summary.dirty_path_count == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
+    }
+    if dirty_summary.unknown_gap {
+        caveats.push(format!(
+            "Filesystem watcher history has an unknown gap under {} root{}; cached storage facts remain displayable but cleanup requires a verifying refresh.",
+            dirty_summary.unknown_gap_roots.len().max(1),
+            if dirty_summary.unknown_gap_roots.len() == 1 {
                 ""
             } else {
                 "s"

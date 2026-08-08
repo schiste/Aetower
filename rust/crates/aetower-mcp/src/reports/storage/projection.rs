@@ -75,7 +75,7 @@ pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String
     let now_millis = storage_now_millis();
     let roots = normalize_roots(roots);
     let storage_index = StorageSizeIndex::open();
-    let dirty_summary = storage_index.record_filesystem_events(
+    let dirty_summary = storage_index.ingest_filesystem_events(
         &load_storage_filesystem_event_records(),
         &roots,
         now_millis,
@@ -156,23 +156,33 @@ fn build_storage_situation_response(
     let mut cache_status =
         storage_index_cache_status(storage_index, now_millis, true, has_cached_facts);
     apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
+    let mut caveats = vec![
+        "Cache-first storage situation: uses Aetower's persistent index summaries and top offenders without walking the filesystem."
+            .to_owned(),
+        "Rows marked stale were touched by the filesystem watcher and need an incremental refresh before cleanup."
+            .to_owned(),
+        "Summary bytes are the last known indexed facts; run a refresh to incorporate dirty paths."
+            .to_owned(),
+    ];
+    if dirty_summary.unknown_gap {
+        caveats.push(
+            "Native FSEvents reported an unknown gap; affected roots need a verifying refresh before cleanup actions are trusted."
+                .to_owned(),
+        );
+    }
     StorageSituationResponse {
         captured_at_millis: now_millis,
         cache_status,
         storage_index_status: storage_index.status.clone(),
-        roots: roots.iter().map(|root| root.display().to_string()).collect(),
+        roots: roots
+            .iter()
+            .map(|root| root.display().to_string())
+            .collect(),
         dirty_paths: dirty_summary,
         summary: situation_summary,
         top_offenders,
         volume_states: summarize_volume_states(roots),
-        caveats: vec![
-            "Cache-first storage situation: uses Aetower's persistent index summaries and top offenders without walking the filesystem."
-                .to_owned(),
-            "Rows marked stale were touched by the filesystem watcher and need an incremental refresh before cleanup."
-                .to_owned(),
-            "Summary bytes are the last known indexed facts; run a refresh to incorporate dirty paths."
-                .to_owned(),
-        ],
+        caveats,
     }
 }
 
@@ -206,6 +216,17 @@ fn overlay_storage_situation_snapshot(
     apply_dirty_summary_to_cache_status(&mut snapshot.cache_status, &dirty_summary);
     snapshot.storage_index_status = storage_index.status.clone();
     snapshot.dirty_paths = dirty_summary;
+    if snapshot.dirty_paths.unknown_gap
+        && !snapshot
+            .caveats
+            .iter()
+            .any(|caveat| caveat.contains("unknown gap"))
+    {
+        snapshot.caveats.push(
+            "Native FSEvents reported an unknown gap; affected roots need a verifying refresh before cleanup actions are trusted."
+                .to_owned(),
+        );
+    }
     if !snapshot
         .caveats
         .iter()

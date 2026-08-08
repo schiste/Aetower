@@ -459,6 +459,7 @@ mod agent_guidance;
 mod attribution;
 mod cleanup;
 mod detectors;
+mod events;
 mod fingerprint;
 mod jobs;
 mod models;
@@ -495,6 +496,10 @@ use cleanup::{
     storage_role_label, summarize_cleanup_tiers,
 };
 use detectors::{collect_typed_detector_items, merge_typed_detector_items};
+use events::{
+    STORAGE_LEDGER_FSEVENTS_SOURCE, STORAGE_NATIVE_FSEVENTS_SOURCE,
+    poll_native_storage_filesystem_events, storage_event_flags_indicate_unknown_gap,
+};
 use fingerprint::{
     STORAGE_PATH_FINGERPRINT_VERSION, StorageDirectoryFingerprint, StoragePathFingerprint,
     metadata_birth_millis,
