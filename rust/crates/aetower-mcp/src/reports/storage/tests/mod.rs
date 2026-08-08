@@ -6238,6 +6238,60 @@ fn storage_size_index_fingerprint_rejects_changed_file_metadata() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn storage_size_index_directory_fingerprint_rejects_shallow_child_changes() {
+    let root = test_root("directory-fingerprint-cache-invalidates");
+    let index_dir = root.join("index");
+    let directory = root.join("cache");
+    fs::create_dir_all(&directory).expect("create directory fixture");
+    fs::write(directory.join("alpha.bin"), b"alpha").expect("write first child");
+
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let mut metrics = StorageScanMetrics::default();
+    let metadata = fs::symlink_metadata(&directory).expect("baseline metadata");
+    let baseline = SizeWalkResult {
+        bytes: MIN_ITEM_BYTES + 32,
+        allocated_bytes: MIN_ITEM_BYTES + 32,
+        entries: 1,
+        truncated: false,
+        max_hardlink_count: 1,
+        has_hardlinks: false,
+        sparse_or_shared: false,
+        cloud_placeholder: false,
+    };
+    storage_index.store(
+        &directory,
+        &metadata,
+        "large-directory",
+        None,
+        &baseline,
+        storage_now_millis(),
+        &mut metrics,
+    );
+    assert!(
+        storage_index
+            .lookup(&directory, &metadata, "large-directory", &[], &mut metrics)
+            .is_some()
+    );
+
+    fs::write(directory.join("beta.bin"), b"beta").expect("write second child");
+    let changed_metadata = fs::symlink_metadata(&directory).expect("changed metadata");
+    assert!(
+        storage_index
+            .lookup(
+                &directory,
+                &changed_metadata,
+                "large-directory",
+                &[],
+                &mut metrics
+            )
+            .is_none(),
+        "a changed shallow child set must invalidate cached directory sizing"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
 fn must_ok<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
     match result {
         Ok(value) => value,

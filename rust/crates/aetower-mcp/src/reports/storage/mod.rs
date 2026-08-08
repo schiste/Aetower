@@ -495,7 +495,10 @@ use cleanup::{
     storage_role_label, summarize_cleanup_tiers,
 };
 use detectors::{collect_typed_detector_items, merge_typed_detector_items};
-use fingerprint::StoragePathFingerprint;
+use fingerprint::{
+    STORAGE_PATH_FINGERPRINT_VERSION, StorageDirectoryFingerprint, StoragePathFingerprint,
+    metadata_birth_millis,
+};
 pub(crate) use jobs::StorageScanJobProgress;
 #[cfg(test)]
 use jobs::{StorageScanControl, StorageScanJobRequest, StorageScanThrottle};

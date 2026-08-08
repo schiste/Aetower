@@ -291,6 +291,12 @@ struct MaterializedStorageDomainAggregate {
     partial: bool,
 }
 
+#[derive(Clone, Debug)]
+struct StorageCachedSizeRow {
+    size: SizeWalkResult,
+    fingerprint: Option<Vec<u8>>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct StorageItemRowsPage {
     pub(super) rows: Vec<StorageIndexedFileRow>,
@@ -622,6 +628,7 @@ impl StorageSizeIndex {
                 path TEXT PRIMARY KEY,
                 source TEXT NOT NULL,
                 flags INTEGER NOT NULL DEFAULT 0,
+                last_event_id INTEGER,
                 first_seen_millis INTEGER NOT NULL,
                 last_seen_millis INTEGER NOT NULL,
                 event_count INTEGER NOT NULL DEFAULT 1,
@@ -813,6 +820,7 @@ impl StorageSizeIndex {
                     path TEXT PRIMARY KEY,
                     source TEXT NOT NULL,
                     flags INTEGER NOT NULL DEFAULT 0,
+                    last_event_id INTEGER,
                     first_seen_millis INTEGER NOT NULL,
                     last_seen_millis INTEGER NOT NULL,
                     event_count INTEGER NOT NULL DEFAULT 1,
@@ -857,6 +865,7 @@ impl StorageSizeIndex {
         Self::ensure_storage_file_index_page_indexes(connection)?;
         Self::ensure_storage_growth_delta_indexes(connection)?;
         Self::ensure_storage_growth_rollups(connection)?;
+        Self::ensure_storage_dirty_path_columns(connection)?;
         Self::ensure_materialized_storage_index_schema(connection)?;
         Ok(())
     }
@@ -1172,6 +1181,24 @@ impl StorageSizeIndex {
         )
     }
 
+    fn ensure_storage_dirty_path_columns(connection: &Connection) -> rusqlite::Result<()> {
+        let exists: i64 = connection.query_row(
+            "SELECT COUNT(*)
+             FROM pragma_table_info('storage_dirty_path')
+             WHERE name = 'last_event_id'",
+            [],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            tolerate_duplicate_column(connection.execute(
+                "ALTER TABLE storage_dirty_path
+                 ADD COLUMN last_event_id INTEGER",
+                [],
+            ))?;
+        }
+        Ok(())
+    }
+
     fn ensure_repository_inventory_cache_columns(connection: &Connection) -> rusqlite::Result<()> {
         let exists: i64 = connection.query_row(
             "SELECT COUNT(*)
@@ -1203,24 +1230,48 @@ impl StorageSizeIndex {
             return None;
         }
         let connection = self.connection.as_ref()?;
-        let path = path.display().to_string();
-        let fingerprint = StoragePathFingerprint::from_metadata(metadata).encode();
+        let path_display = path.display().to_string();
         let result = connection
             .query_row(
-                "SELECT s.size_bytes, s.allocated_bytes, s.entries, s.truncated
+                "SELECT s.size_bytes, s.allocated_bytes, s.entries, s.truncated, f.fingerprint
                  FROM storage_size_index s
-                 INNER JOIN storage_path_fingerprint f
+                 LEFT JOIN storage_path_fingerprint f
                     ON f.path = s.path
                  WHERE s.path = ?1
-                   AND s.kind = ?2
-                   AND f.fingerprint = ?3",
-                params![&path, kind, fingerprint],
-                size_walk_result_from_sql,
+                   AND s.kind = ?2",
+                params![&path_display, kind],
+                size_walk_cache_row_from_sql,
             )
             .ok();
-        if result.is_some() {
-            metrics.storage_index_hits = metrics.storage_index_hits.saturating_add(1);
-            return result;
+        if let Some(cached) = result {
+            let matched_fingerprint = cached.fingerprint.as_ref().is_some_and(|fingerprint| {
+                if metadata.is_dir()
+                    && StoragePathFingerprint::encoded_version(fingerprint)
+                        != Some(STORAGE_PATH_FINGERPRINT_VERSION)
+                {
+                    return false;
+                }
+                let current = if metadata.is_dir() {
+                    let directory = StorageDirectoryFingerprint::for_path(
+                        path,
+                        cached.size.allocated_bytes,
+                        !cached.size.truncated,
+                        self.last_event_id_for_path(&path_display),
+                    );
+                    StoragePathFingerprint::from_metadata_with_directory(metadata, Some(directory))
+                } else {
+                    StoragePathFingerprint::from_metadata(metadata)
+                };
+                current.encode() == *fingerprint
+            });
+            if matched_fingerprint {
+                metrics.storage_index_hits = metrics.storage_index_hits.saturating_add(1);
+                return Some(cached.size);
+            }
+            if metadata.is_dir() {
+                metrics.storage_index_misses = metrics.storage_index_misses.saturating_add(1);
+                return None;
+            }
         }
         let device = metadata.dev() as i64;
         let inode = metadata.ino() as i64;
@@ -1236,7 +1287,14 @@ impl StorageSizeIndex {
                    AND modified_millis = ?4
                    AND changed_millis = ?5
                    AND kind = ?6",
-                params![path, device, inode, modified_millis, changed_millis, kind],
+                params![
+                    path_display,
+                    device,
+                    inode,
+                    modified_millis,
+                    changed_millis,
+                    kind
+                ],
                 size_walk_result_from_sql,
             )
             .ok();
@@ -1263,7 +1321,16 @@ impl StorageSizeIndex {
             return;
         };
         let path = path.display().to_string();
-        let fingerprint = StoragePathFingerprint::from_metadata(metadata).encode();
+        let directory = metadata.is_dir().then(|| {
+            StorageDirectoryFingerprint::for_path(
+                Path::new(&path),
+                size.allocated_bytes,
+                !size.truncated,
+                self.last_event_id_for_path(&path),
+            )
+        });
+        let fingerprint =
+            StoragePathFingerprint::from_metadata_with_directory(metadata, directory).encode();
         let device = metadata.dev() as i64;
         let inode = metadata.ino() as i64;
         let modified_millis = unix_metadata_millis(metadata.mtime(), metadata.mtime_nsec());
@@ -1308,11 +1375,16 @@ impl StorageSizeIndex {
         };
         let Ok(mut upsert) = connection.prepare(
             "INSERT INTO storage_dirty_path (
-                path, source, flags, first_seen_millis, last_seen_millis, event_count, status
-             ) VALUES (?1, ?2, ?3, ?4, ?4, 1, 'dirty')
+                path, source, flags, last_event_id, first_seen_millis, last_seen_millis,
+                event_count, status
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, 1, 'dirty')
              ON CONFLICT(path) DO UPDATE SET
                 source = excluded.source,
                 flags = storage_dirty_path.flags | excluded.flags,
+                last_event_id = MAX(
+                    COALESCE(storage_dirty_path.last_event_id, 0),
+                    COALESCE(excluded.last_event_id, 0)
+                ),
                 last_seen_millis = MAX(storage_dirty_path.last_seen_millis, excluded.last_seen_millis),
                 event_count = storage_dirty_path.event_count + 1,
                 status = 'dirty',
@@ -1350,6 +1422,9 @@ impl StorageSizeIndex {
                     path,
                     source,
                     flags,
+                    record
+                        .event_id
+                        .map(|value| value.min(i64::MAX as u64) as i64),
                     event_millis.min(i64::MAX as u64) as i64,
                 ])
                 .unwrap_or(0)
@@ -1583,6 +1658,23 @@ impl StorageSizeIndex {
             )
             .ok()
             .flatten()
+    }
+
+    fn last_event_id_for_path(&self, path: &str) -> u64 {
+        let Some(connection) = self.connection.as_ref() else {
+            return 0;
+        };
+        let child_prefix = format!("{}/%", escape_like_pattern(path));
+        connection
+            .query_row(
+                "SELECT COALESCE(MAX(last_event_id), 0)
+                 FROM storage_dirty_path
+                 WHERE path = ?1 OR path LIKE ?2 ESCAPE '\\'",
+                params![path, child_prefix],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|value| value.max(0) as u64)
+            .unwrap_or_default()
     }
 
     /// Buffer one indexed row; rows are written in chunked transactions by
@@ -4540,6 +4632,13 @@ fn size_walk_result_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<SizeWa
         has_hardlinks: false,
         sparse_or_shared: allocated_bytes > 0 && allocated_bytes < size_bytes,
         cloud_placeholder: size_bytes > 0 && allocated_bytes == 0,
+    })
+}
+
+fn size_walk_cache_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<StorageCachedSizeRow> {
+    Ok(StorageCachedSizeRow {
+        size: size_walk_result_from_sql(row)?,
+        fingerprint: row.get(4)?,
     })
 }
 

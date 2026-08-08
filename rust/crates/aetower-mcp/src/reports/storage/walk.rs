@@ -508,7 +508,7 @@ fn indexed_row_for_path(
         modified_millis,
         changed_millis,
         accessed_millis,
-        birth_millis: metadata.created().ok().and_then(system_time_millis),
+        birth_millis: metadata_birth_millis(metadata),
         is_directory: metadata.is_dir(),
         entries,
         truncated,
