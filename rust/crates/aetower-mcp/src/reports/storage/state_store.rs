@@ -349,6 +349,19 @@ pub(super) struct StorageTopOffenderRow {
 }
 
 const STORAGE_INDEX_STALE_EVICTION_MAX_PASSES: usize = 128;
+const STORAGE_DIRTY_QUEUE_CANDIDATE_CAP: usize = 8192;
+const STORAGE_DIRTY_QUEUE_BACKPRESSURE_MAX_ROWS: u64 = 12_000;
+const STORAGE_DIRTY_QUEUE_BACKPRESSURE_ROOT_CAP: usize = 128;
+const STORAGE_DIRTY_QUEUE_NOISY_EVENT_COUNT: u64 = 8;
+const STORAGE_DIRTY_QUEUE_NOISY_WINDOW_MILLIS: u64 = 30_000;
+const STORAGE_DIRTY_QUEUE_DEBOUNCE_MILLIS: u64 = 2_000;
+
+#[derive(Clone, Debug)]
+struct StorageDirtyPathPolicyRecord {
+    record: StorageDirtyPathRecord,
+    priority_score: f64,
+    debounced: bool,
+}
 
 pub(super) struct StorageSizeIndex {
     connection: Option<Connection>,
@@ -1510,10 +1523,11 @@ impl StorageSizeIndex {
             if storage_event_flags_indicate_unknown_gap(flags) {
                 collect_unknown_gap_roots_for_event_path(path, roots, &mut unknown_gap_roots);
             }
+            let dirty_path = self.coalesced_dirty_queue_path(path, roots);
             let event_millis = record.timestamp_millis.unwrap_or(now_millis);
             if upsert
                 .execute(params![
-                    path,
+                    &dirty_path,
                     source,
                     flags.min(i64::MAX as u64) as i64,
                     record
@@ -1539,6 +1553,7 @@ impl StorageSizeIndex {
         if inserted > 0 {
             let detail = format!("ingested {inserted} filesystem event paths");
             self.update_event_cursor(cursor_source, latest_event_id, now_millis, "ready", &detail);
+            self.apply_dirty_queue_backpressure(roots, now_millis, cursor_source, latest_event_id);
             super::report::invalidate_index_report_sections_memo();
         }
         inserted
@@ -1549,25 +1564,49 @@ impl StorageSizeIndex {
         roots: &[PathBuf],
         limit: usize,
     ) -> Vec<StorageDirtyPathRecord> {
+        self.load_dirty_path_records_with_policy(roots, limit, storage_now_millis())
+    }
+
+    #[cfg(test)]
+    pub(super) fn load_dirty_path_records_for_test(
+        &self,
+        roots: &[PathBuf],
+        limit: usize,
+        now_millis: u64,
+    ) -> Vec<StorageDirtyPathRecord> {
+        self.load_dirty_path_records_with_policy(roots, limit, now_millis)
+    }
+
+    fn load_dirty_path_records_with_policy(
+        &self,
+        roots: &[PathBuf],
+        limit: usize,
+        now_millis: u64,
+    ) -> Vec<StorageDirtyPathRecord> {
         let Some(connection) = self.connection.as_ref() else {
             return Vec::new();
         };
-        let mut records = Vec::new();
+        let limit = limit.clamp(1, 4096);
         let Ok(mut statement) = connection.prepare(
             "SELECT path, source, flags, first_seen_millis, last_seen_millis, event_count
              FROM storage_dirty_path
              WHERE status = 'dirty'
-             ORDER BY last_seen_millis DESC, path ASC
+             ORDER BY first_seen_millis ASC, last_seen_millis DESC, path ASC
              LIMIT ?1",
         ) else {
             return Vec::new();
         };
         let Ok(rows) = statement.query_map(
-            params![limit.saturating_mul(4).clamp(1, 4096) as i64],
+            params![
+                limit
+                    .saturating_mul(16)
+                    .clamp(1, STORAGE_DIRTY_QUEUE_CANDIDATE_CAP) as i64
+            ],
             dirty_path_record_from_sql,
         ) else {
             return Vec::new();
         };
+        let mut candidates = Vec::new();
         for record in rows.flatten() {
             if !roots.is_empty()
                 && !roots
@@ -1576,12 +1615,44 @@ impl StorageSizeIndex {
             {
                 continue;
             }
+            candidates.push(self.score_dirty_path_record(record, roots, now_millis));
+            if candidates.len() >= STORAGE_DIRTY_QUEUE_CANDIDATE_CAP {
+                break;
+            }
+        }
+        candidates.sort_by(|left, right| {
+            left.debounced
+                .cmp(&right.debounced)
+                .then_with(|| {
+                    right
+                        .priority_score
+                        .partial_cmp(&left.priority_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| {
+                    left.record
+                        .first_seen_millis
+                        .cmp(&right.record.first_seen_millis)
+                })
+                .then_with(|| {
+                    right
+                        .record
+                        .last_seen_millis
+                        .cmp(&left.record.last_seen_millis)
+                })
+                .then_with(|| left.record.path.cmp(&right.record.path))
+        });
+        let mut records = Vec::new();
+        for candidate in candidates {
+            if candidate.debounced && records.len() >= limit {
+                break;
+            }
             if records.iter().any(|existing: &StorageDirtyPathRecord| {
-                path_is_under_root(&record.path, Path::new(&existing.path))
+                path_is_under_root(&candidate.record.path, Path::new(&existing.path))
             }) {
                 continue;
             }
-            records.push(record);
+            records.push(candidate.record);
             if records.len() >= limit {
                 break;
             }
@@ -1701,6 +1772,164 @@ impl StorageSizeIndex {
                 child_prefix,
             ],
         );
+    }
+
+    fn coalesced_dirty_queue_path(&self, path: &str, roots: &[PathBuf]) -> String {
+        let Some(connection) = self.connection.as_ref() else {
+            return path.to_owned();
+        };
+        nearest_indexed_dirty_queue_ancestor(connection, path, roots)
+            .unwrap_or_else(|| path.to_owned())
+    }
+
+    fn score_dirty_path_record(
+        &self,
+        record: StorageDirtyPathRecord,
+        roots: &[PathBuf],
+        now_millis: u64,
+    ) -> StorageDirtyPathPolicyRecord {
+        let Some(connection) = self.connection.as_ref() else {
+            return StorageDirtyPathPolicyRecord {
+                debounced: dirty_path_record_is_debounced(&record, now_millis),
+                priority_score: 0.0,
+                record,
+            };
+        };
+        let domain_kind = dirty_queue_domain_kind(connection, &record.path);
+        let previous_bytes = dirty_queue_previous_physical_bytes(connection, &record.path);
+        let visible_root_score = if roots.is_empty()
+            || roots
+                .iter()
+                .any(|root| path_is_under_root(&record.path, root))
+        {
+            200.0
+        } else {
+            0.0
+        };
+        let age_millis = now_millis.saturating_sub(record.first_seen_millis);
+        let age_score = (age_millis as f64 / 60_000.0).min(240.0);
+        let event_pressure_score = record.event_count.min(64) as f64 * 2.0;
+        let size_score = dirty_queue_size_score(previous_bytes);
+        let domain_score = dirty_queue_domain_score(&record.path, domain_kind.as_deref());
+        StorageDirtyPathPolicyRecord {
+            debounced: dirty_path_record_is_debounced(&record, now_millis),
+            priority_score: domain_score
+                + visible_root_score
+                + size_score
+                + age_score
+                + event_pressure_score,
+            record,
+        }
+    }
+
+    fn apply_dirty_queue_backpressure(
+        &self,
+        roots: &[PathBuf],
+        now_millis: u64,
+        source: &str,
+        latest_event_id: Option<u64>,
+    ) {
+        self.apply_dirty_queue_backpressure_with_limit(
+            roots,
+            now_millis,
+            source,
+            latest_event_id,
+            STORAGE_DIRTY_QUEUE_BACKPRESSURE_MAX_ROWS,
+        );
+    }
+
+    #[cfg(test)]
+    pub(super) fn apply_dirty_queue_backpressure_for_test(
+        &self,
+        roots: &[PathBuf],
+        now_millis: u64,
+        source: &str,
+        latest_event_id: Option<u64>,
+        max_dirty_rows: u64,
+    ) {
+        self.apply_dirty_queue_backpressure_with_limit(
+            roots,
+            now_millis,
+            source,
+            latest_event_id,
+            max_dirty_rows,
+        );
+    }
+
+    fn apply_dirty_queue_backpressure_with_limit(
+        &self,
+        roots: &[PathBuf],
+        now_millis: u64,
+        source: &str,
+        latest_event_id: Option<u64>,
+        max_dirty_rows: u64,
+    ) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        let dirty_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM storage_dirty_path WHERE status = 'dirty'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as u64)
+            .unwrap_or_default();
+        if dirty_count <= max_dirty_rows {
+            return;
+        }
+        let mut promoted_roots = Vec::new();
+        for root in roots.iter().take(STORAGE_DIRTY_QUEUE_BACKPRESSURE_ROOT_CAP) {
+            let root = root.display().to_string();
+            if root.trim().is_empty() || !dirty_queue_root_has_dirty_descendant(connection, &root) {
+                continue;
+            }
+            promoted_roots.push(root);
+        }
+        if promoted_roots.is_empty() {
+            return;
+        }
+        for root in promoted_roots {
+            let child_prefix = format!("{root}/");
+            let _ = connection.execute(
+                "INSERT INTO storage_dirty_path (
+                    path, source, flags, last_event_id, first_seen_millis, last_seen_millis,
+                    event_count, status, last_error
+                 ) VALUES (?1, ?2, 0, ?3, ?4, ?4, 1, 'dirty', 'backpressure_root')
+                 ON CONFLICT(path) DO UPDATE SET
+                    source = excluded.source,
+                    last_event_id = CASE
+                        WHEN excluded.last_event_id IS NULL THEN storage_dirty_path.last_event_id
+                        WHEN storage_dirty_path.last_event_id IS NULL THEN excluded.last_event_id
+                        ELSE MAX(storage_dirty_path.last_event_id, excluded.last_event_id)
+                    END,
+                    last_seen_millis = MAX(storage_dirty_path.last_seen_millis, excluded.last_seen_millis),
+                    event_count = storage_dirty_path.event_count + 1,
+                    status = 'dirty',
+                    last_error = 'backpressure_root'",
+                params![
+                    &root,
+                    source,
+                    latest_event_id.map(|value| value.min(i64::MAX as u64) as i64),
+                    now_millis.min(i64::MAX as u64) as i64,
+                ],
+            );
+            let _ = connection.execute(
+                "UPDATE storage_dirty_path
+                 SET status = 'clean',
+                     last_error = 'backpressure_coalesced_to_root',
+                     last_seen_millis = MAX(last_seen_millis, ?2)
+                 WHERE status = 'dirty'
+                   AND path <> ?1
+                   AND substr(path, 1, ?3) = ?4",
+                params![
+                    &root,
+                    now_millis.min(i64::MAX as u64) as i64,
+                    child_prefix.len().min(i64::MAX as usize) as i64,
+                    child_prefix,
+                ],
+            );
+        }
     }
 
     fn mark_unknown_gap_roots(
@@ -4798,6 +5027,154 @@ fn collect_unknown_gap_roots_for_event_path(
             unknown_gap_roots.insert(root_display);
         }
     }
+}
+
+fn nearest_indexed_dirty_queue_ancestor(
+    connection: &Connection,
+    path: &str,
+    roots: &[PathBuf],
+) -> Option<String> {
+    dirty_queue_ancestor_candidates(path, roots)
+        .into_iter()
+        .find(|candidate| dirty_queue_has_indexed_directory(connection, candidate))
+}
+
+fn dirty_queue_ancestor_candidates(path: &str, roots: &[PathBuf]) -> Vec<String> {
+    let path = Path::new(path);
+    let mut candidates = Vec::new();
+    for ancestor in path.ancestors() {
+        let candidate = ancestor.display().to_string();
+        if candidate.is_empty() || candidate == "." || candidate == "/" {
+            continue;
+        }
+        if !roots.is_empty()
+            && !roots
+                .iter()
+                .any(|root| path_is_under_root(&candidate, root))
+        {
+            continue;
+        }
+        candidates.push(candidate);
+    }
+    candidates
+}
+
+fn dirty_queue_has_indexed_directory(connection: &Connection, path: &str) -> bool {
+    connection
+        .query_row(
+            "SELECT 1
+             WHERE EXISTS (
+                SELECT 1 FROM storage_directory_rollup WHERE path = ?1
+             )
+             OR EXISTS (
+                SELECT 1 FROM storage_path WHERE path = ?1 AND path_kind = 'directory'
+             )
+             OR EXISTS (
+                SELECT 1 FROM storage_size_index
+                WHERE path = ?1 AND kind <> 'indexed-file'
+             )",
+            params![path],
+            |row| row.get::<_, i64>(0),
+        )
+        .is_ok()
+}
+
+fn dirty_path_record_is_debounced(record: &StorageDirtyPathRecord, now_millis: u64) -> bool {
+    record.event_count >= STORAGE_DIRTY_QUEUE_NOISY_EVENT_COUNT
+        && record
+            .last_seen_millis
+            .saturating_sub(record.first_seen_millis)
+            <= STORAGE_DIRTY_QUEUE_NOISY_WINDOW_MILLIS
+        && now_millis.saturating_sub(record.last_seen_millis) < STORAGE_DIRTY_QUEUE_DEBOUNCE_MILLIS
+}
+
+fn dirty_queue_domain_kind(connection: &Connection, path: &str) -> Option<String> {
+    connection
+        .query_row(
+            "SELECT domain_kind
+             FROM storage_domain
+             WHERE ?1 = path_prefix
+                OR substr(?1, 1, length(path_prefix) + 1) = path_prefix || '/'
+             ORDER BY length(path_prefix) DESC
+             LIMIT 1",
+            params![path],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+}
+
+fn dirty_queue_previous_physical_bytes(connection: &Connection, path: &str) -> u64 {
+    connection
+        .query_row(
+            "SELECT MAX(physical_bytes)
+             FROM (
+                SELECT physical_bytes FROM storage_directory_rollup WHERE path = ?1
+                UNION ALL
+                SELECT physical_bytes FROM storage_path WHERE path = ?1
+                UNION ALL
+                SELECT allocated_bytes AS physical_bytes FROM storage_size_index WHERE path = ?1
+             )",
+            params![path],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        .max(0) as u64
+}
+
+fn dirty_queue_size_score(bytes: u64) -> f64 {
+    if bytes == 0 {
+        return 0.0;
+    }
+    (bytes as f64).log2().min(46.0) * 8.0
+}
+
+fn dirty_queue_domain_score(path: &str, domain_kind: Option<&str>) -> f64 {
+    let lower = path.to_ascii_lowercase();
+    if lower.contains("/library/developer/")
+        || lower.contains("/deriveddata")
+        || lower.contains("/devicesupport")
+        || lower.contains("/.colima/")
+        || lower.contains("/docker")
+        || lower.contains("/target/")
+        || lower.ends_with("/target")
+        || lower.contains("/.build/")
+        || lower.contains("/.cargo/")
+        || lower.contains("/.swiftpm/")
+        || lower.contains("/.codex/")
+        || lower.contains("/.claude/")
+    {
+        return 520.0;
+    }
+    match domain_kind {
+        Some("developer") | Some("container") => 460.0,
+        Some("downloads") => 260.0,
+        Some("media") => 180.0,
+        Some("source_root") => 120.0,
+        Some(_) => 100.0,
+        None => 0.0,
+    }
+}
+
+fn dirty_queue_root_has_dirty_descendant(connection: &Connection, root: &str) -> bool {
+    let child_prefix = format!("{root}/");
+    connection
+        .query_row(
+            "SELECT 1
+             FROM storage_dirty_path
+             WHERE status = 'dirty'
+               AND path <> ?1
+               AND substr(path, 1, ?2) = ?3
+             LIMIT 1",
+            params![
+                root,
+                child_prefix.len().min(i64::MAX as usize) as i64,
+                child_prefix
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .is_ok()
 }
 
 fn indexed_file_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<StorageIndexedFileRow> {

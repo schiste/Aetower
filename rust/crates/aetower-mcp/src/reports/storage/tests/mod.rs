@@ -6191,6 +6191,256 @@ fn storage_dirty_queue_records_and_clears_subtree_events() {
     let _ = fs::remove_dir_all(root);
 }
 
+fn store_indexed_directory_for_dirty_queue(
+    storage_index: &StorageSizeIndex,
+    directory: &Path,
+    physical_bytes: u64,
+) {
+    fs::create_dir_all(directory).expect("create indexed dirty queue directory");
+    let metadata = fs::symlink_metadata(directory).expect("indexed dirty queue metadata");
+    let mut metrics = StorageScanMetrics::default();
+    let size = SizeWalkResult {
+        bytes: physical_bytes,
+        allocated_bytes: physical_bytes,
+        entries: 1,
+        truncated: false,
+        max_hardlink_count: 1,
+        has_hardlinks: false,
+        sparse_or_shared: false,
+        cloud_placeholder: false,
+    };
+    storage_index.store(
+        directory,
+        &metadata,
+        "large-directory",
+        None,
+        &size,
+        storage_now_millis(),
+        &mut metrics,
+    );
+}
+
+#[test]
+fn storage_dirty_queue_coalesces_to_nearest_indexed_ancestor() {
+    let root = test_root("dirty-queue-coalesces-indexed-ancestor");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let indexed = watched.join("cache");
+    let nested = indexed.join("nested").join("changed.bin");
+    fs::create_dir_all(nested.parent().unwrap()).expect("create watched fixture");
+    fs::write(&nested, b"changed").expect("write changed fixture");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    store_indexed_directory_for_dirty_queue(&storage_index, &indexed, MIN_ITEM_BYTES + 1024);
+    let now_millis = storage_now_millis();
+    let records = vec![StorageFilesystemEventRecord {
+        timestamp_millis: Some(now_millis),
+        path: Some(nested.display().to_string()),
+        event_id: Some(61),
+        flags: Some(0),
+        source: Some("test-fsevents".to_owned()),
+    }];
+
+    let summary = storage_index.record_filesystem_events(
+        &records,
+        std::slice::from_ref(&watched),
+        now_millis,
+    );
+    let dirty_paths = storage_index.load_dirty_path_strings(std::slice::from_ref(&watched), 16);
+
+    assert_eq!(summary.dirty_path_count, 1);
+    assert_eq!(dirty_paths, vec![indexed.display().to_string()]);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_dirty_queue_prioritizes_domains_size_and_age() {
+    let root = test_root("dirty-queue-prioritizes");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let developer = watched
+        .join("Library")
+        .join("Developer")
+        .join("Xcode")
+        .join("DerivedData")
+        .join("App");
+    let large = watched.join("generic-large");
+    let old = watched.join("old-small");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    store_indexed_directory_for_dirty_queue(&storage_index, &developer, 1_000_000_000);
+    store_indexed_directory_for_dirty_queue(&storage_index, &large, 32_000_000_000);
+    store_indexed_directory_for_dirty_queue(&storage_index, &old, 1_000_000);
+    let now_millis = storage_now_millis();
+    let records = vec![
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(10 * 60 * 1000)),
+            path: Some(old.join("changed.bin").display().to_string()),
+            event_id: Some(71),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(10_000)),
+            path: Some(large.join("changed.bin").display().to_string()),
+            event_id: Some(72),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(1_000)),
+            path: Some(developer.join("changed.bin").display().to_string()),
+            event_id: Some(73),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+    ];
+
+    storage_index.record_filesystem_events(&records, std::slice::from_ref(&watched), now_millis);
+    let dirty_paths = storage_index
+        .load_dirty_path_records_for_test(std::slice::from_ref(&watched), 3, now_millis)
+        .into_iter()
+        .map(|record| record.path)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        dirty_paths,
+        vec![
+            developer.display().to_string(),
+            large.display().to_string(),
+            old.display().to_string()
+        ]
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_dirty_queue_prioritizes_oldest_when_other_signals_match() {
+    let root = test_root("dirty-queue-prioritizes-oldest");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let older = watched.join("generic-older");
+    let newer = watched.join("generic-newer");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    store_indexed_directory_for_dirty_queue(&storage_index, &older, 4_000_000);
+    store_indexed_directory_for_dirty_queue(&storage_index, &newer, 4_000_000);
+    let now_millis = storage_now_millis();
+    let records = vec![
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(60 * 60 * 1000)),
+            path: Some(older.join("changed.bin").display().to_string()),
+            event_id: Some(76),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(1_000)),
+            path: Some(newer.join("changed.bin").display().to_string()),
+            event_id: Some(77),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+    ];
+
+    storage_index.record_filesystem_events(&records, std::slice::from_ref(&watched), now_millis);
+    let dirty_paths = storage_index
+        .load_dirty_path_records_for_test(std::slice::from_ref(&watched), 2, now_millis)
+        .into_iter()
+        .map(|record| record.path)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        dirty_paths,
+        vec![older.display().to_string(), newer.display().to_string()]
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_dirty_queue_debounces_noisy_paths_behind_quiet_work() {
+    let root = test_root("dirty-queue-debounces-noisy");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let noisy = watched.join("noisy-cache");
+    let quiet = watched.join("quiet-cache");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    store_indexed_directory_for_dirty_queue(&storage_index, &noisy, 64_000_000_000);
+    store_indexed_directory_for_dirty_queue(&storage_index, &quiet, 1_000_000);
+    let now_millis = storage_now_millis();
+    let mut records = Vec::new();
+    for index in 0..8 {
+        records.push(StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(1_000).saturating_add(index)),
+            path: Some(
+                noisy
+                    .join(format!("changed-{index}.bin"))
+                    .display()
+                    .to_string(),
+            ),
+            event_id: Some(81 + index),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        });
+    }
+    records.push(StorageFilesystemEventRecord {
+        timestamp_millis: Some(now_millis.saturating_sub(500)),
+        path: Some(quiet.join("changed.bin").display().to_string()),
+        event_id: Some(100),
+        flags: Some(0),
+        source: Some("test-fsevents".to_owned()),
+    });
+
+    storage_index.record_filesystem_events(&records, std::slice::from_ref(&watched), now_millis);
+    let dirty_paths = storage_index
+        .load_dirty_path_records_for_test(std::slice::from_ref(&watched), 1, now_millis)
+        .into_iter()
+        .map(|record| record.path)
+        .collect::<Vec<_>>();
+
+    assert_eq!(dirty_paths, vec![quiet.display().to_string()]);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_dirty_queue_backpressure_collapses_descendants_to_root() {
+    let root = test_root("dirty-queue-backpressure");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    fs::create_dir_all(&watched).expect("create watched fixture");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let records = (0..5)
+        .map(|index| StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(index)),
+            path: Some(
+                watched
+                    .join(format!("changed-{index}.bin"))
+                    .display()
+                    .to_string(),
+            ),
+            event_id: Some(111 + index),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        })
+        .collect::<Vec<_>>();
+
+    storage_index.record_filesystem_events(&records, std::slice::from_ref(&watched), now_millis);
+    storage_index.apply_dirty_queue_backpressure_for_test(
+        std::slice::from_ref(&watched),
+        now_millis + 1,
+        "test-fsevents",
+        Some(115),
+        2,
+    );
+    let dirty_paths = storage_index.load_dirty_path_strings(std::slice::from_ref(&watched), 16);
+
+    assert_eq!(dirty_paths, vec![watched.display().to_string()]);
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn storage_dirty_queue_marks_unknown_gap_for_dropped_events() {
     let root = test_root("dirty-queue-unknown-gap");
