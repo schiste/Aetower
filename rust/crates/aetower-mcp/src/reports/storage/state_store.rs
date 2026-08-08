@@ -35,7 +35,17 @@ fn storage_index_directory() -> Option<PathBuf> {
 }
 
 #[cfg(test)]
+thread_local! {
+    static STORAGE_INDEX_TEST_DIRECTORY_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
 fn storage_index_directory() -> Option<PathBuf> {
+    if let Some(directory) =
+        STORAGE_INDEX_TEST_DIRECTORY_OVERRIDE.with(|override_dir| override_dir.borrow().clone())
+    {
+        return Some(directory);
+    }
     static TEST_DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
     Some(
         TEST_DIRECTORY
@@ -45,6 +55,13 @@ fn storage_index_directory() -> Option<PathBuf> {
             })
             .clone(),
     )
+}
+
+#[cfg(test)]
+pub(super) fn replace_storage_index_directory_for_test(
+    directory: Option<PathBuf>,
+) -> Option<PathBuf> {
+    STORAGE_INDEX_TEST_DIRECTORY_OVERRIDE.with(|override_dir| override_dir.replace(directory))
 }
 
 pub(super) struct StorageScanStateStore;
@@ -231,6 +248,49 @@ pub(super) struct StorageIndexedFileRow {
     pub(super) last_scan_millis: u64,
 }
 
+#[derive(Clone, Debug)]
+struct MaterializedStoragePathRow {
+    path: String,
+    parent_path: String,
+    name: String,
+    device: i64,
+    inode: i64,
+    file_id: String,
+    source_root: String,
+    repo_root: Option<String>,
+    path_kind: String,
+    artifact_kind: String,
+    storage_role: String,
+    safety: String,
+    cleanup_tier: String,
+    logical_bytes: u64,
+    physical_bytes: u64,
+    modified_millis: Option<u64>,
+    changed_millis: Option<u64>,
+    accessed_millis: Option<u64>,
+    birth_millis: Option<u64>,
+    entries: u64,
+    truncated: bool,
+    recommendation_score: f64,
+    last_measured_millis: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct MaterializedStorageDomainAggregate {
+    item_count: u64,
+    directory_count: u64,
+    file_count: u64,
+    logical_bytes: u64,
+    physical_bytes: u64,
+    safely_reclaimable_now_bytes: u64,
+    maybe_reclaimable_bytes: u64,
+    review_required_bytes: u64,
+    dangerous_user_data_bytes: u64,
+    started_at_millis: u64,
+    completed_at_millis: u64,
+    partial: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct StorageItemRowsPage {
     pub(super) rows: Vec<StorageIndexedFileRow>,
@@ -376,6 +436,8 @@ impl StorageSizeIndex {
         // silently dropping rows. The scan-job state store deliberately keeps
         // the default fail-fast behavior so cancel/pause stay responsive.
         let _ = connection.busy_timeout(Duration::from_millis(2_000));
+        #[cfg(not(test))]
+        let _ = Self::backfill_materialized_storage_index(&connection);
         // Best effort (a concurrent writer may hold the lock; the next open
         // retries): without `sqlite_stat1` the planner picks full-scan and
         // per-row rowid-seek plans for every report aggregation query, which
@@ -795,7 +857,17 @@ impl StorageSizeIndex {
         Self::ensure_storage_file_index_page_indexes(connection)?;
         Self::ensure_storage_growth_delta_indexes(connection)?;
         Self::ensure_storage_growth_rollups(connection)?;
+        Self::ensure_materialized_storage_index_schema(connection)?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn backfill_materialized_storage_index_now(&self) -> Result<(), String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        Self::backfill_materialized_storage_index(connection)
+            .map_err(|error| format!("materialized_backfill:{error}"))
     }
 
     /// Additive DDL only (no `schema_version` bump): index-generation lookups
@@ -857,9 +929,170 @@ impl StorageSizeIndex {
                     COALESCE(SUM(CASE WHEN delta_bytes < 0 THEN delta_bytes ELSE 0 END), 0),
                     COUNT(*), COALESCE(MAX(ABS(delta_bytes)), 0), COALESCE(MAX(scan_millis), 0)
              FROM storage_growth_delta
-             GROUP BY (scan_millis / {DAY_MILLIS}) * {DAY_MILLIS}, source_root,
+            GROUP BY (scan_millis / {DAY_MILLIS}) * {DAY_MILLIS}, source_root,
                       COALESCE(repo_root, ''), kind, cleanup_tier;",
         ))
+    }
+
+    /// Additive normalized materialized-view schema. The legacy
+    /// `storage_file_index` table remains the compatibility write/read source
+    /// while these tables become the future query surface.
+    fn ensure_materialized_storage_index_schema(connection: &Connection) -> rusqlite::Result<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS storage_path (
+                path TEXT PRIMARY KEY,
+                parent_path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                device INTEGER NOT NULL,
+                inode INTEGER NOT NULL,
+                file_id TEXT NOT NULL,
+                source_root TEXT NOT NULL,
+                repo_root TEXT,
+                path_kind TEXT NOT NULL,
+                artifact_kind TEXT NOT NULL,
+                storage_role TEXT NOT NULL,
+                safety TEXT NOT NULL,
+                cleanup_tier TEXT NOT NULL,
+                logical_bytes INTEGER NOT NULL,
+                physical_bytes INTEGER NOT NULL,
+                modified_millis INTEGER,
+                changed_millis INTEGER,
+                accessed_millis INTEGER,
+                birth_millis INTEGER,
+                entries INTEGER NOT NULL,
+                truncated INTEGER NOT NULL,
+                recommendation_score REAL NOT NULL DEFAULT 0,
+                last_measured_millis INTEGER NOT NULL,
+                last_event_id INTEGER,
+                confidence TEXT NOT NULL DEFAULT 'indexed',
+                stale INTEGER NOT NULL DEFAULT 0,
+                partial INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'storage_file_index'
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_path_source
+                ON storage_path(source_root, physical_bytes DESC);
+             CREATE INDEX IF NOT EXISTS idx_storage_path_parent
+                ON storage_path(parent_path, physical_bytes DESC);
+             CREATE INDEX IF NOT EXISTS idx_storage_path_repo
+                ON storage_path(repo_root, physical_bytes DESC);
+             CREATE INDEX IF NOT EXISTS idx_storage_path_rank
+                ON storage_path(recommendation_score DESC, physical_bytes DESC, path);
+             CREATE INDEX IF NOT EXISTS idx_storage_path_measured
+                ON storage_path(last_measured_millis DESC);
+             CREATE TABLE IF NOT EXISTS storage_directory_rollup (
+                path TEXT PRIMARY KEY,
+                source_root TEXT NOT NULL,
+                repo_root TEXT,
+                logical_bytes INTEGER NOT NULL,
+                physical_bytes INTEGER NOT NULL,
+                child_count INTEGER NOT NULL,
+                recursive_entry_count INTEGER NOT NULL,
+                truncated INTEGER NOT NULL,
+                last_measured_millis INTEGER NOT NULL,
+                confidence TEXT NOT NULL DEFAULT 'indexed',
+                partial INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'storage_file_index'
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_directory_rollup_source
+                ON storage_directory_rollup(source_root, physical_bytes DESC);
+             CREATE INDEX IF NOT EXISTS idx_storage_directory_rollup_repo
+                ON storage_directory_rollup(repo_root, physical_bytes DESC);
+             CREATE TABLE IF NOT EXISTS storage_domain (
+                domain_id TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                source_root TEXT NOT NULL,
+                domain_kind TEXT NOT NULL,
+                path_prefix TEXT NOT NULL,
+                item_count INTEGER NOT NULL,
+                directory_count INTEGER NOT NULL,
+                file_count INTEGER NOT NULL,
+                logical_bytes INTEGER NOT NULL,
+                physical_bytes INTEGER NOT NULL,
+                safely_reclaimable_now_bytes INTEGER NOT NULL,
+                maybe_reclaimable_bytes INTEGER NOT NULL,
+                review_required_bytes INTEGER NOT NULL,
+                dangerous_user_data_bytes INTEGER NOT NULL,
+                last_measured_millis INTEGER NOT NULL,
+                confidence TEXT NOT NULL DEFAULT 'indexed',
+                source TEXT NOT NULL DEFAULT 'storage_file_index'
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_domain_source
+                ON storage_domain(source_root);
+             CREATE INDEX IF NOT EXISTS idx_storage_domain_kind
+                ON storage_domain(domain_kind, physical_bytes DESC);
+             CREATE TABLE IF NOT EXISTS storage_measurement_job (
+                job_id TEXT PRIMARY KEY,
+                job_kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                source TEXT NOT NULL,
+                root_key TEXT NOT NULL,
+                roots_json TEXT NOT NULL,
+                dirty_paths_json TEXT NOT NULL DEFAULT '[]',
+                started_at_millis INTEGER NOT NULL,
+                updated_at_millis INTEGER NOT NULL,
+                completed_at_millis INTEGER,
+                measured_path_count INTEGER NOT NULL,
+                measured_directory_count INTEGER NOT NULL,
+                measured_file_count INTEGER NOT NULL,
+                measured_bytes INTEGER NOT NULL,
+                partial INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_measurement_job_root
+                ON storage_measurement_job(root_key, updated_at_millis DESC);
+             CREATE INDEX IF NOT EXISTS idx_storage_measurement_job_status
+                ON storage_measurement_job(status, updated_at_millis DESC);",
+        )
+    }
+
+    fn backfill_materialized_storage_index(connection: &Connection) -> rusqlite::Result<()> {
+        let generation = materialized_storage_index_generation(connection)?;
+        let current_generation = connection
+            .query_row(
+                "SELECT value FROM storage_index_meta
+                 WHERE key = 'materialized_storage_index_generation'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok();
+        let legacy_path_count = table_count(connection, "storage_file_index");
+        let materialized_path_count = table_count(connection, "storage_path");
+        if current_generation.as_deref() == Some(generation.as_str())
+            && materialized_path_count == legacy_path_count
+        {
+            return Ok(());
+        }
+        if legacy_path_count > STORAGE_MATERIALIZED_SYNC_BACKFILL_MAX_ROWS {
+            let deferred_generation = connection
+                .query_row(
+                    "SELECT value FROM storage_index_meta
+                     WHERE key = 'materialized_storage_index_deferred_generation'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok();
+            if deferred_generation.as_deref() != Some(generation.as_str()) {
+                record_deferred_materialized_storage_backfill(
+                    connection,
+                    &generation,
+                    legacy_path_count,
+                )?;
+            }
+            return Ok(());
+        }
+
+        let mut statement =
+            connection.prepare("SELECT DISTINCT source_root FROM storage_file_index")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let source_roots = rows.flatten().collect::<BTreeSet<_>>();
+        refresh_materialized_storage_index_for_roots(connection, &source_roots)?;
+        set_materialized_storage_index_generation(connection, &generation)?;
+        connection.execute(
+            "DELETE FROM storage_index_meta
+             WHERE key = 'materialized_storage_index_deferred_generation'",
+            [],
+        )?;
+        Ok(())
     }
 
     /// Run `ANALYZE` once for databases that have never collected planner
@@ -1725,29 +1958,30 @@ impl StorageSizeIndex {
         let Some(connection) = self.connection.as_ref() else {
             return Err(self.status.clone());
         };
+        let mut predicate = "(cleanup_tier <> ''
+                OR (kind = 'large-directory' AND physical_bytes >= ?))
+             AND physical_bytes >= ?"
+            .to_owned();
+        let mut bindings: Vec<rusqlite::types::Value> = vec![
+            (LARGE_DIRECTORY_MIN_BYTES.min(i64::MAX as u64) as i64).into(),
+            (MIN_ITEM_BYTES.min(i64::MAX as u64) as i64).into(),
+        ];
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "path");
         let mut statement = connection
-            .prepare(
+            .prepare(&format!(
                 "SELECT path, device, inode, file_id, source_root, repo_root, kind,
                         storage_role, safety, cleanup_tier, logical_bytes, physical_bytes,
                         modified_millis, changed_millis, accessed_millis, birth_millis,
                         is_directory, entries, truncated, last_scan_millis
                  FROM storage_file_index
-                 WHERE (cleanup_tier <> ''
-                        OR (kind = 'large-directory' AND physical_bytes >= ?1))
-                   AND physical_bytes >= ?2
+                 WHERE {predicate}
                  ORDER BY physical_bytes DESC, path ASC
-                 LIMIT ?3",
-            )
+                 LIMIT ?",
+            ))
             .map_err(|error| error.to_string())?;
+        bindings.push((read_limit.min(i64::MAX as usize) as i64).into());
         let rows = statement
-            .query_map(
-                params![
-                    LARGE_DIRECTORY_MIN_BYTES.min(i64::MAX as u64) as i64,
-                    MIN_ITEM_BYTES.min(i64::MAX as u64) as i64,
-                    read_limit as i64
-                ],
-                indexed_file_row_from_sql,
-            )
+            .query_map(params_from_iter(bindings.iter()), indexed_file_row_from_sql)
             .map_err(|error| error.to_string())?;
         let mut retained = Vec::with_capacity(limit.min(read_limit));
         for row in rows.flatten() {
@@ -1755,11 +1989,9 @@ impl StorageSizeIndex {
                 stale_paths.push(row.path.clone());
                 continue;
             }
-            if roots.is_empty() || roots.iter().any(|root| path_is_under_root(&row.path, root)) {
-                retained.push(row);
-                if retained.len() >= limit {
-                    break;
-                }
+            retained.push(row);
+            if retained.len() >= limit {
+                break;
             }
         }
         Ok(retained)
@@ -3288,7 +3520,439 @@ fn rebuild_storage_index_summaries_and_top_offenders(connection: &Connection) {
         &source_roots,
         storage_now_millis(),
     );
+    let _ = refresh_materialized_storage_index_for_roots(&transaction, &source_roots);
+    if let Ok(generation) = materialized_storage_index_generation(&transaction) {
+        let _ = set_materialized_storage_index_generation(&transaction, &generation);
+    }
     let _ = transaction.commit();
+}
+
+fn materialized_storage_index_generation(connection: &Connection) -> rusqlite::Result<String> {
+    connection.query_row(
+        "SELECT COUNT(*), COALESCE(MAX(last_scan_millis), 0)
+         FROM storage_file_index",
+        [],
+        |row| {
+            let row_count: i64 = row.get(0)?;
+            let max_scan_millis: i64 = row.get(1)?;
+            Ok(format!("{}:{}", row_count.max(0), max_scan_millis.max(0)))
+        },
+    )
+}
+
+fn set_materialized_storage_index_generation(
+    connection: &Connection,
+    generation: &str,
+) -> rusqlite::Result<()> {
+    connection.execute(
+        "INSERT OR REPLACE INTO storage_index_meta (key, value)
+         VALUES ('materialized_storage_index_generation', ?1)",
+        params![generation],
+    )?;
+    Ok(())
+}
+
+fn record_deferred_materialized_storage_backfill(
+    connection: &Connection,
+    generation: &str,
+    legacy_path_count: u64,
+) -> rusqlite::Result<()> {
+    let now_millis = storage_now_millis();
+    connection.execute(
+        "INSERT OR REPLACE INTO storage_measurement_job (
+            job_id, job_kind, status, source, root_key, roots_json, dirty_paths_json,
+            started_at_millis, updated_at_millis, completed_at_millis, measured_path_count,
+            measured_directory_count, measured_file_count, measured_bytes, partial, last_error
+         ) VALUES (
+            'legacy-file-index:deferred-materialized-backfill',
+            'legacy_file_index_backfill',
+            'pending',
+            'storage_file_index',
+            '*',
+            '[]',
+            '[]',
+            ?1,
+            ?1,
+            NULL,
+            0,
+            0,
+            0,
+            0,
+            1,
+            ?2
+         )",
+        params![
+            now_millis.min(i64::MAX as u64) as i64,
+            format!(
+                "deferred_large_legacy_index:{legacy_path_count}:sync_cap:{}",
+                STORAGE_MATERIALIZED_SYNC_BACKFILL_MAX_ROWS
+            ),
+        ],
+    )?;
+    connection.execute(
+        "INSERT OR REPLACE INTO storage_index_meta (key, value)
+         VALUES ('materialized_storage_index_deferred_generation', ?1)",
+        params![generation],
+    )?;
+    Ok(())
+}
+
+fn refresh_materialized_storage_index_for_roots(
+    connection: &Connection,
+    source_roots: &BTreeSet<String>,
+) -> rusqlite::Result<()> {
+    if source_roots.is_empty() {
+        connection.execute("DELETE FROM storage_path", [])?;
+        connection.execute("DELETE FROM storage_directory_rollup", [])?;
+        connection.execute("DELETE FROM storage_domain", [])?;
+        connection.execute(
+            "DELETE FROM storage_measurement_job WHERE source = 'storage_file_index'",
+            [],
+        )?;
+        return Ok(());
+    }
+
+    for source_root in source_roots {
+        let rows = materialized_storage_rows_for_source_root(connection, source_root)?;
+        connection.execute(
+            "DELETE FROM storage_path WHERE source_root = ?1",
+            params![source_root],
+        )?;
+        connection.execute(
+            "DELETE FROM storage_directory_rollup WHERE source_root = ?1",
+            params![source_root],
+        )?;
+        connection.execute(
+            "DELETE FROM storage_domain WHERE source_root = ?1",
+            params![source_root],
+        )?;
+        connection.execute(
+            "DELETE FROM storage_measurement_job
+             WHERE source = 'storage_file_index' AND root_key = ?1",
+            params![source_root],
+        )?;
+        if rows.is_empty() {
+            continue;
+        }
+        write_materialized_storage_rows(connection, &rows)?;
+        refresh_materialized_storage_domain_job_for_root(connection, source_root)?;
+    }
+    Ok(())
+}
+
+fn materialized_storage_rows_for_source_root(
+    connection: &Connection,
+    source_root: &str,
+) -> rusqlite::Result<Vec<MaterializedStoragePathRow>> {
+    let mut statement = connection.prepare(
+        "SELECT path, device, inode, file_id, source_root, repo_root, kind, storage_role,
+                safety, cleanup_tier, logical_bytes, physical_bytes, modified_millis,
+                changed_millis, accessed_millis, birth_millis, is_directory, entries,
+                truncated, last_scan_millis, recommendation_score
+         FROM storage_file_index
+         WHERE source_root = ?1
+         ORDER BY path ASC",
+    )?;
+    let rows = statement.query_map(params![source_root], materialized_storage_path_row_from_sql)?;
+    Ok(rows.flatten().collect())
+}
+
+fn write_materialized_storage_rows(
+    connection: &Connection,
+    rows: &[MaterializedStoragePathRow],
+) -> rusqlite::Result<()> {
+    let mut upsert_path = connection.prepare(
+        "INSERT OR REPLACE INTO storage_path (
+            path, parent_path, name, device, inode, file_id, source_root, repo_root, path_kind,
+            artifact_kind, storage_role, safety, cleanup_tier, logical_bytes, physical_bytes,
+            modified_millis, changed_millis, accessed_millis, birth_millis, entries, truncated,
+            recommendation_score, last_measured_millis, last_event_id, confidence, stale, partial,
+            source
+         ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+            ?19, ?20, ?21, ?22, ?23, NULL, 'indexed', 0, ?24, 'storage_file_index'
+         )",
+    )?;
+    let mut upsert_directory = connection.prepare(
+        "INSERT OR REPLACE INTO storage_directory_rollup (
+            path, source_root, repo_root, logical_bytes, physical_bytes, child_count,
+            recursive_entry_count, truncated, last_measured_millis, confidence, partial, source
+         ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'indexed', ?10, 'storage_file_index'
+         )",
+    )?;
+    let mut delete_directory =
+        connection.prepare("DELETE FROM storage_directory_rollup WHERE path = ?1")?;
+    for row in rows {
+        upsert_path.execute(params![
+            &row.path,
+            &row.parent_path,
+            &row.name,
+            row.device,
+            row.inode,
+            &row.file_id,
+            &row.source_root,
+            row.repo_root.as_deref(),
+            &row.path_kind,
+            &row.artifact_kind,
+            &row.storage_role,
+            &row.safety,
+            &row.cleanup_tier,
+            row.logical_bytes.min(i64::MAX as u64) as i64,
+            row.physical_bytes.min(i64::MAX as u64) as i64,
+            row.modified_millis
+                .map(|value| value.min(i64::MAX as u64) as i64),
+            row.changed_millis
+                .map(|value| value.min(i64::MAX as u64) as i64),
+            row.accessed_millis
+                .map(|value| value.min(i64::MAX as u64) as i64),
+            row.birth_millis
+                .map(|value| value.min(i64::MAX as u64) as i64),
+            row.entries.min(i64::MAX as u64) as i64,
+            if row.truncated { 1i64 } else { 0i64 },
+            row.recommendation_score,
+            row.last_measured_millis.min(i64::MAX as u64) as i64,
+            if row.truncated { 1i64 } else { 0i64 },
+        ])?;
+        if row.path_kind == "directory" {
+            upsert_directory.execute(params![
+                &row.path,
+                &row.source_root,
+                row.repo_root.as_deref(),
+                row.logical_bytes.min(i64::MAX as u64) as i64,
+                row.physical_bytes.min(i64::MAX as u64) as i64,
+                row.entries.min(i64::MAX as u64) as i64,
+                row.entries.min(i64::MAX as u64) as i64,
+                if row.truncated { 1i64 } else { 0i64 },
+                row.last_measured_millis.min(i64::MAX as u64) as i64,
+                if row.truncated { 1i64 } else { 0i64 },
+            ])?;
+        } else {
+            delete_directory.execute(params![&row.path])?;
+        }
+    }
+    Ok(())
+}
+
+fn refresh_materialized_storage_domain_job_for_root(
+    connection: &Connection,
+    source_root: &str,
+) -> rusqlite::Result<()> {
+    let aggregate = connection.query_row(
+        "SELECT COUNT(*),
+                COALESCE(SUM(CASE WHEN is_directory <> 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN is_directory = 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(logical_bytes), 0),
+                COALESCE(SUM(physical_bytes), 0),
+                COALESCE(SUM(CASE
+                    WHEN cleanup_tier IN ('safe', 'rebuildable') AND safety = 'safe'
+                    THEN physical_bytes ELSE 0 END), 0),
+                COALESCE(SUM(CASE
+                    WHEN cleanup_tier IN ('safe', 'rebuildable') AND safety <> 'safe'
+                    THEN physical_bytes ELSE 0 END), 0),
+                COALESCE(SUM(CASE
+                    WHEN cleanup_tier = 'review' OR safety = 'review'
+                    THEN physical_bytes ELSE 0 END), 0),
+                COALESCE(SUM(CASE
+                    WHEN cleanup_tier IN ('blocked', 'dangerous')
+                      OR safety IN ('blocked', 'dangerous')
+                      OR storage_role = 'user-data'
+                    THEN physical_bytes ELSE 0 END), 0),
+                COALESCE(MIN(last_scan_millis), 0),
+                COALESCE(MAX(last_scan_millis), 0),
+                COALESCE(MAX(truncated), 0)
+         FROM storage_file_index
+         WHERE source_root = ?1",
+        params![source_root],
+        materialized_storage_domain_aggregate_from_sql,
+    )?;
+    if aggregate.item_count == 0 {
+        connection.execute(
+            "DELETE FROM storage_domain WHERE source_root = ?1",
+            params![source_root],
+        )?;
+        connection.execute(
+            "DELETE FROM storage_measurement_job
+             WHERE source = 'storage_file_index' AND root_key = ?1",
+            params![source_root],
+        )?;
+        return Ok(());
+    }
+    connection.execute(
+        "INSERT OR REPLACE INTO storage_domain (
+            domain_id, label, source_root, domain_kind, path_prefix, item_count,
+            directory_count, file_count, logical_bytes, physical_bytes,
+            safely_reclaimable_now_bytes, maybe_reclaimable_bytes, review_required_bytes,
+            dangerous_user_data_bytes, last_measured_millis, confidence, source
+         ) VALUES (
+            ?1, ?2, ?3, ?4, ?3, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+            'storage_file_index'
+         )",
+        params![
+            source_root,
+            materialized_storage_domain_label(source_root),
+            source_root,
+            materialized_storage_domain_kind(source_root),
+            aggregate.item_count.min(i64::MAX as u64) as i64,
+            aggregate.directory_count.min(i64::MAX as u64) as i64,
+            aggregate.file_count.min(i64::MAX as u64) as i64,
+            aggregate.logical_bytes.min(i64::MAX as u64) as i64,
+            aggregate.physical_bytes.min(i64::MAX as u64) as i64,
+            aggregate.safely_reclaimable_now_bytes.min(i64::MAX as u64) as i64,
+            aggregate.maybe_reclaimable_bytes.min(i64::MAX as u64) as i64,
+            aggregate.review_required_bytes.min(i64::MAX as u64) as i64,
+            aggregate.dangerous_user_data_bytes.min(i64::MAX as u64) as i64,
+            aggregate.completed_at_millis.min(i64::MAX as u64) as i64,
+            if aggregate.partial {
+                "partial"
+            } else {
+                "indexed"
+            },
+        ],
+    )?;
+    let roots_json =
+        serde_json::to_string(&vec![source_root.to_owned()]).unwrap_or_else(|_| "[]".to_owned());
+    connection.execute(
+        "INSERT OR REPLACE INTO storage_measurement_job (
+            job_id, job_kind, status, source, root_key, roots_json, dirty_paths_json,
+            started_at_millis, updated_at_millis, completed_at_millis, measured_path_count,
+            measured_directory_count, measured_file_count, measured_bytes, partial, last_error
+         ) VALUES (
+            ?1, 'legacy_file_index_backfill', 'complete', 'storage_file_index', ?2, ?3, '[]',
+            ?4, ?5, ?5, ?6, ?7, ?8, ?9, ?10, NULL
+         )",
+        params![
+            format!("legacy-file-index:{}", source_root),
+            source_root,
+            roots_json,
+            aggregate.started_at_millis.min(i64::MAX as u64) as i64,
+            aggregate.completed_at_millis.min(i64::MAX as u64) as i64,
+            aggregate.item_count.min(i64::MAX as u64) as i64,
+            aggregate.directory_count.min(i64::MAX as u64) as i64,
+            aggregate.file_count.min(i64::MAX as u64) as i64,
+            aggregate.physical_bytes.min(i64::MAX as u64) as i64,
+            if aggregate.partial { 1i64 } else { 0i64 },
+        ],
+    )?;
+    Ok(())
+}
+
+fn materialized_storage_domain_aggregate_from_sql(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<MaterializedStorageDomainAggregate> {
+    let item_count: i64 = row.get(0)?;
+    let directory_count: i64 = row.get(1)?;
+    let file_count: i64 = row.get(2)?;
+    let logical_bytes: i64 = row.get(3)?;
+    let physical_bytes: i64 = row.get(4)?;
+    let safely_reclaimable_now_bytes: i64 = row.get(5)?;
+    let maybe_reclaimable_bytes: i64 = row.get(6)?;
+    let review_required_bytes: i64 = row.get(7)?;
+    let dangerous_user_data_bytes: i64 = row.get(8)?;
+    let started_at_millis: i64 = row.get(9)?;
+    let completed_at_millis: i64 = row.get(10)?;
+    Ok(MaterializedStorageDomainAggregate {
+        item_count: item_count.max(0) as u64,
+        directory_count: directory_count.max(0) as u64,
+        file_count: file_count.max(0) as u64,
+        logical_bytes: logical_bytes.max(0) as u64,
+        physical_bytes: physical_bytes.max(0) as u64,
+        safely_reclaimable_now_bytes: safely_reclaimable_now_bytes.max(0) as u64,
+        maybe_reclaimable_bytes: maybe_reclaimable_bytes.max(0) as u64,
+        review_required_bytes: review_required_bytes.max(0) as u64,
+        dangerous_user_data_bytes: dangerous_user_data_bytes.max(0) as u64,
+        started_at_millis: started_at_millis.max(0) as u64,
+        completed_at_millis: completed_at_millis.max(0) as u64,
+        partial: row.get::<_, i64>(11)? != 0,
+    })
+}
+
+fn materialized_storage_path_row_from_sql(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<MaterializedStoragePathRow> {
+    let path: String = row.get(0)?;
+    let is_directory = row.get::<_, i64>(16)? != 0;
+    let (parent_path, name) = materialized_storage_path_parent_and_name(&path);
+    let logical_bytes: i64 = row.get(10)?;
+    let physical_bytes: i64 = row.get(11)?;
+    let entries: i64 = row.get(17)?;
+    let truncated = row.get::<_, i64>(18)? != 0;
+    let last_measured_millis: i64 = row.get(19)?;
+    Ok(MaterializedStoragePathRow {
+        path,
+        parent_path,
+        name,
+        device: row.get(1)?,
+        inode: row.get(2)?,
+        file_id: row.get(3)?,
+        source_root: row.get(4)?,
+        repo_root: row.get(5)?,
+        path_kind: if is_directory {
+            "directory".to_owned()
+        } else {
+            "file".to_owned()
+        },
+        artifact_kind: row.get(6)?,
+        storage_role: row.get(7)?,
+        safety: row.get(8)?,
+        cleanup_tier: row.get(9)?,
+        logical_bytes: logical_bytes.max(0) as u64,
+        physical_bytes: physical_bytes.max(0) as u64,
+        modified_millis: row
+            .get::<_, Option<i64>>(12)?
+            .map(|value| value.max(0) as u64),
+        changed_millis: row
+            .get::<_, Option<i64>>(13)?
+            .map(|value| value.max(0) as u64),
+        accessed_millis: row
+            .get::<_, Option<i64>>(14)?
+            .map(|value| value.max(0) as u64),
+        birth_millis: row
+            .get::<_, Option<i64>>(15)?
+            .map(|value| value.max(0) as u64),
+        entries: entries.max(0) as u64,
+        truncated,
+        recommendation_score: row.get(20)?,
+        last_measured_millis: last_measured_millis.max(0) as u64,
+    })
+}
+
+fn materialized_storage_path_parent_and_name(path: &str) -> (String, String) {
+    let path = Path::new(path);
+    let parent_path = path
+        .parent()
+        .map(|parent| parent.display().to_string())
+        .unwrap_or_default();
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path.to_str().unwrap_or_default())
+        .to_owned();
+    (parent_path, name)
+}
+
+fn materialized_storage_domain_label(source_root: &str) -> String {
+    Path::new(source_root)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(source_root)
+        .to_owned()
+}
+
+fn materialized_storage_domain_kind(source_root: &str) -> &'static str {
+    let lower = source_root.to_ascii_lowercase();
+    if lower.contains("/library/developer") || lower.contains("/deriveddata") {
+        "developer"
+    } else if lower.contains("/.colima") || lower.contains("/docker") {
+        "container"
+    } else if lower.contains("/downloads") {
+        "downloads"
+    } else if lower.contains("/pictures") || lower.contains("/movies") {
+        "media"
+    } else {
+        "source_root"
+    }
 }
 
 fn table_count(connection: &Connection, table: &str) -> u64 {

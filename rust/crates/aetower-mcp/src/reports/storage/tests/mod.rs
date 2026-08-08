@@ -1,9 +1,36 @@
+use super::state_store::replace_storage_index_directory_for_test;
 use super::*;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-fn storage_index_test_guard() -> std::sync::MutexGuard<'static, ()> {
+struct StorageIndexTestGuard {
+    _mutex_guard: std::sync::MutexGuard<'static, ()>,
+    previous_directory: Option<PathBuf>,
+    directory: PathBuf,
+}
+
+impl Drop for StorageIndexTestGuard {
+    fn drop(&mut self) {
+        replace_storage_index_directory_for_test(self.previous_directory.take());
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn storage_index_test_guard() -> StorageIndexTestGuard {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    lock_or_recover(LOCK.get_or_init(|| Mutex::new(())))
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let mutex_guard = lock_or_recover(LOCK.get_or_init(|| Mutex::new(())));
+    let directory = std::env::temp_dir().join(format!(
+        "aetower-storage-index-test-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, AtomicOrdering::Relaxed)
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    let previous_directory = replace_storage_index_directory_for_test(Some(directory.clone()));
+    StorageIndexTestGuard {
+        _mutex_guard: mutex_guard,
+        previous_directory,
+        directory,
+    }
 }
 
 fn write_sparse_fixture(path: &Path, bytes: u64) {
@@ -1323,6 +1350,144 @@ fn storage_index_open_backfills_rollups_before_raw_delta_budget() {
         expected_total,
         "rollup history survives after raw deltas are capped"
     );
+
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(index_dir);
+}
+
+#[test]
+fn storage_index_backfills_materialized_schema_from_legacy_file_index() {
+    let root = test_root("materialized-schema-backfill");
+    let index_dir = test_root("materialized-schema-backfill-index");
+    let directory = root.join("project").join("target");
+    let file = directory.join("debug").join("blob");
+    if let Err(error) = fs::create_dir_all(file.parent().unwrap()) {
+        panic!("create materialized schema fixture: {error}");
+    }
+    if let Err(error) = fs::write(&file, b"fixture") {
+        panic!("write materialized file fixture: {error}");
+    }
+    let now_millis = storage_now_millis();
+    let mut metrics = StorageScanMetrics::default();
+
+    {
+        let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+        assert_eq!(storage_index.status, "ready");
+        storage_index.store_indexed_row(
+            &seeded_index_row(
+                &root,
+                &file,
+                3 * MIN_ITEM_BYTES,
+                "rebuildable",
+                None,
+                Some(now_millis),
+                Some(now_millis),
+                now_millis,
+            ),
+            &mut metrics,
+        );
+        let mut directory_row = seeded_index_row(
+            &root,
+            &directory,
+            7 * MIN_ITEM_BYTES,
+            "review",
+            None,
+            Some(now_millis),
+            Some(now_millis),
+            now_millis,
+        );
+        directory_row.kind = "large-directory".to_owned();
+        directory_row.is_directory = true;
+        directory_row.entries = 3;
+        directory_row.truncated = true;
+        storage_index.store_indexed_row(&directory_row, &mut metrics);
+        storage_index.flush_pending_rows();
+    }
+
+    let database_path = index_dir.join(STORAGE_INDEX_FILE_NAME);
+    let connection = rusqlite::Connection::open(&database_path)
+        .unwrap_or_else(|error| panic!("open materialized schema fixture db: {error}"));
+    connection
+        .execute("DELETE FROM storage_path", [])
+        .unwrap_or_else(|error| panic!("clear storage_path: {error}"));
+    connection
+        .execute("DELETE FROM storage_directory_rollup", [])
+        .unwrap_or_else(|error| panic!("clear storage_directory_rollup: {error}"));
+    connection
+        .execute("DELETE FROM storage_domain", [])
+        .unwrap_or_else(|error| panic!("clear storage_domain: {error}"));
+    connection
+        .execute("DELETE FROM storage_measurement_job", [])
+        .unwrap_or_else(|error| panic!("clear storage_measurement_job: {error}"));
+    connection
+        .execute(
+            "DELETE FROM storage_index_meta
+             WHERE key = 'materialized_storage_index_generation'",
+            [],
+        )
+        .unwrap_or_else(|error| panic!("clear materialized generation: {error}"));
+    drop(connection);
+
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    assert_eq!(storage_index.status, "ready");
+    storage_index
+        .backfill_materialized_storage_index_now()
+        .unwrap_or_else(|error| panic!("backfill materialized schema: {error}"));
+    drop(storage_index);
+
+    let connection = rusqlite::Connection::open(&database_path)
+        .unwrap_or_else(|error| panic!("reopen materialized schema fixture db: {error}"));
+    let root_string = root.display().to_string();
+    let path_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM storage_path WHERE source_root = ?1",
+            [&root_string],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|error| panic!("count materialized paths: {error}"));
+    let directory_rollup_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM storage_directory_rollup WHERE source_root = ?1",
+            [&root_string],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|error| panic!("count directory rollups: {error}"));
+    let (domain_items, domain_bytes, domain_confidence): (i64, i64, String) = connection
+        .query_row(
+            "SELECT item_count, physical_bytes, confidence
+             FROM storage_domain
+             WHERE source_root = ?1",
+            [&root_string],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap_or_else(|error| panic!("read materialized domain: {error}"));
+    let (job_paths, job_directories, job_bytes, job_partial): (i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT measured_path_count, measured_directory_count, measured_bytes, partial
+             FROM storage_measurement_job
+             WHERE root_key = ?1 AND source = 'storage_file_index'",
+            [&root_string],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap_or_else(|error| panic!("read materialized measurement job: {error}"));
+    let compatibility_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM storage_file_index WHERE source_root = ?1",
+            [&root_string],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|error| panic!("count compatibility rows: {error}"));
+
+    assert_eq!(path_count, 2);
+    assert_eq!(directory_rollup_count, 1);
+    assert_eq!(domain_items, 2);
+    assert_eq!(domain_bytes, (10 * MIN_ITEM_BYTES) as i64);
+    assert_eq!(domain_confidence, "partial");
+    assert_eq!(job_paths, 2);
+    assert_eq!(job_directories, 1);
+    assert_eq!(job_bytes, (10 * MIN_ITEM_BYTES) as i64);
+    assert_eq!(job_partial, 1);
+    assert_eq!(compatibility_rows, 2);
 
     let _ = fs::remove_dir_all(root);
     let _ = fs::remove_dir_all(index_dir);
