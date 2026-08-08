@@ -362,13 +362,19 @@ public struct StorageView: View {
                             warningBanner(error)
                         }
 
+                        if let situation = state.storageSituation {
+                            storageSituationFirstPaint(
+                                situation,
+                                showDeferredReportNotice: state.storageHygieneReport == nil,
+                                showKnownPaths: state.storageHygieneReport == nil
+                            )
+                        }
+
                         if let report = state.storageHygieneReport {
                             storageSectionContent(report)
-                        } else if let situation = state.storageSituation, situation.hasCachedFacts {
-                            storageSituationFirstPaint(situation)
-                        } else if state.storageHygieneIsLoading {
+                        } else if state.storageSituation == nil && state.storageHygieneIsLoading {
                             loadingSection
-                        } else {
+                        } else if state.storageSituation == nil {
                             emptySection
                         }
                     }
@@ -442,7 +448,7 @@ public struct StorageView: View {
         } filterTools: {
             EmptyView()
         } badges: {
-            AetowerToolBadgeGroup(storageHeaderBadges, visibleCount: 3)
+            AetowerToolBadgeGroup(storageHeaderBadges, visibleCount: 4)
         } actions: {
             HStack(spacing: AetowerDesign.Spacing.sm) {
                 storageScanActionGroup
@@ -482,6 +488,9 @@ public struct StorageView: View {
                 if state.storageHygieneLoadExceededBudget {
                     Image(systemName: "exclamationmark.triangle")
                         .foregroundStyle(AetowerDesign.Status.warning)
+                } else if state.storageSituation != nil && state.storageScanJob == nil {
+                    Image(systemName: "bolt")
+                        .foregroundStyle(AetowerDesign.Tone.disk)
                 } else {
                     ProgressView()
                         .controlSize(.small)
@@ -511,6 +520,9 @@ public struct StorageView: View {
         if state.storageHygieneIsVerifyingCache {
             return "Verifying cache"
         }
+        if state.storageSituation != nil && state.storageScanJob == nil {
+            return "Snapshot visible"
+        }
         if state.storageHygieneLoadExceededBudget {
             if let job = state.storageScanJob {
                 return "\(StorageScanModeSelection.label(for: job.mode)) still running"
@@ -526,6 +538,9 @@ public struct StorageView: View {
     private var storageInlineScanProgressDetail: String {
         if state.storageHygieneIsVerifyingCache {
             return "Checking cached results"
+        }
+        if let situation = state.storageSituation, state.storageScanJob == nil {
+            return storageSituationDetail(situation)
         }
         guard let progress = state.storageScanJob?.progress else {
             return "Preparing job"
@@ -575,10 +590,16 @@ public struct StorageView: View {
     private var storageHeaderBadges: [AetowerToolBadgeItem] {
         [
             AetowerToolBadgeItem(
-                    "Detected",
+                    "Free",
+                    value: storageVolumeFreeLabel,
+                    systemImage: "internaldrive.fill",
+                    tone: storageVolumeTone
+            ),
+            AetowerToolBadgeItem(
+                    "Safe Now",
                     value: storageReclaimableLabel,
-                    systemImage: "externaldrive.badge.minus",
-                    tone: AetowerDesign.Tone.disk
+                    systemImage: "checkmark.shield",
+                    tone: AetowerDesign.Status.ready
             ),
             AetowerToolBadgeItem(
                     "Items",
@@ -588,14 +609,45 @@ public struct StorageView: View {
             ),
             AetowerToolBadgeItem(
                     "Estimate",
-                    value: state.storageEstimateStatus.title,
+                    value: storageEstimateLabel,
                     systemImage: storageEstimateSystemImage,
                     tone: storageEstimateTone
             ),
         ]
     }
 
+    private var storageVolumeFreeLabel: String {
+        if let volume = state.storageSituation.flatMap({ primaryVolume($0) }) {
+            let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
+            return formatBytes(free)
+        }
+        if let report = state.storageHygieneReport, let volume = primaryVolume(report) {
+            let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
+            return formatBytes(free)
+        }
+        return "Unknown"
+    }
+
+    private var storageVolumeTone: Color {
+        if let volume = state.storageSituation.flatMap({ primaryVolume($0) })
+            ?? state.storageHygieneReport.flatMap({ primaryVolume($0) })
+        {
+            return storageVolumePressureTone(volume)
+        }
+        return AetowerDesign.Status.neutral
+    }
+
+    private var storageEstimateLabel: String {
+        if let situation = state.storageSituation {
+            return storageSituationStatusLabel(situation)
+        }
+        return state.storageEstimateStatus.title
+    }
+
     private var storageEstimateSystemImage: String {
+        if let situation = state.storageSituation {
+            return storageSituationStatusImage(situation)
+        }
         switch state.storageEstimateStatus.confidence {
         case .verified: return "checkmark.seal"
         case .partial: return "exclamationmark.triangle"
@@ -607,6 +659,9 @@ public struct StorageView: View {
     }
 
     private var storageEstimateTone: Color {
+        if let situation = state.storageSituation {
+            return storageSituationTone(situation)
+        }
         switch state.storageEstimateStatus.confidence {
         case .verified: return AetowerDesign.Status.ready
         case .partial: return AetowerDesign.Status.warning
@@ -806,7 +861,7 @@ public struct StorageView: View {
             return "\(cleanupAuditEvents.count) event\(cleanupAuditEvents.count == 1 ? "" : "s")"
         }
         guard let report else {
-            if let situation = state.storageSituation, situation.hasCachedFacts {
+            if let situation = state.storageSituation {
                 switch section {
                 case .reclaim:
                     return formatBytes(situation.summary.safelyReclaimableNowBytes)
@@ -842,6 +897,24 @@ public struct StorageView: View {
         report: StorageHygieneReportModel?
     ) -> Color {
         guard let report else {
+            if let situation = state.storageSituation {
+                switch section {
+                case .reclaim:
+                    return situation.summary.safelyReclaimableNowBytes > 0
+                        ? AetowerDesign.Tone.disk
+                        : AetowerDesign.Status.ready
+                case .similar:
+                    return AetowerDesign.Status.neutral
+                case .explore:
+                    return AetowerDesign.Tone.memory
+                case .audit:
+                    return cleanupAuditEvents.contains(where: { $0.succeeded == false })
+                        ? AetowerDesign.Status.warning
+                        : AetowerDesign.Status.neutral
+                case .insights:
+                    return storageSituationTone(situation)
+                }
+            }
             if state.storageHygieneIsVerifyingCache { return AetowerDesign.Tone.disk }
             return state.storageHygieneIsLoading ? AetowerDesign.Tone.disk : AetowerDesign.Status.neutral
         }
@@ -867,20 +940,20 @@ public struct StorageView: View {
     }
 
     private var storageReclaimableLabel: String {
+        if let situation = state.storageSituation {
+            return formatBytes(situation.summary.safelyReclaimableNowBytes)
+        }
         guard let report = state.storageHygieneReport else {
-            if let situation = state.storageSituation, situation.hasCachedFacts {
-                return formatBytes(situation.summary.safelyReclaimableNowBytes)
-            }
             return state.storageHygieneIsLoading ? "Loading" : "No scan"
         }
         return formatBytes(report.summary.safelyReclaimableNowBytes)
     }
 
     private var storageItemCountLabel: String {
+        if let situation = state.storageSituation {
+            return "\(situation.summary.itemCount)"
+        }
         guard let report = state.storageHygieneReport else {
-            if let situation = state.storageSituation, situation.hasCachedFacts {
-                return "\(situation.summary.itemCount)"
-            }
             return "0"
         }
         return "\(report.summary.itemCount)"
@@ -895,6 +968,9 @@ public struct StorageView: View {
         }
         if state.storageHygieneError != nil {
             return "Error"
+        }
+        if let situation = state.storageSituation {
+            return storageSituationStatusLabel(situation)
         }
         guard let report = state.storageHygieneReport else {
             return "Idle"
@@ -5043,8 +5119,34 @@ public struct StorageView: View {
     // MARK: - Disk pressure header
 
     private func primaryVolume(_ report: StorageHygieneReportModel) -> StorageVolumeStateModel? {
-        report.volumeStates.first { $0.path == "/" }
-            ?? report.volumeStates.max { $0.totalBytes < $1.totalBytes }
+        primaryVolume(report.volumeStates)
+    }
+
+    private func primaryVolume(_ situation: StorageSituationModel) -> StorageVolumeStateModel? {
+        primaryVolume(situation.volumeStates)
+    }
+
+    private func primaryVolume(_ volumeStates: [StorageVolumeStateModel]) -> StorageVolumeStateModel? {
+        volumeStates.first { $0.path == "/" }
+            ?? volumeStates.max { $0.totalBytes < $1.totalBytes }
+    }
+
+    private func storageVolumePressureTone(_ volume: StorageVolumeStateModel) -> Color {
+        let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
+        guard volume.totalBytes > 0 else { return AetowerDesign.Status.neutral }
+        let freeRatio = Double(free) / Double(volume.totalBytes)
+        if freeRatio < 0.05 { return AetowerDesign.Status.error }
+        if freeRatio < 0.12 { return AetowerDesign.Status.warning }
+        return AetowerDesign.Status.ready
+    }
+
+    private func storageVolumePressureLabel(_ volume: StorageVolumeStateModel) -> String {
+        let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
+        guard volume.totalBytes > 0 else { return "Unknown" }
+        let freeRatio = Double(free) / Double(volume.totalBytes)
+        if freeRatio < 0.05 { return "Critically low space" }
+        if freeRatio < 0.12 { return "Low space" }
+        return "Healthy"
     }
 
     /// The hero for the whole tab: how full the disk is, how much this scan can
@@ -5061,12 +5163,8 @@ public struct StorageView: View {
             if let volume, volume.totalBytes > 0 {
                 let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
                 let cappedActionable = min(actionableBytes, volume.totalBytes)
-                let freeRatio = Double(free) / Double(volume.totalBytes)
-                let tone: Color = freeRatio < 0.05 ? AetowerDesign.Status.error
-                    : freeRatio < 0.12 ? AetowerDesign.Status.warning
-                    : AetowerDesign.Status.ready
-                let pressureLabel = freeRatio < 0.05 ? "Critically low space"
-                    : freeRatio < 0.12 ? "Low space" : "Healthy"
+                let tone = storageVolumePressureTone(volume)
+                let pressureLabel = storageVolumePressureLabel(volume)
 
                 HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
                     Image(systemName: "internaldrive.fill").foregroundStyle(tone)
@@ -8845,7 +8943,11 @@ public struct StorageView: View {
         .padding(AetowerDesign.Spacing.md)
     }
 
-    private func storageSituationFirstPaint(_ situation: StorageSituationModel) -> some View {
+    private func storageSituationFirstPaint(
+        _ situation: StorageSituationModel,
+        showDeferredReportNotice: Bool = true,
+        showKnownPaths: Bool = true
+    ) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
             HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.md) {
                 Label("Storage situation", systemImage: "externaldrive")
@@ -8864,6 +8966,8 @@ public struct StorageView: View {
                     .truncationMode(.middle)
             }
 
+            storageSituationVolumeHeader(situation)
+
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: 168), spacing: AetowerDesign.Spacing.sm)],
                 alignment: .leading,
@@ -8879,9 +8983,16 @@ public struct StorageView: View {
                 summaryCard(
                     "Safe Now",
                     value: formatBytes(situation.summary.safelyReclaimableNowBytes),
-                    detail: "fresh cleanup facts required",
+                    detail: "safe reclaim total",
                     systemImage: "checkmark.shield",
                     tone: AetowerDesign.Status.ready
+                )
+                summaryCard(
+                    "Maybe",
+                    value: formatBytes(situation.summary.maybeReclaimableBytes),
+                    detail: "verify before cleanup",
+                    systemImage: "questionmark.folder",
+                    tone: AetowerDesign.Status.warning
                 )
                 summaryCard(
                     "Review",
@@ -8901,23 +9012,114 @@ public struct StorageView: View {
                 )
             }
 
-            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
-                HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.md) {
-                    Label("Known large paths", systemImage: "list.bullet.rectangle")
-                        .font(AetowerDesign.Typography.sectionTitle)
-                        .foregroundStyle(AetowerDesign.Ink.primary)
-                    AetowerBadge(
-                        "\(situation.topOffenders.count)",
-                        tone: AetowerDesign.Status.neutral
-                    )
-                }
+            if showDeferredReportNotice {
+                storageSituationReportGate(situation)
+            }
 
-                VStack(spacing: AetowerDesign.Spacing.xs) {
-                    ForEach(situation.topOffenders) { offender in
-                        storageSituationTopOffenderRow(offender)
+            if showKnownPaths {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                    HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.md) {
+                        Label("Known large paths", systemImage: "list.bullet.rectangle")
+                            .font(AetowerDesign.Typography.sectionTitle)
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                        AetowerBadge(
+                            "\(situation.topOffenders.count)",
+                            tone: AetowerDesign.Status.neutral
+                        )
+                    }
+
+                    if situation.topOffenders.isEmpty {
+                        ContentUnavailableView(
+                            "No indexed paths yet",
+                            systemImage: "folder.badge.questionmark",
+                            description: Text("Run a scan to build the storage index; volume and dirty-state facts are already available.")
+                        )
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                    } else {
+                        VStack(spacing: AetowerDesign.Spacing.xs) {
+                            ForEach(situation.topOffenders) { offender in
+                                storageSituationTopOffenderRow(offender)
+                            }
+                        }
                     }
                 }
             }
+        }
+    }
+
+    private func storageSituationVolumeHeader(_ situation: StorageSituationModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+            if let volume = primaryVolume(situation), volume.totalBytes > 0 {
+                let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
+                let reclaimable = min(situation.summary.safelyReclaimableNowBytes, volume.totalBytes)
+                let tone = storageVolumePressureTone(volume)
+                HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
+                    Label(volumeDisplayName(volume), systemImage: "internaldrive.fill")
+                        .font(AetowerDesign.Typography.controlLabel)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    AetowerBadge(storageVolumePressureLabel(volume), tone: tone)
+                    Spacer(minLength: AetowerDesign.Spacing.md)
+                    Text("\(formatBytes(free)) free")
+                        .font(AetowerDesign.Typography.compactData(size: 18, weight: .semibold))
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .monospacedDigit()
+                    Text("of \(formatBytes(volume.totalBytes))")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+                diskCapacityBar(
+                    total: volume.totalBytes,
+                    free: free,
+                    reclaimable: reclaimable,
+                    tone: tone
+                )
+                HStack(spacing: AetowerDesign.Spacing.md) {
+                    Text("\(formatBytes(volume.totalBytes - free)) used")
+                    if reclaimable > 0 {
+                        Text("\(formatBytes(reclaimable)) safe reclaim indexed")
+                    }
+                    if situation.dirtyPaths.dirtyPathCount > 0 {
+                        Text("\(situation.dirtyPaths.dirtyPathCount) dirty paths")
+                    }
+                }
+                .font(AetowerDesign.Typography.caption)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+            } else {
+                AetowerOperationalListRow(tone: AetowerDesign.Status.neutral, minHeight: 62) {
+                    HStack(spacing: AetowerDesign.Spacing.md) {
+                        Label("Volume state unavailable", systemImage: "internaldrive")
+                            .font(AetowerDesign.Typography.controlLabel)
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                        Spacer()
+                        Text("Storage index snapshot is still available.")
+                            .font(AetowerDesign.Typography.caption)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func storageSituationReportGate(_ situation: StorageSituationModel) -> some View {
+        AetowerOperationalListRow(tone: storageSituationTone(situation), minHeight: 68) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                Label("Detailed report", systemImage: "doc.text.magnifyingglass")
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                AetowerBadge(
+                    state.storageHygieneIsLoading ? "loading in background" : "not loaded",
+                    tone: state.storageHygieneIsLoading
+                        ? AetowerDesign.Tone.disk
+                        : AetowerDesign.Status.neutral
+                )
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                Text("Cleanup actions, duplicates, Explorer, and Insights appear after richer report data loads.")
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.trailing)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -8968,18 +9170,21 @@ public struct StorageView: View {
     }
 
     private func storageSituationStatusLabel(_ situation: StorageSituationModel) -> String {
+        if !situation.hasCachedFacts { return "Scan Needed" }
         if situation.cacheStatus.partial { return "Partial" }
         if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 { return "Stale" }
         return "Cached"
     }
 
     private func storageSituationStatusImage(_ situation: StorageSituationModel) -> String {
+        if !situation.hasCachedFacts { return "exclamationmark.triangle" }
         if situation.cacheStatus.partial { return "exclamationmark.triangle" }
         if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 { return "eye" }
         return "bolt"
     }
 
     private func storageSituationTone(_ situation: StorageSituationModel) -> Color {
+        if !situation.hasCachedFacts { return AetowerDesign.Status.warning }
         if situation.cacheStatus.partial { return AetowerDesign.Status.warning }
         if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 {
             return AetowerDesign.Status.warning
@@ -8988,6 +9193,9 @@ public struct StorageView: View {
     }
 
     private func storageSituationDetail(_ situation: StorageSituationModel) -> String {
+        if !situation.hasCachedFacts {
+            return "Volume state loaded; run a scan to build the reclaim index."
+        }
         if !situation.cacheStatus.message.isEmpty {
             return situation.cacheStatus.message
         }
