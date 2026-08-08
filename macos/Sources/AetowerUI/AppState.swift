@@ -518,6 +518,7 @@ public final class AppState {
     private(set) var persistenceScanError: String?
     private(set) var persistenceScanCompletedAt: Date?
     private(set) var persistenceChangedItemIds: Set<String> = []
+    private(set) var storageSituation: StorageSituationModel?
     private(set) var storageHygieneReport: StorageHygieneReportModel?
     private(set) var previousStorageHygieneReport: StorageHygieneReportModel?
     private(set) var persistedStorageHygieneBaseline: StorageHygieneBaselineModel? = StorageHygieneBaselineStore.load()
@@ -2320,6 +2321,103 @@ public final class AppState {
         return "Latest storage totals are incomplete; rerun when the machine is idle."
     }
 
+    @discardableResult
+    private func loadStorageSituationForDisplay(
+        roots: [String] = [],
+        updateEstimate: Bool = true
+    ) -> Bool {
+        let result = bridge.storageSituationJSON(roots: roots)
+        guard let situation = decodeJsonQueryResult(result, as: StorageSituationModel.self) else {
+            if let message = jsonQueryErrorMessage(
+                result,
+                fallback: "Storage situation could not be collected."
+            ) {
+                recordLocalDiagnosticsEvent(
+                    level: .warn,
+                    subsystem: .ui,
+                    eventType: "storage-situation-load-failed",
+                    message: message
+                )
+            }
+            return false
+        }
+        publishStorageSituation(situation, updateEstimate: updateEstimate)
+        return true
+    }
+
+    private func publishStorageSituation(
+        _ situation: StorageSituationModel,
+        updateEstimate: Bool
+    ) {
+        storageSituation = situation
+        guard updateEstimate, storageHygieneReport == nil else { return }
+        updateStorageEstimateStatus(situation: situation)
+    }
+
+    private func updateStorageEstimateStatus(situation: StorageSituationModel) {
+        if storageScanJob?.isActive == true {
+            updateStorageEstimateStatus()
+            return
+        }
+        if storageHygieneIsLoading || storageHygieneIsVerifyingCache { return }
+
+        let dirtyPathCount = Self.clampedDirtyPathCount(situation.dirtyPaths.dirtyPathCount)
+        let lastRefresh = situation.cacheStatus.latestScanMillis
+            ?? (situation.hasCachedFacts ? situation.capturedAtMillis : nil)
+        if !situation.hasCachedFacts {
+            storageEstimateStatus = StorageEstimateStatus(
+                confidence: .needsFullScan,
+                title: "Scan Needed",
+                detail: "No cached storage situation is available. Run a scan to build one.",
+                dirtyPathCount: dirtyPathCount,
+                lastChangeMillis: situation.dirtyPaths.latestDirtyMillis,
+                lastRefreshMillis: lastRefresh
+            )
+            return
+        }
+
+        if situation.cacheStatus.partial {
+            storageEstimateStatus = StorageEstimateStatus(
+                confidence: .partial,
+                title: "Partial",
+                detail: situation.cacheStatus.message.isEmpty
+                    ? "Loaded partial storage index facts without scanning."
+                    : situation.cacheStatus.message,
+                dirtyPathCount: dirtyPathCount,
+                lastChangeMillis: situation.dirtyPaths.latestDirtyMillis,
+                lastRefreshMillis: lastRefresh
+            )
+            return
+        }
+
+        if situation.cacheStatus.stale || dirtyPathCount > 0 {
+            storageEstimateStatus = StorageEstimateStatus(
+                confidence: .stale,
+                title: "Stale",
+                detail: dirtyPathCount > 0
+                    ? "\(dirtyPathCount) changed paths are queued for incremental refresh."
+                    : situation.cacheStatus.message,
+                dirtyPathCount: dirtyPathCount,
+                lastChangeMillis: situation.dirtyPaths.latestDirtyMillis,
+                lastRefreshMillis: lastRefresh
+            )
+            return
+        }
+
+        storageEstimateStatus = StorageEstimateStatus(
+            confidence: .estimated,
+            title: "Cached",
+            detail: "Loaded last known storage situation without scanning.",
+            dirtyPathCount: dirtyPathCount,
+            lastChangeMillis: situation.dirtyPaths.latestDirtyMillis,
+            lastRefreshMillis: lastRefresh
+        )
+    }
+
+    private static func clampedDirtyPathCount(_ count: UInt64) -> Int {
+        count > UInt64(Int.max) ? Int.max : Int(count)
+    }
+
     /// Drop cached on-demand reports whose entity/pid has left the live
     /// snapshot. Reports are refetchable, so bounding the caches to live
     /// subjects (plus one grace pass) caps long-session memory growth.
@@ -2796,6 +2894,7 @@ public final class AppState {
     }
 
     func ensureStorageHygieneScan(roots: [String] = []) {
+        loadStorageSituationForDisplay(roots: roots)
         guard !storageHygieneIsLoading, !storageHygieneIsVerifyingCache else { return }
         if let storageHygieneReport,
            (roots.isEmpty || Self.storageHygieneReportMatchesRequestedRoots(storageHygieneReport, roots: roots))
@@ -4059,6 +4158,7 @@ public final class AppState {
         updateStorageEstimateStatus(report: cache.report)
         repositorySummaryInputsGeneration += 1
         storageRootChangeMonitor.startWatching(roots: cache.report.roots)
+        loadStorageSituationForDisplay(roots: cache.report.roots, updateEstimate: false)
         storageHygieneCompletedAt =
             Date(timeIntervalSince1970: Double(cache.savedAtMillis) / 1000.0)
         storageHygieneError = nil
@@ -4094,6 +4194,28 @@ public final class AppState {
         storageScanJob = nil
         repositoryInventoryRefreshState = nil
         storageHygieneError = nil
+
+        if let storageSituation, storageSituation.hasCachedFacts {
+            updateStorageEstimateStatus(situation: storageSituation)
+            recordLocalDiagnosticsEvent(
+                level: .info,
+                subsystem: .ui,
+                eventType: "storage-hygiene-cache-miss-situation-visible",
+                message: "Storage hygiene report cache missed, but cache-first storage situation is visible.",
+                fields: [
+                    DiagnosticsField(key: "reason", value: reason),
+                    DiagnosticsField(
+                        key: "situation_item_count",
+                        value: String(storageSituation.summary.itemCount)
+                    ),
+                    DiagnosticsField(
+                        key: "situation_inventory_size_bytes",
+                        value: String(storageSituation.summary.inventorySizeBytes)
+                    ),
+                ]
+            )
+            return
+        }
 
         let summary = StorageRootChangeJournal.summary()
         storageEstimateStatus = StorageEstimateStatus(
@@ -4367,6 +4489,7 @@ public final class AppState {
             if report.scanMode != "instant_cached" {
                 StorageRootChangeJournal.clearDirtyPaths()
             }
+            loadStorageSituationForDisplay(roots: report.roots, updateEstimate: false)
             storageHygieneCompletedAt = Date()
             storageHygieneError = nil
             let storagePublishMillis = UInt64(

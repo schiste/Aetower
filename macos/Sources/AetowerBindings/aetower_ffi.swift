@@ -750,6 +750,12 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
 
     func storageScanStatusJson(jobId: String)  -> JsonQueryResult
 
+    /**
+     * Fast cache-first materialized storage view for first paint. Does not
+     * walk the filesystem; callers can start richer refresh scans separately.
+     */
+    func storageSituationJson(roots: [String], limit: UInt32)  -> JsonQueryResult
+
     func updateBrowserTabContext(tabs: [BrowserTabContextSnapshot])
 
     func updateFrontmostAppState(state: FrontmostAppState)
@@ -1452,6 +1458,19 @@ open func storageScanStatusJson(jobId: String) -> JsonQueryResult  {
     return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_storage_scan_status_json(self.uniffiClonePointer(),
         FfiConverterString.lower(jobId),$0
+    )
+})
+}
+
+    /**
+     * Fast cache-first materialized storage view for first paint. Does not
+     * walk the filesystem; callers can start richer refresh scans separately.
+     */
+open func storageSituationJson(roots: [String], limit: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_situation_json(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(roots),
+        FfiConverterUInt32.lower(limit),$0
     )
 })
 }
@@ -12728,6 +12747,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_scan_status_json() != 33708) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_situation_json() != 53691) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_update_browser_tab_context() != 425) {

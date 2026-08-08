@@ -17,7 +17,7 @@ use aetower_mcp::{
     storage_hygiene_json, storage_hygiene_mode_json, storage_hygiene_overview_json,
     storage_hygiene_repo_detail_json, storage_scan_cancel_json, storage_scan_pause_json,
     storage_scan_result_json, storage_scan_resume_json, storage_scan_start_json,
-    storage_scan_status_json, wakeup_attribution_json,
+    storage_scan_status_json, storage_situation_json, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1768,6 +1768,12 @@ impl MonitorEngine {
             max_depth as usize,
             limit as usize,
         ))
+    }
+
+    /// Fast cache-first materialized storage view for first paint. Does not
+    /// walk the filesystem; callers can start richer refresh scans separately.
+    pub fn storage_situation_json(&self, roots: Vec<String>, limit: u32) -> JsonQueryResult {
+        json_query_result(storage_situation_json(roots, limit as usize))
     }
 
     pub fn storage_hygiene_overview_json(

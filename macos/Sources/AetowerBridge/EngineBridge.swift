@@ -276,6 +276,13 @@ public final class EngineBridge: @unchecked Sendable {
         engine.storageHygieneIndexedJson(roots: roots, maxDepth: maxDepth, limit: limit)
     }
 
+    public func storageSituationJSON(
+        roots: [String] = [],
+        limit: UInt32 = 12
+    ) -> JsonQueryResult {
+        engine.storageSituationJson(roots: roots, limit: limit)
+    }
+
     public func storageHygieneOverviewJSON(
         roots: [String] = [],
         maxDepth: UInt32 = 5,

@@ -364,6 +364,8 @@ public struct StorageView: View {
 
                         if let report = state.storageHygieneReport {
                             storageSectionContent(report)
+                        } else if let situation = state.storageSituation, situation.hasCachedFacts {
+                            storageSituationFirstPaint(situation)
                         } else if state.storageHygieneIsLoading {
                             loadingSection
                         } else {
@@ -804,6 +806,18 @@ public struct StorageView: View {
             return "\(cleanupAuditEvents.count) event\(cleanupAuditEvents.count == 1 ? "" : "s")"
         }
         guard let report else {
+            if let situation = state.storageSituation, situation.hasCachedFacts {
+                switch section {
+                case .reclaim:
+                    return formatBytes(situation.summary.safelyReclaimableNowBytes)
+                case .explore:
+                    return "\(situation.summary.itemCount) item\(situation.summary.itemCount == 1 ? "" : "s")"
+                case .audit:
+                    return "\(cleanupAuditEvents.count) event\(cleanupAuditEvents.count == 1 ? "" : "s")"
+                case .similar, .insights:
+                    return "Cached"
+                }
+            }
             if state.storageHygieneIsVerifyingCache { return "Verifying" }
             return state.storageHygieneIsLoading ? "Scanning" : "No scan"
         }
@@ -854,6 +868,9 @@ public struct StorageView: View {
 
     private var storageReclaimableLabel: String {
         guard let report = state.storageHygieneReport else {
+            if let situation = state.storageSituation, situation.hasCachedFacts {
+                return formatBytes(situation.summary.safelyReclaimableNowBytes)
+            }
             return state.storageHygieneIsLoading ? "Loading" : "No scan"
         }
         return formatBytes(report.summary.safelyReclaimableNowBytes)
@@ -861,6 +878,9 @@ public struct StorageView: View {
 
     private var storageItemCountLabel: String {
         guard let report = state.storageHygieneReport else {
+            if let situation = state.storageSituation, situation.hasCachedFacts {
+                return "\(situation.summary.itemCount)"
+            }
             return "0"
         }
         return "\(report.summary.itemCount)"
@@ -8823,6 +8843,159 @@ public struct StorageView: View {
             )
         }
         .padding(AetowerDesign.Spacing.md)
+    }
+
+    private func storageSituationFirstPaint(_ situation: StorageSituationModel) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xl) {
+            HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.md) {
+                Label("Storage situation", systemImage: "externaldrive")
+                    .font(AetowerDesign.Typography.sectionTitle)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                AetowerBadge(
+                    storageSituationStatusLabel(situation),
+                    systemImage: storageSituationStatusImage(situation),
+                    tone: storageSituationTone(situation)
+                )
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                Text(storageSituationDetail(situation))
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 168), spacing: AetowerDesign.Spacing.sm)],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.sm
+            ) {
+                summaryCard(
+                    "Inventory",
+                    value: formatBytes(situation.summary.inventorySizeBytes),
+                    detail: "\(situation.summary.itemCount) indexed items",
+                    systemImage: "shippingbox",
+                    tone: AetowerDesign.Tone.disk
+                )
+                summaryCard(
+                    "Safe Now",
+                    value: formatBytes(situation.summary.safelyReclaimableNowBytes),
+                    detail: "fresh cleanup facts required",
+                    systemImage: "checkmark.shield",
+                    tone: AetowerDesign.Status.ready
+                )
+                summaryCard(
+                    "Review",
+                    value: formatBytes(situation.summary.reviewRequiredBytes),
+                    detail: "\(formatBytes(situation.summary.dangerousUserDataBytes)) user data",
+                    systemImage: "exclamationmark.triangle",
+                    tone: AetowerDesign.Status.warning
+                )
+                summaryCard(
+                    "Dirty",
+                    value: "\(situation.dirtyPaths.dirtyPathCount)",
+                    detail: "paths queued",
+                    systemImage: "waveform.path.ecg",
+                    tone: situation.dirtyPaths.dirtyPathCount > 0
+                        ? AetowerDesign.Status.warning
+                        : AetowerDesign.Status.neutral
+                )
+            }
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
+                HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.md) {
+                    Label("Known large paths", systemImage: "list.bullet.rectangle")
+                        .font(AetowerDesign.Typography.sectionTitle)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    AetowerBadge(
+                        "\(situation.topOffenders.count)",
+                        tone: AetowerDesign.Status.neutral
+                    )
+                }
+
+                VStack(spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(situation.topOffenders) { offender in
+                        storageSituationTopOffenderRow(offender)
+                    }
+                }
+            }
+        }
+    }
+
+    private func storageSituationTopOffenderRow(
+        _ offender: StorageSituationTopOffenderModel
+    ) -> some View {
+        AetowerOperationalListRow(
+            tone: offender.stale ? AetowerDesign.Status.warning : AetowerDesign.Tone.disk,
+            minHeight: 62
+        ) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        Text(lastPathComponent(offender.path))
+                            .font(AetowerDesign.Typography.controlLabel)
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                            .lineLimit(1)
+                        AetowerBadge(
+                            offender.cleanupTier,
+                            tone: offender.stale
+                                ? AetowerDesign.Status.warning
+                                : AetowerDesign.Status.neutral
+                        )
+                        if offender.stale {
+                            AetowerBadge(
+                                "stale",
+                                systemImage: "eye",
+                                tone: AetowerDesign.Status.warning
+                            )
+                        }
+                    }
+                    Text(offender.path)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                Text(formatBytes(offender.physicalBytes))
+                    .font(AetowerDesign.Typography.compactData(size: 16, weight: .semibold))
+                    .foregroundStyle(AetowerDesign.Tone.disk)
+                    .monospacedDigit()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func storageSituationStatusLabel(_ situation: StorageSituationModel) -> String {
+        if situation.cacheStatus.partial { return "Partial" }
+        if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 { return "Stale" }
+        return "Cached"
+    }
+
+    private func storageSituationStatusImage(_ situation: StorageSituationModel) -> String {
+        if situation.cacheStatus.partial { return "exclamationmark.triangle" }
+        if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 { return "eye" }
+        return "bolt"
+    }
+
+    private func storageSituationTone(_ situation: StorageSituationModel) -> Color {
+        if situation.cacheStatus.partial { return AetowerDesign.Status.warning }
+        if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 {
+            return AetowerDesign.Status.warning
+        }
+        return AetowerDesign.Tone.disk
+    }
+
+    private func storageSituationDetail(_ situation: StorageSituationModel) -> String {
+        if !situation.cacheStatus.message.isEmpty {
+            return situation.cacheStatus.message
+        }
+        if let latestScanMillis = situation.cacheStatus.latestScanMillis {
+            let date = Date(timeIntervalSince1970: Double(latestScanMillis) / 1000.0)
+            return "Last indexed \(date.formatted(date: .omitted, time: .shortened))"
+        }
+        return "Loaded from persistent storage index"
     }
 
     private var loadingSection: some View {
