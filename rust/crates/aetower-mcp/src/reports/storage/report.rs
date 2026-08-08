@@ -122,6 +122,7 @@ pub(super) fn finalize_storage_report_json(
     report.diagnostics.serialize_millis = serialize_started.elapsed().as_millis() as u64;
     report.diagnostics.payload_bytes = json.len().min(u64::MAX as usize) as u64;
     refresh_storage_performance_budget(&mut report, 0, 0);
+    super::projection::persist_storage_situation_snapshot_from_report(&report);
     serde_json::to_string(&report).map_err(|error| error.to_string())
 }
 

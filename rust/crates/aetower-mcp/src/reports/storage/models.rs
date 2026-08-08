@@ -41,7 +41,7 @@ pub(crate) struct StorageHygieneReport {
     pub(super) caveats: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct StorageCacheStatus {
     pub(super) source: String,
     pub(super) stale: bool,
@@ -53,7 +53,7 @@ pub(super) struct StorageCacheStatus {
     pub(super) message: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(super) struct StorageSituationSummary {
     pub(super) source_root_count: usize,
     pub(super) item_count: u64,
@@ -64,7 +64,7 @@ pub(super) struct StorageSituationSummary {
     pub(super) dangerous_user_data_bytes: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct StorageSituationTopOffender {
     pub(super) path: String,
     pub(super) source_root: String,
@@ -76,7 +76,7 @@ pub(super) struct StorageSituationTopOffender {
     pub(super) stale: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct StorageSituationResponse {
     pub(super) captured_at_millis: u64,
     pub(super) cache_status: StorageCacheStatus,
@@ -202,7 +202,7 @@ pub(super) struct RepositoryInventoryCompleteness {
     pub(super) partial_roots: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct StorageVolumeState {
     pub(super) path: String,
     pub(super) device_id: u64,

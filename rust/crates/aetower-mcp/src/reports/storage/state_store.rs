@@ -247,7 +247,7 @@ pub(super) struct StorageDirtyPathRecord {
     pub(super) event_count: u64,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(super) struct StorageDirtyPathSummary {
     pub(super) dirty_path_count: u64,
     pub(super) oldest_dirty_millis: Option<u64>,
@@ -582,7 +582,21 @@ impl StorageSizeIndex {
                 measured_at_millis INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_storage_path_fingerprint_measured
-                ON storage_path_fingerprint(measured_at_millis DESC);",
+                ON storage_path_fingerprint(measured_at_millis DESC);
+             CREATE TABLE IF NOT EXISTS storage_situation_snapshot (
+                root_key TEXT PRIMARY KEY,
+                roots_json TEXT NOT NULL,
+                captured_at_millis INTEGER NOT NULL,
+                updated_at_millis INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                item_count INTEGER NOT NULL,
+                inventory_size_bytes INTEGER NOT NULL,
+                safely_reclaimable_now_bytes INTEGER NOT NULL,
+                dirty_path_count INTEGER NOT NULL,
+                snapshot_json TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_situation_snapshot_updated
+                ON storage_situation_snapshot(updated_at_millis DESC);",
         )?;
         let schema: i64 = connection.query_row(
             "SELECT value FROM storage_index_meta WHERE key = 'schema_version'",
@@ -759,7 +773,21 @@ impl StorageSizeIndex {
                     measured_at_millis INTEGER NOT NULL
                  );
                  CREATE INDEX IF NOT EXISTS idx_storage_path_fingerprint_measured
-                    ON storage_path_fingerprint(measured_at_millis DESC);",
+                    ON storage_path_fingerprint(measured_at_millis DESC);
+                 CREATE TABLE IF NOT EXISTS storage_situation_snapshot (
+                    root_key TEXT PRIMARY KEY,
+                    roots_json TEXT NOT NULL,
+                    captured_at_millis INTEGER NOT NULL,
+                    updated_at_millis INTEGER NOT NULL,
+                    source TEXT NOT NULL,
+                    item_count INTEGER NOT NULL,
+                    inventory_size_bytes INTEGER NOT NULL,
+                    safely_reclaimable_now_bytes INTEGER NOT NULL,
+                    dirty_path_count INTEGER NOT NULL,
+                    snapshot_json TEXT NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_storage_situation_snapshot_updated
+                    ON storage_situation_snapshot(updated_at_millis DESC);",
             )?;
         }
         Self::ensure_repository_inventory_cache_columns(connection)?;
@@ -2853,6 +2881,80 @@ impl StorageSizeIndex {
         offenders
     }
 
+    pub(super) fn persist_situation_snapshot(
+        &self,
+        roots: &[PathBuf],
+        source: &str,
+        situation: &StorageSituationResponse,
+    ) -> Result<(), String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let root_key = storage_situation_roots_key(roots);
+        let roots_json = serde_json::to_string(
+            &roots
+                .iter()
+                .map(|root| root.display().to_string())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| format!("encode_roots:{error}"))?;
+        let snapshot_json =
+            serde_json::to_string(situation).map_err(|error| format!("encode_snapshot:{error}"))?;
+        let now_millis = storage_now_millis();
+        connection
+            .execute(
+                "INSERT INTO storage_situation_snapshot (
+                    root_key,
+                    roots_json,
+                    captured_at_millis,
+                    updated_at_millis,
+                    source,
+                    item_count,
+                    inventory_size_bytes,
+                    safely_reclaimable_now_bytes,
+                    dirty_path_count,
+                    snapshot_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(root_key) DO UPDATE SET
+                    roots_json = excluded.roots_json,
+                    captured_at_millis = excluded.captured_at_millis,
+                    updated_at_millis = excluded.updated_at_millis,
+                    source = excluded.source,
+                    item_count = excluded.item_count,
+                    inventory_size_bytes = excluded.inventory_size_bytes,
+                    safely_reclaimable_now_bytes = excluded.safely_reclaimable_now_bytes,
+                    dirty_path_count = excluded.dirty_path_count,
+                    snapshot_json = excluded.snapshot_json",
+                params![
+                    root_key,
+                    roots_json,
+                    situation.captured_at_millis.min(i64::MAX as u64) as i64,
+                    now_millis.min(i64::MAX as u64) as i64,
+                    source,
+                    situation.summary.item_count.min(i64::MAX as u64) as i64,
+                    situation.summary.inventory_size_bytes.min(i64::MAX as u64) as i64,
+                    situation
+                        .summary
+                        .safely_reclaimable_now_bytes
+                        .min(i64::MAX as u64) as i64,
+                    situation.dirty_paths.dirty_path_count.min(i64::MAX as u64) as i64,
+                    snapshot_json,
+                ],
+            )
+            .map_err(|error| format!("persist_situation_snapshot:{error}"))?;
+        Ok(())
+    }
+
+    pub(super) fn load_situation_snapshot(
+        &self,
+        roots: &[PathBuf],
+        limit: usize,
+    ) -> Option<StorageSituationResponse> {
+        let connection = self.connection.as_ref()?;
+        let root_key = storage_situation_roots_key(roots);
+        load_situation_snapshot_for_key(connection, &root_key, limit)
+    }
+
     #[cfg(test)]
     pub(super) fn pending_row_count(&self) -> usize {
         self.pending_rows.borrow().len()
@@ -3818,6 +3920,41 @@ fn storage_top_offender_row_from_sql(
         recommendation_score: row.get(5)?,
         last_scan_millis: row.get::<_, i64>(6)?.max(0) as u64,
     })
+}
+
+fn storage_situation_roots_key(roots: &[PathBuf]) -> String {
+    let mut values = roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>();
+    values.sort();
+    values.join("\u{1f}")
+}
+
+fn load_situation_snapshot_for_key(
+    connection: &Connection,
+    root_key: &str,
+    limit: usize,
+) -> Option<StorageSituationResponse> {
+    let snapshot_json = connection
+        .query_row(
+            "SELECT snapshot_json
+             FROM storage_situation_snapshot
+             WHERE root_key = ?1",
+            params![root_key],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()?;
+    decode_situation_snapshot(&snapshot_json, limit)
+}
+
+fn decode_situation_snapshot(
+    snapshot_json: &str,
+    limit: usize,
+) -> Option<StorageSituationResponse> {
+    let mut snapshot = serde_json::from_str::<StorageSituationResponse>(snapshot_json).ok()?;
+    snapshot.top_offenders.truncate(limit.clamp(1, 40));
+    Some(snapshot)
 }
 
 fn indexed_row_matches_live_metadata(row: &StorageIndexedFileRow) -> bool {

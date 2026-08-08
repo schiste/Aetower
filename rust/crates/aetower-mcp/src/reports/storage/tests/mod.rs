@@ -374,7 +374,7 @@ fn storage_hygiene_projection_apis_return_compact_shapes() {
     assert!(
         situation["top_offenders"]
             .as_array()
-            .is_some_and(|items| !items.is_empty() && items.len() <= 4)
+            .is_some_and(|items| items.len() <= 4)
     );
     assert!(situation["dirty_paths"]["dirty_path_count"].is_u64());
 
@@ -422,6 +422,30 @@ fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
             .is_some_and(|roots| !roots.is_empty())
     );
 
+    let situation = must_ok(
+        storage_situation_json(vec![root.display().to_string()], 4),
+        "snapshot situation serializes",
+    );
+    let situation = parse_json_value(&situation, "snapshot situation JSON parses");
+    assert_eq!(situation["cache_status"]["source"], "situation_snapshot");
+    assert!(
+        situation["summary"]["inventory_size_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes >= MIN_ITEM_BYTES)
+    );
+    assert!(
+        situation["top_offenders"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty() && items.len() <= 4)
+    );
+    assert!(
+        situation["caveats"]
+            .as_array()
+            .is_some_and(|caveats| caveats.iter().any(|caveat| caveat
+                .as_str()
+                .is_some_and(|text| text.starts_with("Snapshot-first storage situation"))))
+    );
+
     let indexed = must_ok(
         storage_hygiene_indexed_json(vec![root.display().to_string()], 5, 80),
         "indexed snapshot serializes",
@@ -435,6 +459,77 @@ fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
         indexed["diagnostics"]["storage_index_hits"]
             .as_u64()
             .is_some_and(|hits| hits >= 1)
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_situation_snapshot_preserves_partial_empty_cache_status() {
+    let _index_guard = storage_index_test_guard();
+    let root = test_root("empty-situation-snapshot");
+    if let Err(error) = fs::create_dir_all(&root) {
+        panic!("create empty root: {error}");
+    }
+
+    let first = must_ok(
+        storage_situation_json(vec![root.display().to_string()], 4),
+        "initial empty situation serializes",
+    );
+    let first = parse_json_value(&first, "initial empty situation parses");
+    assert_eq!(first["cache_status"]["source"], "persistent_index");
+    assert_eq!(first["cache_status"]["partial"], true);
+    assert_eq!(first["cache_status"]["confidence"], "low");
+
+    let second = must_ok(
+        storage_situation_json(vec![root.display().to_string()], 4),
+        "snapshot empty situation serializes",
+    );
+    let second = parse_json_value(&second, "snapshot empty situation parses");
+    assert_eq!(second["cache_status"]["source"], "situation_snapshot");
+    assert_eq!(second["cache_status"]["partial"], true);
+    assert_eq!(second["cache_status"]["confidence"], "low");
+    assert_eq!(second["summary"]["item_count"], 0);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_situation_snapshot_requires_exact_root_set() {
+    let _index_guard = storage_index_test_guard();
+    let root = test_root("exact-situation-snapshot");
+    let child = root.join("project");
+    let target = child.join("target").join("debug");
+    if let Err(error) = fs::create_dir_all(&target) {
+        panic!("create target dir: {error}");
+    }
+    if let Err(error) = fs::write(
+        target.join("blob"),
+        vec![0u8; (MIN_ITEM_BYTES + 128) as usize],
+    ) {
+        panic!("write build artifact: {error}");
+    }
+
+    let _ = build_storage_hygiene_report_for_roots_mode(
+        vec![child.display().to_string()],
+        5,
+        80,
+        "fast_changed_only",
+    );
+
+    let parent_situation = must_ok(
+        storage_situation_json(vec![root.display().to_string()], 4),
+        "parent situation serializes",
+    );
+    let parent_situation = parse_json_value(&parent_situation, "parent situation parses");
+    assert_eq!(
+        parent_situation["cache_status"]["source"],
+        "persistent_index"
+    );
+    assert!(
+        parent_situation["summary"]["inventory_size_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes >= MIN_ITEM_BYTES)
     );
 
     let _ = fs::remove_dir_all(root);
@@ -5545,6 +5640,23 @@ fn storage_scan_job_completes_and_returns_result() {
     assert!(result.contains("\"scan_mode\":\"fast_changed_only\""));
     assert!(result.contains("\"repository_inventory_coverage\""));
     assert!(result.contains("\"rust-build\""));
+
+    let situation = must_ok(
+        storage_situation_json(vec![root.display().to_string()], 4),
+        "scan job situation serializes",
+    );
+    let situation = parse_json_value(&situation, "scan job situation JSON parses");
+    assert_eq!(situation["cache_status"]["source"], "situation_snapshot");
+    assert!(
+        situation["summary"]["inventory_size_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes >= MIN_ITEM_BYTES)
+    );
+    assert!(
+        situation["top_offenders"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty() && items.len() <= 4)
+    );
 }
 
 #[test]

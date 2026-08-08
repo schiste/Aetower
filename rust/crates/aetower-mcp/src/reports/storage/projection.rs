@@ -80,11 +80,62 @@ pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String
         &roots,
         now_millis,
     );
-    let dirty_paths = storage_index.load_dirty_path_strings(&roots, 512);
-    let summaries = storage_index.load_index_summaries(&roots);
+    if let Some(snapshot) = storage_index.load_situation_snapshot(&roots, limit.clamp(1, 40)) {
+        let snapshot =
+            overlay_storage_situation_snapshot(snapshot, &storage_index, &roots, dirty_summary);
+        if snapshot.dirty_paths.dirty_path_count > 0 {
+            let _ = storage_index.persist_situation_snapshot(
+                &roots,
+                "situation_snapshot_dirty_overlay",
+                &snapshot,
+            );
+        }
+        return serde_json::to_string(&snapshot).map_err(|error| error.to_string());
+    }
+
+    let response =
+        build_storage_situation_response(&storage_index, &roots, now_millis, limit, dirty_summary);
+    let _ = storage_index.persist_situation_snapshot(
+        &roots,
+        response.cache_status.source.as_str(),
+        &response,
+    );
+    serde_json::to_string(&response).map_err(|error| error.to_string())
+}
+
+pub(super) fn persist_storage_situation_snapshot_from_report(report: &StorageHygieneReport) {
+    if report.roots.is_empty() {
+        return;
+    }
+    let roots = report.roots.iter().map(PathBuf::from).collect::<Vec<_>>();
+    let storage_index = StorageSizeIndex::open();
+    let dirty_summary = storage_index.dirty_path_summary(&roots, 5);
+    let dirty_paths = if dirty_summary.dirty_path_count == 0 {
+        Vec::new()
+    } else {
+        storage_index.load_dirty_path_strings(&roots, 512)
+    };
+    let response = build_storage_situation_response_from_report(
+        report,
+        storage_index.status.clone(),
+        dirty_summary,
+        &dirty_paths,
+    );
+    let _ = storage_index.persist_situation_snapshot(&roots, "scan_finalized", &response);
+}
+
+fn build_storage_situation_response(
+    storage_index: &StorageSizeIndex,
+    roots: &[PathBuf],
+    now_millis: u64,
+    limit: usize,
+    dirty_summary: StorageDirtyPathSummary,
+) -> StorageSituationResponse {
+    let dirty_paths = storage_index.load_dirty_path_strings(roots, 512);
+    let summaries = storage_index.load_index_summaries(roots);
     let situation_summary = summarize_storage_situation(&summaries);
     let top_offenders = storage_index
-        .load_top_offenders(&roots, limit.clamp(1, 40))
+        .load_top_offenders(roots, limit.clamp(1, 40))
         .into_iter()
         .map(|row| {
             let stale = path_matches_dirty_prefix(Path::new(&row.path), &dirty_paths);
@@ -103,9 +154,9 @@ pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String
     let has_cached_facts =
         situation_summary.item_count > 0 || !top_offenders.is_empty() || !summaries.is_empty();
     let mut cache_status =
-        storage_index_cache_status(&storage_index, now_millis, true, has_cached_facts);
+        storage_index_cache_status(storage_index, now_millis, true, has_cached_facts);
     apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
-    let response = StorageSituationResponse {
+    StorageSituationResponse {
         captured_at_millis: now_millis,
         cache_status,
         storage_index_status: storage_index.status.clone(),
@@ -113,7 +164,7 @@ pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String
         dirty_paths: dirty_summary,
         summary: situation_summary,
         top_offenders,
-        volume_states: summarize_volume_states(&roots),
+        volume_states: summarize_volume_states(roots),
         caveats: vec![
             "Cache-first storage situation: uses Aetower's persistent index summaries and top offenders without walking the filesystem."
                 .to_owned(),
@@ -122,8 +173,127 @@ pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String
             "Summary bytes are the last known indexed facts; run a refresh to incorporate dirty paths."
                 .to_owned(),
         ],
+    }
+}
+
+fn overlay_storage_situation_snapshot(
+    mut snapshot: StorageSituationResponse,
+    storage_index: &StorageSizeIndex,
+    roots: &[PathBuf],
+    dirty_summary: StorageDirtyPathSummary,
+) -> StorageSituationResponse {
+    let dirty_paths = if dirty_summary.dirty_path_count == 0 {
+        Vec::new()
+    } else {
+        storage_index.load_dirty_path_strings(roots, 512)
     };
-    serde_json::to_string(&response).map_err(|error| error.to_string())
+    for offender in &mut snapshot.top_offenders {
+        offender.stale = path_matches_dirty_prefix(Path::new(&offender.path), &dirty_paths);
+    }
+    snapshot.cache_status.source = "situation_snapshot".to_owned();
+    snapshot.cache_status.age_millis = Some(
+        storage_now_millis().saturating_sub(
+            snapshot
+                .cache_status
+                .latest_scan_millis
+                .unwrap_or(snapshot.captured_at_millis),
+        ),
+    );
+    if dirty_summary.dirty_path_count == 0 {
+        snapshot.cache_status.message =
+            "Loaded from Aetower's persisted storage situation snapshot.".to_owned();
+    }
+    apply_dirty_summary_to_cache_status(&mut snapshot.cache_status, &dirty_summary);
+    snapshot.storage_index_status = storage_index.status.clone();
+    snapshot.dirty_paths = dirty_summary;
+    if !snapshot
+        .caveats
+        .iter()
+        .any(|caveat| caveat.starts_with("Snapshot-first storage situation"))
+    {
+        snapshot.caveats.insert(
+            0,
+            "Snapshot-first storage situation: loaded from the persisted materialized view before any report projection."
+                .to_owned(),
+        );
+    }
+    snapshot
+}
+
+fn build_storage_situation_response_from_report(
+    report: &StorageHygieneReport,
+    storage_index_status: String,
+    dirty_summary: StorageDirtyPathSummary,
+    dirty_paths: &[String],
+) -> StorageSituationResponse {
+    let mut cache_status = report.cache_status.clone();
+    apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
+    let last_scan_millis = cache_status
+        .latest_scan_millis
+        .unwrap_or(report.captured_at_millis);
+    let mut top_offenders = report
+        .items
+        .iter()
+        .map(|item| StorageSituationTopOffender {
+            path: item.path.clone(),
+            source_root: source_root_for_report_path(&item.path, &report.roots),
+            kind: item.kind.clone(),
+            cleanup_tier: item.cleanup_tier.clone(),
+            physical_bytes: item.physical_bytes,
+            recommendation_score: item.recommendation_score,
+            last_scan_millis,
+            stale: item.stale || path_matches_dirty_prefix(Path::new(&item.path), dirty_paths),
+        })
+        .collect::<Vec<_>>();
+    top_offenders.sort_by(|left, right| {
+        right
+            .recommendation_score
+            .total_cmp(&left.recommendation_score)
+            .then_with(|| right.physical_bytes.cmp(&left.physical_bytes))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    top_offenders.truncate(40);
+
+    let mut caveats = report.caveats.clone();
+    if !caveats
+        .iter()
+        .any(|caveat| caveat.starts_with("Storage situation snapshot"))
+    {
+        caveats.insert(
+            0,
+            "Storage situation snapshot: persisted from the last completed storage report."
+                .to_owned(),
+        );
+    }
+
+    StorageSituationResponse {
+        captured_at_millis: report.captured_at_millis,
+        cache_status,
+        storage_index_status,
+        roots: report.roots.clone(),
+        dirty_paths: dirty_summary,
+        summary: StorageSituationSummary {
+            source_root_count: report.roots.len(),
+            item_count: report.summary.item_count.min(u64::MAX as usize) as u64,
+            inventory_size_bytes: report.summary.inventory_size_bytes,
+            safely_reclaimable_now_bytes: report.summary.safely_reclaimable_now_bytes,
+            maybe_reclaimable_bytes: report.summary.maybe_reclaimable_bytes,
+            review_required_bytes: report.summary.review_required_bytes,
+            dangerous_user_data_bytes: report.summary.dangerous_user_data_bytes,
+        },
+        top_offenders,
+        volume_states: report.volume_states.clone(),
+        caveats,
+    }
+}
+
+fn source_root_for_report_path(path: &str, roots: &[String]) -> String {
+    roots
+        .iter()
+        .find(|root| path_is_under_root(path, Path::new(root.as_str())))
+        .cloned()
+        .or_else(|| roots.first().cloned())
+        .unwrap_or_default()
 }
 
 fn summarize_storage_situation(rows: &[StorageIndexSummaryRow]) -> StorageSituationSummary {
