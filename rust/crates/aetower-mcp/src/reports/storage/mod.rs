@@ -514,7 +514,9 @@ use fingerprint::{
 use incremental::ensure_dirty_storage_subtree_measurement;
 #[cfg(test)]
 use incremental::{
-    measure_dirty_storage_subtrees_once, run_dirty_storage_subtree_measurement_worker,
+    StorageIncrementalDrainPolicy, measure_dirty_storage_subtrees_once,
+    run_dirty_storage_subtree_measurement_worker,
+    run_dirty_storage_subtree_measurement_worker_with_policy,
 };
 pub(crate) use jobs::StorageScanJobProgress;
 #[cfg(test)]
@@ -553,9 +555,9 @@ use models::{
     StorageWriterLedgerRecord,
 };
 pub use projection::{
-    storage_growth_insights_json, storage_hygiene_actions_json, storage_hygiene_items_page_json,
-    storage_hygiene_overview_json, storage_hygiene_repo_detail_json, storage_pipeline_debug_json,
-    storage_situation_json,
+    storage_backlog_drain_json, storage_growth_insights_json, storage_hygiene_actions_json,
+    storage_hygiene_items_page_json, storage_hygiene_overview_json,
+    storage_hygiene_repo_detail_json, storage_pipeline_debug_json, storage_situation_json,
 };
 pub use repo::repository_inventory_json;
 use repo::{

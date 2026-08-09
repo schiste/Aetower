@@ -72,12 +72,26 @@ pub fn storage_growth_insights_json(
 }
 
 pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String, String> {
+    storage_situation_json_with_incremental_drain(roots, limit, false)
+}
+
+pub fn storage_backlog_drain_json(roots: Vec<String>, limit: usize) -> Result<String, String> {
+    storage_situation_json_with_incremental_drain(roots, limit, true)
+}
+
+fn storage_situation_json_with_incremental_drain(
+    roots: Vec<String>,
+    limit: usize,
+    start_incremental_drain: bool,
+) -> Result<String, String> {
     let now_millis = storage_now_millis();
     let roots = normalize_roots(roots);
     let storage_index = StorageSizeIndex::open();
     let ledger_records = load_storage_filesystem_event_records();
     let dirty_summary = storage_index.ingest_filesystem_events(&ledger_records, &roots, now_millis);
-    ensure_dirty_storage_subtree_measurement(&roots, &dirty_summary);
+    if start_incremental_drain {
+        ensure_dirty_storage_subtree_measurement(&roots, &dirty_summary);
+    }
     let limit = limit.clamp(1, 40);
     if let Some(snapshot) = storage_index.load_situation_snapshot(&roots, limit) {
         let snapshot = overlay_storage_situation_snapshot(
@@ -113,7 +127,6 @@ pub fn storage_pipeline_debug_json(roots: Vec<String>) -> Result<String, String>
     let storage_index = StorageSizeIndex::open();
     let ledger_records = load_storage_filesystem_event_records();
     let dirty_summary = storage_index.ingest_filesystem_events(&ledger_records, &roots, now_millis);
-    ensure_dirty_storage_subtree_measurement(&roots, &dirty_summary);
     let snapshot = storage_index.load_situation_snapshot(&roots, 40);
     let event_ledger = storage_pipeline_event_ledger_debug(&ledger_records, &roots, &dirty_summary);
     let measurement = storage_index.latest_measurement_job_debug(&roots);

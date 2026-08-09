@@ -6567,6 +6567,10 @@ fn storage_situation_ingests_fsevents_ledger_before_returning_snapshot() {
     assert_eq!(debug["event_ledger"]["total_event_count"], 7);
     assert_eq!(debug["event_ledger"]["indexed_dirty_path_count"], 1);
     assert!(
+        debug["measurement"]["latest_status"].is_null(),
+        "pure storage situation/debug reads must not launch incremental measurement: {debug:?}"
+    );
+    assert!(
         debug["diagnosis"]
             .as_array()
             .is_some_and(|diagnosis| diagnosis.iter().any(|line| line
@@ -7149,6 +7153,59 @@ fn storage_incremental_worker_drains_beyond_first_dirty_batch() {
         .expect("incremental backlog drain persists situation snapshot");
     assert_eq!(snapshot.dirty_paths.dirty_path_count, 0);
     assert!(!snapshot.cache_status.stale);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_incremental_background_policy_yields_with_dirty_work_remaining() {
+    let root = test_root("incremental-worker-background-yields");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let mut records = Vec::new();
+
+    for index in 0..5 {
+        let target = watched
+            .join(format!("project-{index}"))
+            .join("target")
+            .join("debug");
+        let changed = target.join("changed.bin");
+        write_allocated_fixture(&changed, MIN_ITEM_BYTES + 1024 + index);
+        store_indexed_directory_for_dirty_queue(&storage_index, &target, MIN_ITEM_BYTES);
+        records.push(StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis + index),
+            path: Some(changed.display().to_string()),
+            event_id: Some(1_200 + index),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+            event_count: None,
+        });
+    }
+
+    storage_index.record_filesystem_events(&records, std::slice::from_ref(&watched), now_millis);
+
+    run_dirty_storage_subtree_measurement_worker_with_policy(
+        &storage_index,
+        std::slice::from_ref(&watched),
+        StorageIncrementalDrainPolicy::background_launch(),
+    );
+
+    let remaining_dirty = storage_index.dirty_path_summary(std::slice::from_ref(&watched), 16);
+    assert!(
+        remaining_dirty.dirty_path_count > 0,
+        "background launch policy should yield instead of draining the full backlog"
+    );
+    let measurement = storage_index.latest_measurement_job_debug(std::slice::from_ref(&watched));
+    assert_eq!(measurement.latest_status.as_deref(), Some("pending"));
+    assert!(
+        measurement
+            .latest_error
+            .as_deref()
+            .is_some_and(|error| error.contains("incremental_background_round_budget_exhausted")),
+        "background yield should persist a continuation reason: {measurement:?}"
+    );
 
     let _ = fs::remove_dir_all(root);
 }

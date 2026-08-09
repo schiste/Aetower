@@ -1,11 +1,41 @@
 use super::*;
 
-const STORAGE_INCREMENTAL_DIRTY_BATCH_LIMIT: usize = 8;
-const STORAGE_INCREMENTAL_PER_SUBTREE_BUDGET: Duration = Duration::from_millis(900);
-const STORAGE_INCREMENTAL_REPORT_ITEM_LIMIT: usize = 40;
-const STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT: usize = 64;
-const STORAGE_INCREMENTAL_IDLE_ROUND_LIMIT: usize = 2;
-const STORAGE_INCREMENTAL_CONTINUATION_DELAY: Duration = Duration::from_millis(500);
+#[derive(Clone, Copy, Debug)]
+pub(super) struct StorageIncrementalDrainPolicy {
+    dirty_batch_limit: usize,
+    per_subtree_budget: Duration,
+    report_item_limit: usize,
+    worker_round_limit: usize,
+    idle_round_limit: usize,
+    continuation_delay: Duration,
+    round_budget_error: &'static str,
+}
+
+impl StorageIncrementalDrainPolicy {
+    pub(super) fn background_launch() -> Self {
+        Self {
+            dirty_batch_limit: 2,
+            per_subtree_budget: Duration::from_millis(220),
+            report_item_limit: 24,
+            worker_round_limit: 1,
+            idle_round_limit: 1,
+            continuation_delay: Duration::from_millis(1_500),
+            round_budget_error: "incremental_background_round_budget_exhausted",
+        }
+    }
+
+    fn full_drain() -> Self {
+        Self {
+            dirty_batch_limit: 8,
+            per_subtree_budget: Duration::from_millis(900),
+            report_item_limit: 40,
+            worker_round_limit: 64,
+            idle_round_limit: 2,
+            continuation_delay: Duration::from_millis(500),
+            round_budget_error: "incremental_worker_round_budget_exhausted",
+        }
+    }
+}
 
 pub(super) fn ensure_dirty_storage_subtree_measurement(
     roots: &[PathBuf],
@@ -32,7 +62,11 @@ pub(super) fn ensure_dirty_storage_subtree_measurement(
                 roots_key: worker_roots_key,
             };
             let storage_index = StorageSizeIndex::open();
-            run_dirty_storage_subtree_measurement_worker(&storage_index, &roots);
+            run_dirty_storage_subtree_measurement_worker_with_policy(
+                &storage_index,
+                &roots,
+                StorageIncrementalDrainPolicy::background_launch(),
+            );
         }) {
         Ok(_handle) => {}
         Err(_) => {
@@ -45,25 +79,47 @@ pub(super) fn run_dirty_storage_subtree_measurement_worker(
     storage_index: &StorageSizeIndex,
     roots: &[PathBuf],
 ) {
+    run_dirty_storage_subtree_measurement_worker_with_policy(
+        storage_index,
+        roots,
+        StorageIncrementalDrainPolicy::full_drain(),
+    );
+}
+
+pub(super) fn run_dirty_storage_subtree_measurement_worker_with_policy(
+    storage_index: &StorageSizeIndex,
+    roots: &[PathBuf],
+    policy: StorageIncrementalDrainPolicy,
+) {
     let mut idle_rounds = 0usize;
-    for round in 0..STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT {
-        let result = measure_dirty_storage_subtrees_once(storage_index, roots);
+    for round in 0..policy.worker_round_limit {
+        let mut result =
+            measure_dirty_storage_subtrees_once_with_policy(storage_index, roots, policy);
         let remaining_dirty = storage_index.dirty_path_summary(roots, 1).dirty_path_count;
         if remaining_dirty == 0 {
             break;
         }
         if result.measured_path_count == 0 && result.measured_file_count == 0 {
             idle_rounds = idle_rounds.saturating_add(1);
-            if idle_rounds >= STORAGE_INCREMENTAL_IDLE_ROUND_LIMIT && !result.partial {
+            if idle_rounds >= policy.idle_round_limit && !result.partial {
                 break;
             }
         } else {
             idle_rounds = 0;
         }
-        if round + 1 >= STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT {
+        if round + 1 >= policy.worker_round_limit {
+            result.partial = true;
+            result.continuation_pending = true;
+            result.last_error = Some(policy.round_budget_error.to_owned());
+            storage_index.record_incremental_measurement_job(
+                roots,
+                &[],
+                &result,
+                storage_now_millis(),
+            );
             break;
         }
-        thread::sleep(STORAGE_INCREMENTAL_CONTINUATION_DELAY);
+        thread::sleep(policy.continuation_delay);
     }
 }
 
@@ -71,15 +127,27 @@ pub(super) fn measure_dirty_storage_subtrees_once(
     storage_index: &StorageSizeIndex,
     roots: &[PathBuf],
 ) -> StorageIncrementalMeasurementResult {
+    measure_dirty_storage_subtrees_once_with_policy(
+        storage_index,
+        roots,
+        StorageIncrementalDrainPolicy::full_drain(),
+    )
+}
+
+pub(super) fn measure_dirty_storage_subtrees_once_with_policy(
+    storage_index: &StorageSizeIndex,
+    roots: &[PathBuf],
+    policy: StorageIncrementalDrainPolicy,
+) -> StorageIncrementalMeasurementResult {
     let started_at_millis = storage_now_millis();
-    let dirty_records =
-        storage_index.load_dirty_path_records(roots, STORAGE_INCREMENTAL_DIRTY_BATCH_LIMIT);
+    let dirty_records = storage_index.load_dirty_path_records(roots, policy.dirty_batch_limit);
     let dirty_paths = dirty_records
         .iter()
         .map(|record| record.path.clone())
         .collect::<Vec<_>>();
     let mut result = StorageIncrementalMeasurementResult {
         started_at_millis,
+        dirty_paths: dirty_paths.clone(),
         ..StorageIncrementalMeasurementResult::default()
     };
     if dirty_records.is_empty() {
@@ -130,15 +198,15 @@ pub(super) fn measure_dirty_storage_subtrees_once(
             continue;
         }
 
-        let mut collector = StorageCandidateCollector::new(STORAGE_INCREMENTAL_REPORT_ITEM_LIMIT);
+        let mut collector = StorageCandidateCollector::new(policy.report_item_limit);
         let options = StorageHygieneOptions {
             max_depth: 12,
-            limit: STORAGE_INCREMENTAL_REPORT_ITEM_LIMIT,
+            limit: policy.report_item_limit,
             mode: StorageScanMode::FastChangedOnly,
             runtime: None,
             dirty_paths: Vec::new(),
         };
-        let deadline = Instant::now() + STORAGE_INCREMENTAL_PER_SUBTREE_BUDGET;
+        let deadline = Instant::now() + policy.per_subtree_budget;
         let scan_result = scan_root_with_source_root(
             &path,
             &source_root,

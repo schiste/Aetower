@@ -63,12 +63,12 @@ pub use reports::repository_scorecard::{
     repository_scorecard_json_from_scorecard_json, repository_scorecard_json_with_timeout,
 };
 pub use reports::storage::{
-    repository_inventory_json, storage_hygiene_actions_json, storage_hygiene_deep_scan_json,
-    storage_hygiene_indexed_json, storage_hygiene_items_page_json, storage_hygiene_json,
-    storage_hygiene_mode_json, storage_hygiene_overview_json, storage_hygiene_repo_detail_json,
-    storage_pipeline_debug_json, storage_scan_cancel_json, storage_scan_pause_json,
-    storage_scan_result_json, storage_scan_resume_json, storage_scan_start_json,
-    storage_scan_status_json, storage_situation_json,
+    repository_inventory_json, storage_backlog_drain_json, storage_hygiene_actions_json,
+    storage_hygiene_deep_scan_json, storage_hygiene_indexed_json, storage_hygiene_items_page_json,
+    storage_hygiene_json, storage_hygiene_mode_json, storage_hygiene_overview_json,
+    storage_hygiene_repo_detail_json, storage_pipeline_debug_json, storage_scan_cancel_json,
+    storage_scan_pause_json, storage_scan_result_json, storage_scan_resume_json,
+    storage_scan_start_json, storage_scan_status_json, storage_situation_json,
 };
 
 use reports::diagnostics::{

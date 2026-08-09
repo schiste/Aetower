@@ -370,7 +370,7 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
         ),
         ToolDescriptor::with_args(
             "aetower_storage_situation",
-            "Return the fastest cache-first storage situation: last known summary bytes, top offenders, dirty-path freshness, volume state, and cache status. Never waits on a filesystem walk; watcher-marked dirty paths may start a bounded incremental refresh in the background.",
+            "Return the fastest cache-first storage situation: last known summary bytes, top offenders, dirty-path freshness, volume state, and cache status. Never waits on or launches a filesystem walk unless refresh/background_scan is explicitly requested.",
             vec![
                 string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths. Defaults to common developer and Xcode cache locations."),
                 uint("limit", Some(1), Some(40), Some(12)).described("Number of top offenders to return."),

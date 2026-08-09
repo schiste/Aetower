@@ -329,6 +329,7 @@ pub(super) struct StorageDirtyPathSummary {
 #[derive(Clone, Debug, Default)]
 pub(super) struct StorageIncrementalMeasurementResult {
     pub(super) started_at_millis: u64,
+    pub(super) dirty_paths: Vec<String>,
     pub(super) measured_path_count: u64,
     pub(super) measured_directory_count: u64,
     pub(super) measured_file_count: u64,
@@ -2232,8 +2233,13 @@ impl StorageSizeIndex {
                 .collect::<Vec<_>>(),
         )
         .unwrap_or_else(|_| "[]".to_owned());
+        let recorded_dirty_paths = if dirty_paths.is_empty() && !result.dirty_paths.is_empty() {
+            result.dirty_paths.as_slice()
+        } else {
+            dirty_paths
+        };
         let dirty_paths_json =
-            serde_json::to_string(dirty_paths).unwrap_or_else(|_| "[]".to_owned());
+            serde_json::to_string(recorded_dirty_paths).unwrap_or_else(|_| "[]".to_owned());
         let root_key = storage_situation_roots_key(roots);
         let status = if result.continuation_pending {
             "pending"
