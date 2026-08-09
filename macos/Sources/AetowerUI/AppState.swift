@@ -2223,12 +2223,12 @@ public final class AppState {
     }
 
     /// Low-impact storage freshness loop. FSEvents only marks roots dirty; this
-    /// waits for quiescence and starts a bounded changed-only refresh. Complete
-    /// and forensic scans are explicit operator actions only.
+    /// keeps the displayed status honest without launching a storage report.
+    /// Complete, fast, and forensic report scans are explicit operator actions
+    /// unless scheduled scans are enabled.
     private func refreshStorageEstimateIfQuiescent() {
         guard let report = storageHygieneReport else { return }
         updateStorageEstimateStatus(report: report)
-        startStorageRefreshForDirtyDisplayedReportIfNeeded(report, trigger: "storage-fsevents")
     }
 
     private static func storageDirtyRefreshClassification(_ summary: StorageDirtyPathSummary) -> String {
@@ -2887,10 +2887,10 @@ public final class AppState {
         }
     }
 
-    /// Load the developer storage hygiene report once. The backend scan is
-    /// bounded and read-only; explicit refreshes call `runStorageHygieneScan`.
+    /// Load cache-first storage facts and refresh repository inventory signals.
+    /// Storage report scans are explicit operator actions.
     func ensureRepositoryInventoryResponsiveLoad(roots: [String] = []) {
-        ensureStorageHygieneScan(roots: roots)
+        loadStorageForDisplay(roots: roots)
         refreshRepositoryInventoryForVisibleCache(roots: roots)
     }
 
@@ -2920,40 +2920,7 @@ public final class AppState {
     }
 
     func ensureStorageHygieneScan(roots: [String] = []) {
-        loadStorageSituationForDisplay(roots: roots)
-        guard !storageHygieneIsLoading, !storageHygieneIsVerifyingCache else { return }
-        if let storageHygieneReport,
-           (roots.isEmpty || Self.storageHygieneReportMatchesRequestedRoots(storageHygieneReport, roots: roots))
-        {
-            updateStorageEstimateStatus(report: storageHygieneReport)
-            startStorageRefreshForDirtyDisplayedReportIfNeeded(
-                storageHygieneReport,
-                trigger: "storage-open"
-            )
-            return
-        }
-        storageHygieneTask?.cancel()
-
-        // Paint the small JSON report synchronously, even when it is only a
-        // displayable stale snapshot. Freshness is handled after paint by the
-        // dirty-path refresh logic; startup should not block on projection work.
-        switch StorageHygieneReportCacheStore.loadForDisplay(roots: roots) {
-        case let .hit(display):
-            publishStorageHygieneCacheHit(display.cache)
-            if let staleReason = display.staleReason {
-                publishStorageHygieneCacheStale(reason: staleReason)
-            }
-            startStorageRefreshForDisplayedCacheIfNeeded(
-                display,
-                requestedRoots: roots,
-                trigger: display.isStale ? "storage-open-stale-cache" : "storage-open-cache"
-            )
-            return
-        case let .miss(reason):
-            publishStorageHygieneCacheStale(reason: reason)
-            publishStorageHygieneCacheMissAwaitingScan(reason: reason)
-            return
-        }
+        loadStorageForDisplay(roots: roots)
     }
 
     private static let repositoryInventoryFingerprintAuditCooldownMillis: UInt64 = 15_000
