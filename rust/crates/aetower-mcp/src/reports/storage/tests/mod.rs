@@ -6065,7 +6065,8 @@ fn storage_scan_job_completes_and_returns_result() {
     assert!(start["persisted_at_millis"].as_u64().is_some());
 
     let mut terminal_status = String::new();
-    for _ in 0..80 {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
         let status = must_ok(storage_scan_status_json(&job_id), "status scan job");
         let status = parse_json_value(&status, "decode status");
         terminal_status = status["status"].as_str().unwrap_or_default().to_owned();
@@ -6842,6 +6843,44 @@ fn storage_dirty_queue_collapses_chau7_tab_restore_noise() {
 }
 
 #[test]
+fn storage_dirty_queue_collapses_pip_audit_cache_noise() {
+    let root = test_root("dirty-queue-collapses-pip-audit");
+    let index_dir = root.join("index");
+    let watched = root.join("Library").join("Caches");
+    let pip_audit_root = watched.join("pip-audit");
+    let nested = pip_audit_root
+        .join("4")
+        .join("d")
+        .join("4")
+        .join("2")
+        .join("f");
+    fs::create_dir_all(&nested).expect("create pip-audit noisy cache fixture");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let records = (0..16)
+        .map(|index| StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(100).saturating_add(index)),
+            path: Some(nested.join(format!("tmp-{index}")).display().to_string()),
+            event_id: Some(700 + index),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+            event_count: None,
+        })
+        .collect::<Vec<_>>();
+
+    storage_index.record_filesystem_events(&records, std::slice::from_ref(&root), now_millis);
+    let dirty_paths = storage_index
+        .load_dirty_path_records_for_test(std::slice::from_ref(&root), 8, now_millis)
+        .into_iter()
+        .map(|record| record.path)
+        .collect::<Vec<_>>();
+
+    assert_eq!(dirty_paths, vec![pip_audit_root.display().to_string()]);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_dirty_queue_ignores_aetower_storage_chatter() {
     let root = test_root("dirty-queue-ignores-aetower");
     let index_dir = root.join("index");
@@ -7062,6 +7101,54 @@ fn storage_incremental_measurer_updates_dirty_subtree_and_snapshot() {
         .load_situation_snapshot(std::slice::from_ref(&watched), 8)
         .expect("incremental measurement persists situation snapshot");
     assert_eq!(snapshot.dirty_paths.dirty_path_count, 0);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_incremental_worker_drains_beyond_first_dirty_batch() {
+    let root = test_root("incremental-worker-drains-backlog");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let mut records = Vec::new();
+
+    for index in 0..10 {
+        let target = watched
+            .join(format!("project-{index}"))
+            .join("target")
+            .join("debug");
+        let changed = target.join("changed.bin");
+        write_allocated_fixture(&changed, MIN_ITEM_BYTES + 1024 + index);
+        store_indexed_directory_for_dirty_queue(&storage_index, &target, MIN_ITEM_BYTES);
+        records.push(StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis + index),
+            path: Some(changed.display().to_string()),
+            event_id: Some(900 + index),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+            event_count: None,
+        });
+    }
+
+    storage_index.record_filesystem_events(&records, std::slice::from_ref(&watched), now_millis);
+    assert!(
+        storage_index
+            .dirty_path_summary(std::slice::from_ref(&watched), 16)
+            .dirty_path_count
+            > 8
+    );
+
+    run_dirty_storage_subtree_measurement_worker(&storage_index, std::slice::from_ref(&watched));
+
+    let clean_summary = storage_index.dirty_path_summary(std::slice::from_ref(&watched), 16);
+    assert_eq!(clean_summary.dirty_path_count, 0);
+    let snapshot = storage_index
+        .load_situation_snapshot(std::slice::from_ref(&watched), 8)
+        .expect("incremental backlog drain persists situation snapshot");
+    assert_eq!(snapshot.dirty_paths.dirty_path_count, 0);
+    assert!(!snapshot.cache_status.stale);
 
     let _ = fs::remove_dir_all(root);
 }

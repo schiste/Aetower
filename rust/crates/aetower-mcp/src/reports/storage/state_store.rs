@@ -5703,13 +5703,20 @@ fn storage_dirty_event_path_is_ignored(path: &str) -> bool {
 }
 
 fn volatile_dirty_queue_ancestor(path: &str) -> Option<String> {
-    const VOLATILE_DIR_MARKERS: [&str; 6] = [
+    const VOLATILE_DIR_MARKERS: [&str; 13] = [
         "/Library/Application Support/Chau7/TabRestoreBundles",
         "/Library/Application Support/Chau7/TabStateBackups",
+        "/Library/Application Support/discord",
         "/Library/Application Support/Google/Chrome",
+        "/Library/Caches/pip-audit",
         "/Library/Caches/Google/Chrome",
+        "/Library/Caches/com.apple.Safari",
+        "/Library/Containers/com.apple.Safari",
+        "/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/stable",
         "/.claude",
         "/.codex",
+        "/.cache/pip",
+        "/.cache/uv",
     ];
     let lowercase = path.to_ascii_lowercase();
     if let Some(index) = lowercase.find("/.git/") {

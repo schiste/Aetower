@@ -512,7 +512,9 @@ use fingerprint::{
 };
 use incremental::ensure_dirty_storage_subtree_measurement;
 #[cfg(test)]
-use incremental::measure_dirty_storage_subtrees_once;
+use incremental::{
+    measure_dirty_storage_subtrees_once, run_dirty_storage_subtree_measurement_worker,
+};
 pub(crate) use jobs::StorageScanJobProgress;
 #[cfg(test)]
 use jobs::{StorageScanControl, StorageScanJobRequest, StorageScanThrottle};

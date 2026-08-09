@@ -1,10 +1,11 @@
 use super::*;
 
-const STORAGE_INCREMENTAL_DIRTY_BATCH_LIMIT: usize = 3;
+const STORAGE_INCREMENTAL_DIRTY_BATCH_LIMIT: usize = 8;
 const STORAGE_INCREMENTAL_PER_SUBTREE_BUDGET: Duration = Duration::from_millis(900);
 const STORAGE_INCREMENTAL_REPORT_ITEM_LIMIT: usize = 40;
-const STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT: usize = 1;
-const STORAGE_INCREMENTAL_CONTINUATION_DELAY: Duration = Duration::from_millis(750);
+const STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT: usize = 64;
+const STORAGE_INCREMENTAL_IDLE_ROUND_LIMIT: usize = 2;
+const STORAGE_INCREMENTAL_CONTINUATION_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) fn ensure_dirty_storage_subtree_measurement(
     roots: &[PathBuf],
@@ -40,18 +41,24 @@ pub(super) fn ensure_dirty_storage_subtree_measurement(
     }
 }
 
-fn run_dirty_storage_subtree_measurement_worker(
+pub(super) fn run_dirty_storage_subtree_measurement_worker(
     storage_index: &StorageSizeIndex,
     roots: &[PathBuf],
 ) {
+    let mut idle_rounds = 0usize;
     for round in 0..STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT {
         let result = measure_dirty_storage_subtrees_once(storage_index, roots);
         let remaining_dirty = storage_index.dirty_path_summary(roots, 1).dirty_path_count;
         if remaining_dirty == 0 {
             break;
         }
-        if result.measured_path_count == 0 && result.measured_file_count == 0 && !result.partial {
-            break;
+        if result.measured_path_count == 0 && result.measured_file_count == 0 {
+            idle_rounds = idle_rounds.saturating_add(1);
+            if idle_rounds >= STORAGE_INCREMENTAL_IDLE_ROUND_LIMIT && !result.partial {
+                break;
+            }
+        } else {
+            idle_rounds = 0;
         }
         if round + 1 >= STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT {
             break;
@@ -129,7 +136,7 @@ pub(super) fn measure_dirty_storage_subtrees_once(
             limit: STORAGE_INCREMENTAL_REPORT_ITEM_LIMIT,
             mode: StorageScanMode::FastChangedOnly,
             runtime: None,
-            dirty_paths: vec![record.path.clone()],
+            dirty_paths: Vec::new(),
         };
         let deadline = Instant::now() + STORAGE_INCREMENTAL_PER_SUBTREE_BUDGET;
         let scan_result = scan_root_with_source_root(
