@@ -530,6 +530,9 @@ pub(super) fn build_storage_hygiene_report_with_options(
         item.evidence = storage_item_evidence(item);
         item.next_step = storage_item_next_step(item);
     }
+    let typed_domains = typed_storage_domains_for_items(&requested_roots, &items, now_millis);
+    let typed_domain_count = typed_domains.len();
+    let _ = storage_index.store_typed_storage_domains(&requested_roots, &typed_domains);
 
     if let Some(runtime) = options.runtime.as_ref() {
         let _ = runtime.set_phase(STORAGE_SCAN_PHASE_SCORECARD_OVERLAY, None);
@@ -649,6 +652,11 @@ pub(super) fn build_storage_hygiene_report_with_options(
     if detector_merged_count > 0 {
         caveats.push(format!(
             "Typed detectors surfaced {detector_merged_count} high-value storage bucket(s) before the generic walk finished."
+        ));
+    }
+    if typed_domain_count > 0 {
+        caveats.push(format!(
+            "Typed domain providers materialized {typed_domain_count} storage domain(s) for cache-first situation and reclaim views."
         ));
     }
 
@@ -922,6 +930,9 @@ pub(super) fn build_storage_hygiene_report_from_index(
         item.evidence = storage_item_evidence(item);
         item.next_step = storage_item_next_step(item);
     }
+    let typed_domains = typed_storage_domains_for_items(&requested_roots, &items, now_millis);
+    let typed_domain_count = typed_domains.len();
+    let _ = storage_index.store_typed_storage_domains(&requested_roots, &typed_domains);
     let IndexReportSections {
         discovered_repository_count: _,
         repository_inventory,
@@ -1049,7 +1060,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         growth_insights,
         cold_data,
         truncated: false,
-        caveats: indexed_report_caveats(&dirty_summary),
+        caveats: indexed_report_caveats_with_domains(&dirty_summary, typed_domain_count),
     })
 }
 
@@ -1130,7 +1141,10 @@ fn dirty_queue_status_label(
     )
 }
 
-fn indexed_report_caveats(dirty_summary: &StorageDirtyPathSummary) -> Vec<String> {
+fn indexed_report_caveats_with_domains(
+    dirty_summary: &StorageDirtyPathSummary,
+    typed_domain_count: usize,
+) -> Vec<String> {
     let mut caveats = vec![
         "Loaded from Aetower's persistent storage index for instant display.".to_owned(),
         "Run a refresh before destructive cleanup when the displayed path changed recently."
@@ -1142,6 +1156,11 @@ fn indexed_report_caveats(dirty_summary: &StorageDirtyPathSummary) -> Vec<String
         "Typed storage detectors run during refresh scans; cache-first reads do not probe detector paths."
             .to_owned(),
     ];
+    if typed_domain_count > 0 {
+        caveats.push(format!(
+            "Typed domain providers refreshed {typed_domain_count} domain(s) from cached rows without probing detector paths."
+        ));
+    }
     if dirty_summary.dirty_path_count > 0 {
         caveats.push(format!(
             "{} changed storage path{} pending incremental refresh.",
@@ -1569,14 +1588,14 @@ pub(super) fn storage_item_next_step(item: &StorageHygieneItem) -> String {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StorageReclaimBucket {
+pub(super) enum StorageReclaimBucket {
     SafelyReclaimableNow,
     MaybeReclaimable,
     ReviewRequired,
     DangerousUserData,
 }
 
-fn storage_reclaim_bucket(item: &StorageHygieneItem) -> StorageReclaimBucket {
+pub(super) fn storage_reclaim_bucket(item: &StorageHygieneItem) -> StorageReclaimBucket {
     if storage_item_is_dangerous_user_data(item) {
         StorageReclaimBucket::DangerousUserData
     } else if storage_item_is_safely_reclaimable_now(item) {

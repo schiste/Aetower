@@ -94,6 +94,291 @@ pub(super) fn merge_typed_detector_items(
     merged
 }
 
+pub(super) fn typed_storage_domains_for_items(
+    requested_roots: &[PathBuf],
+    items: &[StorageHygieneItem],
+    now_millis: u64,
+) -> Vec<StorageSituationDomain> {
+    let mut domains = BTreeMap::<(String, String, String), StorageSituationDomain>::new();
+    for item in items {
+        let Some(spec) = typed_storage_domain_spec(item) else {
+            continue;
+        };
+        let path = Path::new(&item.path);
+        let source_root = detector_source_root(path, requested_roots)
+            .display()
+            .to_string();
+        let key = (
+            source_root.clone(),
+            spec.domain_kind.clone(),
+            spec.path_prefix.clone(),
+        );
+        let domain = domains
+            .entry(key)
+            .or_insert_with(|| StorageSituationDomain {
+                domain_id: typed_storage_domain_id(
+                    &source_root,
+                    &spec.domain_kind,
+                    &spec.path_prefix,
+                ),
+                label: spec.label.clone(),
+                source_root,
+                domain_kind: spec.domain_kind.clone(),
+                path_prefix: spec.path_prefix.clone(),
+                item_count: 0,
+                directory_count: 0,
+                file_count: 0,
+                logical_bytes: 0,
+                physical_bytes: 0,
+                safely_reclaimable_now_bytes: 0,
+                maybe_reclaimable_bytes: 0,
+                review_required_bytes: 0,
+                dangerous_user_data_bytes: 0,
+                last_measured_millis: now_millis,
+                confidence: "typed".to_owned(),
+                source: "typed_detector".to_owned(),
+            });
+        domain.item_count = domain.item_count.saturating_add(1);
+        if storage_domain_item_is_directory(item) {
+            domain.directory_count = domain.directory_count.saturating_add(1);
+        } else {
+            domain.file_count = domain.file_count.saturating_add(1);
+        }
+        domain.logical_bytes = domain.logical_bytes.saturating_add(item.logical_bytes);
+        domain.physical_bytes = domain.physical_bytes.saturating_add(item.physical_bytes);
+        match storage_reclaim_bucket(item) {
+            StorageReclaimBucket::SafelyReclaimableNow => {
+                domain.safely_reclaimable_now_bytes = domain
+                    .safely_reclaimable_now_bytes
+                    .saturating_add(item.size_bytes);
+            }
+            StorageReclaimBucket::MaybeReclaimable => {
+                domain.maybe_reclaimable_bytes = domain
+                    .maybe_reclaimable_bytes
+                    .saturating_add(item.size_bytes);
+            }
+            StorageReclaimBucket::ReviewRequired => {
+                domain.review_required_bytes =
+                    domain.review_required_bytes.saturating_add(item.size_bytes);
+            }
+            StorageReclaimBucket::DangerousUserData => {
+                domain.dangerous_user_data_bytes = domain
+                    .dangerous_user_data_bytes
+                    .saturating_add(item.size_bytes);
+            }
+        }
+        domain.last_measured_millis = domain.last_measured_millis.max(now_millis);
+        if item.size_truncated {
+            domain.confidence = "partial".to_owned();
+        }
+    }
+
+    let mut domains = domains.into_values().collect::<Vec<_>>();
+    domains.sort_by(|left, right| {
+        right
+            .physical_bytes
+            .cmp(&left.physical_bytes)
+            .then_with(|| left.domain_kind.cmp(&right.domain_kind))
+            .then_with(|| left.path_prefix.cmp(&right.path_prefix))
+    });
+    domains
+}
+
+#[derive(Clone, Debug)]
+struct TypedStorageDomainSpec {
+    domain_kind: String,
+    label: String,
+    path_prefix: String,
+}
+
+fn typed_storage_domain_spec(item: &StorageHygieneItem) -> Option<TypedStorageDomainSpec> {
+    let path_lower = item.path.to_ascii_lowercase();
+    match item.kind.as_str() {
+        "xcode-device-support" => Some(typed_storage_domain_spec_for_item(
+            "xcode",
+            "Xcode DeviceSupport",
+            typed_domain_parent_prefix(&item.path).unwrap_or_else(|| item.path.clone()),
+        )),
+        "xcode-derived-data" => Some(typed_storage_domain_spec_for_item(
+            "xcode",
+            "Xcode DerivedData",
+            typed_domain_marker_prefix(&item.path, &path_lower, "/deriveddata")
+                .unwrap_or_else(|| item.path.clone()),
+        )),
+        "simulator-cache" | "xcode-simulator-runtime" => Some(typed_storage_domain_spec_for_item(
+            "xcode",
+            "Xcode simulator storage",
+            typed_domain_marker_prefix(&item.path, &path_lower, "/coresimulator")
+                .unwrap_or_else(|| item.path.clone()),
+        )),
+        "xcode-module-cache" | "xcode-source-packages" | "xcode-archives" => {
+            Some(typed_storage_domain_spec_for_item(
+                "xcode",
+                "Xcode build and package storage",
+                typed_domain_marker_prefix(&item.path, &path_lower, "/developer/xcode")
+                    .unwrap_or_else(|| item.path.clone()),
+            ))
+        }
+        "colima-vm" => Some(typed_storage_domain_spec_for_item(
+            "container-runtime",
+            "Colima VM storage",
+            typed_domain_marker_prefix(&item.path, &path_lower, "/.colima")
+                .unwrap_or_else(|| item.path.clone()),
+        )),
+        "docker-vm" | "docker-storage" => Some(typed_storage_domain_spec_for_item(
+            "container-runtime",
+            "Docker storage",
+            typed_domain_marker_prefix(&item.path, &path_lower, "/.docker")
+                .or_else(|| {
+                    typed_domain_marker_prefix(&item.path, &path_lower, "/com.docker.docker")
+                })
+                .unwrap_or_else(|| item.path.clone()),
+        )),
+        "rust-build" => Some(typed_storage_domain_spec_for_item(
+            "build-output",
+            "Rust build outputs",
+            item.path.clone(),
+        )),
+        "swift-build" => Some(typed_storage_domain_spec_for_item(
+            "build-output",
+            "Swift build outputs",
+            item.path.clone(),
+        )),
+        "build-output" | "coverage-output" | "test-output" | "next-cache" | "frontend-cache" => {
+            Some(typed_storage_domain_spec_for_item(
+                "build-output",
+                "Build and test outputs",
+                item.path.clone(),
+            ))
+        }
+        "npm-cache" | "pnpm-store" | "yarn-cache" | "uv-cache" | "python-cache"
+        | "gradle-cache" | "maven-repository" | "node-dependencies" | "python-environment"
+        | "tool-cache" => Some(typed_storage_domain_spec_for_item(
+            "package-cache",
+            "Package caches",
+            item.path.clone(),
+        )),
+        "ai-session-data" => Some(typed_storage_domain_spec_for_item(
+            "ai-session",
+            "AI sessions and logs",
+            typed_ai_domain_prefix(&item.path, &path_lower).unwrap_or_else(|| item.path.clone()),
+        )),
+        "log-file" if typed_ai_storage_path(&path_lower) => {
+            Some(typed_storage_domain_spec_for_item(
+                "ai-session",
+                "AI sessions and logs",
+                typed_ai_domain_prefix(&item.path, &path_lower)
+                    .unwrap_or_else(|| item.path.clone()),
+            ))
+        }
+        "download-archive" if typed_downloads_path(&path_lower) => {
+            Some(typed_storage_domain_spec_for_item(
+                "downloads-archive",
+                "Downloaded archives",
+                typed_domain_marker_prefix(&item.path, &path_lower, "/downloads")
+                    .unwrap_or_else(|| item.path.clone()),
+            ))
+        }
+        "video-file" if typed_downloads_path(&path_lower) => {
+            Some(typed_storage_domain_spec_for_item(
+                "downloads-media",
+                "Downloaded media",
+                typed_domain_marker_prefix(&item.path, &path_lower, "/downloads")
+                    .unwrap_or_else(|| item.path.clone()),
+            ))
+        }
+        "offline-media" => Some(typed_storage_domain_spec_for_item(
+            "offline-media",
+            "App offline media",
+            item.path.clone(),
+        )),
+        _ => None,
+    }
+}
+
+fn typed_storage_domain_spec_for_item(
+    domain_kind: &str,
+    label: &str,
+    path_prefix: String,
+) -> TypedStorageDomainSpec {
+    TypedStorageDomainSpec {
+        domain_kind: domain_kind.to_owned(),
+        label: label.to_owned(),
+        path_prefix,
+    }
+}
+
+fn typed_storage_domain_id(source_root: &str, domain_kind: &str, path_prefix: &str) -> String {
+    format!("typed:{domain_kind}:{source_root}:{path_prefix}")
+}
+
+fn typed_domain_parent_prefix(path: &str) -> Option<String> {
+    Path::new(path)
+        .parent()
+        .map(|parent| parent.display().to_string())
+}
+
+fn typed_domain_marker_prefix(path: &str, path_lower: &str, marker: &str) -> Option<String> {
+    let index = path_lower.find(marker)?;
+    let end = index.saturating_add(marker.len());
+    path.get(..end).map(str::to_owned)
+}
+
+fn typed_ai_domain_prefix(path: &str, path_lower: &str) -> Option<String> {
+    for marker in [
+        "/.codex",
+        "/.claude",
+        "/library/application support/claude",
+        "/library/application support/chau7",
+        "/library/application support/aetower",
+        "/.cursor",
+        "/.aider",
+    ] {
+        if let Some(prefix) = typed_domain_marker_prefix(path, path_lower, marker) {
+            return Some(prefix);
+        }
+    }
+    None
+}
+
+fn typed_ai_storage_path(path_lower: &str) -> bool {
+    [
+        "/.codex/",
+        "/.claude/",
+        "/library/application support/claude/",
+        "/library/application support/chau7/",
+        "/library/application support/aetower/",
+        "/.cursor/",
+        "/.aider/",
+    ]
+    .iter()
+    .any(|marker| path_lower.contains(marker))
+}
+
+fn typed_downloads_path(path_lower: &str) -> bool {
+    path_lower.contains("/downloads/")
+}
+
+fn storage_domain_item_is_directory(item: &StorageHygieneItem) -> bool {
+    fs::symlink_metadata(&item.path)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or_else(|_| {
+            !matches!(
+                item.kind.as_str(),
+                "download-archive"
+                    | "video-file"
+                    | "image-file"
+                    | "text-file"
+                    | "document-file"
+                    | "binary-file"
+                    | "cold-file"
+                    | "large-file"
+                    | "log-file"
+                    | "release-artifact"
+            )
+        })
+}
+
 fn typed_detector_budget(mode: StorageScanMode) -> Duration {
     match mode {
         StorageScanMode::InstantCached | StorageScanMode::FastChangedOnly => {

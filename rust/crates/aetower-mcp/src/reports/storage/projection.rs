@@ -149,7 +149,8 @@ fn build_storage_situation_response(
 ) -> StorageSituationResponse {
     let dirty_paths = storage_index.load_dirty_path_strings(roots, 512);
     let summaries = storage_index.load_index_summaries(roots);
-    let situation_summary = summarize_storage_situation(&summaries);
+    let domains = storage_index.load_storage_domains(roots, 80);
+    let situation_summary = summarize_storage_situation_with_domains(&summaries, &domains);
     let top_offenders = storage_index
         .load_top_offenders(roots, limit.clamp(1, 40))
         .into_iter()
@@ -167,8 +168,10 @@ fn build_storage_situation_response(
             }
         })
         .collect::<Vec<_>>();
-    let has_cached_facts =
-        situation_summary.item_count > 0 || !top_offenders.is_empty() || !summaries.is_empty();
+    let has_cached_facts = situation_summary.item_count > 0
+        || !top_offenders.is_empty()
+        || !summaries.is_empty()
+        || !domains.is_empty();
     let mut cache_status =
         storage_index_cache_status(storage_index, now_millis, true, has_cached_facts);
     apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
@@ -186,6 +189,12 @@ fn build_storage_situation_response(
                 .to_owned(),
         );
     }
+    if !domains.is_empty() {
+        caveats.push(
+            "Typed storage domains feed the situation and reclaim buckets directly from the materialized domain view."
+                .to_owned(),
+        );
+    }
     StorageSituationResponse {
         captured_at_millis: now_millis,
         cache_status,
@@ -197,6 +206,7 @@ fn build_storage_situation_response(
         dirty_paths: dirty_summary,
         summary: situation_summary,
         top_offenders,
+        domains,
         volume_states: summarize_volume_states(roots),
         caveats,
     }
@@ -215,6 +225,10 @@ fn overlay_storage_situation_snapshot(
     };
     for offender in &mut snapshot.top_offenders {
         offender.stale = path_matches_dirty_prefix(Path::new(&offender.path), &dirty_paths);
+    }
+    let domains = storage_index.load_storage_domains(roots, 80);
+    if !domains.is_empty() {
+        snapshot.domains = domains;
     }
     snapshot.cache_status.source = "situation_snapshot".to_owned();
     snapshot.cache_status.age_millis = Some(
@@ -302,6 +316,9 @@ fn build_storage_situation_response_from_report(
                 .to_owned(),
         );
     }
+    let report_roots = report.roots.iter().map(PathBuf::from).collect::<Vec<_>>();
+    let domains =
+        typed_storage_domains_for_items(&report_roots, &report.items, report.captured_at_millis);
 
     StorageSituationResponse {
         captured_at_millis: report.captured_at_millis,
@@ -319,6 +336,7 @@ fn build_storage_situation_response_from_report(
             dangerous_user_data_bytes: report.summary.dangerous_user_data_bytes,
         },
         top_offenders,
+        domains,
         volume_states: report.volume_states.clone(),
         caveats,
     }
@@ -359,6 +377,47 @@ fn summarize_storage_situation(rows: &[StorageIndexSummaryRow]) -> StorageSituat
             summary
         },
     )
+}
+
+fn summarize_storage_situation_with_domains(
+    rows: &[StorageIndexSummaryRow],
+    domains: &[StorageSituationDomain],
+) -> StorageSituationSummary {
+    let mut summary = summarize_storage_situation(rows);
+    let covered_roots = rows
+        .iter()
+        .map(|row| row.source_root.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut domain_roots = BTreeSet::new();
+    for domain in domains
+        .iter()
+        .filter(|domain| domain.source == "typed_detector")
+    {
+        domain_roots.insert(domain.source_root.as_str());
+        if covered_roots.contains(domain.source_root.as_str()) {
+            continue;
+        }
+        summary.item_count = summary.item_count.saturating_add(domain.item_count);
+        summary.inventory_size_bytes = summary
+            .inventory_size_bytes
+            .saturating_add(domain.physical_bytes);
+        summary.safely_reclaimable_now_bytes = summary
+            .safely_reclaimable_now_bytes
+            .saturating_add(domain.safely_reclaimable_now_bytes);
+        summary.maybe_reclaimable_bytes = summary
+            .maybe_reclaimable_bytes
+            .saturating_add(domain.maybe_reclaimable_bytes);
+        summary.review_required_bytes = summary
+            .review_required_bytes
+            .saturating_add(domain.review_required_bytes);
+        summary.dangerous_user_data_bytes = summary
+            .dangerous_user_data_bytes
+            .saturating_add(domain.dangerous_user_data_bytes);
+    }
+    if summary.source_root_count == 0 {
+        summary.source_root_count = domain_roots.len();
+    }
+    summary
 }
 
 pub fn storage_hygiene_actions_json(

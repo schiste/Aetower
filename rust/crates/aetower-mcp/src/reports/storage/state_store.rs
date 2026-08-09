@@ -3835,6 +3835,112 @@ impl StorageSizeIndex {
         offenders
     }
 
+    pub(super) fn store_typed_storage_domains(
+        &self,
+        roots: &[PathBuf],
+        domains: &[StorageSituationDomain],
+    ) -> Result<(), String> {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("typed_storage_domain_transaction:{error}"))?;
+        for root in roots {
+            transaction
+                .execute(
+                    "DELETE FROM storage_domain
+                     WHERE source = 'typed_detector' AND source_root = ?1",
+                    params![root.display().to_string()],
+                )
+                .map_err(|error| format!("clear_typed_storage_domains:{error}"))?;
+        }
+        {
+            let mut insert = transaction
+                .prepare(
+                    "INSERT OR REPLACE INTO storage_domain (
+                        domain_id, label, source_root, domain_kind, path_prefix, item_count,
+                        directory_count, file_count, logical_bytes, physical_bytes,
+                        safely_reclaimable_now_bytes, maybe_reclaimable_bytes,
+                        review_required_bytes, dangerous_user_data_bytes, last_measured_millis,
+                        confidence, source
+                     ) VALUES (
+                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                        ?17
+                     )",
+                )
+                .map_err(|error| format!("prepare_typed_storage_domain_insert:{error}"))?;
+            for domain in domains {
+                insert
+                    .execute(params![
+                        &domain.domain_id,
+                        &domain.label,
+                        &domain.source_root,
+                        &domain.domain_kind,
+                        &domain.path_prefix,
+                        domain.item_count.min(i64::MAX as u64) as i64,
+                        domain.directory_count.min(i64::MAX as u64) as i64,
+                        domain.file_count.min(i64::MAX as u64) as i64,
+                        domain.logical_bytes.min(i64::MAX as u64) as i64,
+                        domain.physical_bytes.min(i64::MAX as u64) as i64,
+                        domain.safely_reclaimable_now_bytes.min(i64::MAX as u64) as i64,
+                        domain.maybe_reclaimable_bytes.min(i64::MAX as u64) as i64,
+                        domain.review_required_bytes.min(i64::MAX as u64) as i64,
+                        domain.dangerous_user_data_bytes.min(i64::MAX as u64) as i64,
+                        domain.last_measured_millis.min(i64::MAX as u64) as i64,
+                        &domain.confidence,
+                        &domain.source,
+                    ])
+                    .map_err(|error| format!("insert_typed_storage_domain:{error}"))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_typed_storage_domains:{error}"))?;
+        super::report::invalidate_index_report_sections_memo();
+        Ok(())
+    }
+
+    pub(super) fn load_storage_domains(
+        &self,
+        roots: &[PathBuf],
+        limit: usize,
+    ) -> Vec<StorageSituationDomain> {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let mut predicate = "1 = 1".to_owned();
+        let mut bindings = Vec::new();
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "source_root");
+        bindings.push((limit.clamp(1, 1_000) as i64).into());
+        let Ok(mut statement) = connection.prepare(&format!(
+            "SELECT domain_id, label, source_root, domain_kind, path_prefix, item_count,
+                    directory_count, file_count, logical_bytes, physical_bytes,
+                    safely_reclaimable_now_bytes, maybe_reclaimable_bytes, review_required_bytes,
+                    dangerous_user_data_bytes, last_measured_millis, confidence, source
+             FROM storage_domain
+             WHERE {predicate}
+             ORDER BY
+                CASE WHEN source = 'typed_detector' THEN 0 ELSE 1 END,
+                CASE WHEN domain_kind = 'source_root' THEN 1 ELSE 0 END,
+                physical_bytes DESC,
+                label ASC,
+                path_prefix ASC
+             LIMIT ?",
+        )) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            params_from_iter(bindings.iter()),
+            storage_situation_domain_from_sql,
+        ) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
+
     pub(super) fn persist_situation_snapshot(
         &self,
         roots: &[PathBuf],
@@ -4345,7 +4451,7 @@ fn refresh_materialized_storage_index_for_roots(
             params![source_root],
         )?;
         connection.execute(
-            "DELETE FROM storage_domain WHERE source_root = ?1",
+            "DELETE FROM storage_domain WHERE source_root = ?1 AND source = 'storage_file_index'",
             params![source_root],
         )?;
         connection.execute(
@@ -4490,7 +4596,7 @@ fn refresh_materialized_storage_domain_job_for_root(
     )?;
     if aggregate.item_count == 0 {
         connection.execute(
-            "DELETE FROM storage_domain WHERE source_root = ?1",
+            "DELETE FROM storage_domain WHERE source_root = ?1 AND source = 'storage_file_index'",
             params![source_root],
         )?;
         connection.execute(
@@ -5528,6 +5634,30 @@ fn storage_top_offender_row_from_sql(
         physical_bytes: row.get::<_, i64>(4)?.max(0) as u64,
         recommendation_score: row.get(5)?,
         last_scan_millis: row.get::<_, i64>(6)?.max(0) as u64,
+    })
+}
+
+fn storage_situation_domain_from_sql(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<StorageSituationDomain> {
+    Ok(StorageSituationDomain {
+        domain_id: row.get(0)?,
+        label: row.get(1)?,
+        source_root: row.get(2)?,
+        domain_kind: row.get(3)?,
+        path_prefix: row.get(4)?,
+        item_count: row.get::<_, i64>(5)?.max(0) as u64,
+        directory_count: row.get::<_, i64>(6)?.max(0) as u64,
+        file_count: row.get::<_, i64>(7)?.max(0) as u64,
+        logical_bytes: row.get::<_, i64>(8)?.max(0) as u64,
+        physical_bytes: row.get::<_, i64>(9)?.max(0) as u64,
+        safely_reclaimable_now_bytes: row.get::<_, i64>(10)?.max(0) as u64,
+        maybe_reclaimable_bytes: row.get::<_, i64>(11)?.max(0) as u64,
+        review_required_bytes: row.get::<_, i64>(12)?.max(0) as u64,
+        dangerous_user_data_bytes: row.get::<_, i64>(13)?.max(0) as u64,
+        last_measured_millis: row.get::<_, i64>(14)?.max(0) as u64,
+        confidence: row.get(15)?,
+        source: row.get(16)?,
     })
 }
 

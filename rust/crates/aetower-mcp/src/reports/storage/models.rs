@@ -76,6 +76,27 @@ pub(super) struct StorageSituationTopOffender {
     pub(super) stale: bool,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct StorageSituationDomain {
+    pub(super) domain_id: String,
+    pub(super) label: String,
+    pub(super) source_root: String,
+    pub(super) domain_kind: String,
+    pub(super) path_prefix: String,
+    pub(super) item_count: u64,
+    pub(super) directory_count: u64,
+    pub(super) file_count: u64,
+    pub(super) logical_bytes: u64,
+    pub(super) physical_bytes: u64,
+    pub(super) safely_reclaimable_now_bytes: u64,
+    pub(super) maybe_reclaimable_bytes: u64,
+    pub(super) review_required_bytes: u64,
+    pub(super) dangerous_user_data_bytes: u64,
+    pub(super) last_measured_millis: u64,
+    pub(super) confidence: String,
+    pub(super) source: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct StorageSituationResponse {
     pub(super) captured_at_millis: u64,
@@ -85,6 +106,8 @@ pub(super) struct StorageSituationResponse {
     pub(super) dirty_paths: StorageDirtyPathSummary,
     pub(super) summary: StorageSituationSummary,
     pub(super) top_offenders: Vec<StorageSituationTopOffender>,
+    #[serde(default)]
+    pub(super) domains: Vec<StorageSituationDomain>,
     pub(super) volume_states: Vec<StorageVolumeState>,
     pub(super) caveats: Vec<String>,
 }

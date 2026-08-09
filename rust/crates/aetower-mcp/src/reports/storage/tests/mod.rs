@@ -7965,6 +7965,7 @@ fn storage_hygiene_surfaces_colima_vm_storage_as_review_only() {
 
 #[test]
 fn typed_storage_detectors_surface_known_buckets_despite_scan_limits() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("typed-storage-detectors");
     let repositories = root.join("Repositories");
     let rust_project = repositories.join("RustApp");
@@ -8071,6 +8072,50 @@ fn typed_storage_detectors_surface_known_buckets_despite_scan_limits() {
                 .as_str()
                 .is_some_and(|text| text.contains("Typed detectors surfaced")))),
         "report should disclose typed detector contribution"
+    );
+    assert!(
+        report["caveats"]
+            .as_array()
+            .is_some_and(|caveats| caveats.iter().any(|caveat| caveat
+                .as_str()
+                .is_some_and(|text| text.contains("Typed domain providers materialized")))),
+        "report should disclose typed domain materialization"
+    );
+
+    let situation = must_ok(
+        storage_situation_json(vec![root.display().to_string()], 40),
+        "typed detector situation serializes",
+    );
+    let situation = parse_json_value(&situation, "typed detector situation parses");
+    let domains = situation["domains"]
+        .as_array()
+        .unwrap_or_else(|| panic!("storage situation domains serialize as an array"));
+    let domain_kinds = domains
+        .iter()
+        .filter(|domain| domain["source"] == "typed_detector")
+        .filter_map(|domain| domain["domain_kind"].as_str())
+        .collect::<BTreeSet<_>>();
+    for expected in [
+        "xcode",
+        "container-runtime",
+        "build-output",
+        "package-cache",
+        "ai-session",
+        "offline-media",
+        "downloads-archive",
+        "downloads-media",
+    ] {
+        assert!(
+            domain_kinds.contains(expected),
+            "{expected} should be materialized as a typed domain; saw {domain_kinds:?}"
+        );
+    }
+    assert!(
+        domains
+            .iter()
+            .any(|domain| domain["domain_kind"] == "ai-session"
+                && domain["dangerous_user_data_bytes"].as_u64().is_some()),
+        "AI session domains should carry strict reclaim bucket fields"
     );
 
     let _ = fs::remove_dir_all(root);
