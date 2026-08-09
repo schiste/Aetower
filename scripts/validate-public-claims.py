@@ -76,6 +76,10 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def missing_needles(source: str, needles: list[str]) -> list[str]:
+    return [needle for needle in needles if needle not in source]
+
+
 def load_release_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.is_file():
@@ -280,6 +284,166 @@ def check_outbound_defaults(validator: ClaimsValidator) -> None:
         swift_default_false(source, "fleetEnabled"),
         "Fleet default off",
         "settings.fleetEnabled defaults to false",
+    )
+
+
+def check_storage_materialized_workflow(validator: ClaimsValidator) -> None:
+    state_store = read_text(ROOT / "rust/crates/aetower-mcp/src/reports/storage/state_store.rs")
+    projection = read_text(ROOT / "rust/crates/aetower-mcp/src/reports/storage/projection.rs")
+    report = read_text(ROOT / "rust/crates/aetower-mcp/src/reports/storage/report.rs")
+    jobs = read_text(ROOT / "rust/crates/aetower-mcp/src/reports/storage/jobs.rs")
+    events = read_text(ROOT / "rust/crates/aetower-mcp/src/reports/storage/events.rs")
+    incremental = read_text(ROOT / "rust/crates/aetower-mcp/src/reports/storage/incremental.rs")
+    cleanup = read_text(ROOT / "rust/crates/aetower-mcp/src/reports/storage/cleanup.rs")
+    models = read_text(ROOT / "rust/crates/aetower-mcp/src/reports/storage/models.rs")
+    storage_tests = read_text(ROOT / "rust/crates/aetower-mcp/src/reports/storage/tests/mod.rs")
+    tools_storage = read_text(ROOT / "rust/crates/aetower-mcp/src/tools/storage.rs")
+    tool_descriptors = read_text(ROOT / "rust/crates/aetower-mcp/src/tools/descriptors.rs")
+    app_state = read_text(ROOT / "macos/Sources/AetowerUI/AppState.swift")
+    storage_view = read_text(ROOT / "macos/Sources/AetowerUI/StorageView.swift")
+    situation_model = read_text(ROOT / "macos/Sources/AetowerUI/StorageSituationModel.swift")
+    ffi = read_text(ROOT / "macos/Sources/AetowerBindings/aetower_ffi.swift")
+
+    required_tables = [
+        "storage_path",
+        "storage_directory_rollup",
+        "storage_domain",
+        "storage_dirty_path",
+        "storage_event_cursor",
+        "storage_measurement_job",
+        "storage_situation_snapshot",
+    ]
+    missing_tables = [
+        table
+        for table in required_tables
+        if f"CREATE TABLE IF NOT EXISTS {table}" not in state_store
+    ]
+    validator.require(
+        not missing_tables,
+        "storage materialized index schema",
+        "tables present: " + ", ".join(required_tables)
+        if not missing_tables
+        else "missing tables: " + ", ".join(missing_tables),
+    )
+
+    first_paint_contract = {
+        "Rust storage_situation_json export": "pub fn storage_situation_json" in projection,
+        "snapshot overlay": "load_situation_snapshot" in projection
+        and "overlay_storage_situation_snapshot" in projection,
+        "snapshot persistence": "persist_storage_situation_snapshot_for_index" in projection,
+        "MCP storage situation tool": '"aetower_storage_situation"' in tool_descriptors
+        and "tool_storage_situation" in tools_storage,
+        "Swift FFI bridge": "func storageSituationJson" in ffi,
+        "Swift situation model": "struct StorageSituationModel" in situation_model,
+        "AppState cached situation": "private(set) var storageSituation" in app_state
+        and "loadStorageSituationForDisplay" in app_state,
+        "Storage first paint": "storageSituationFirstPaint" in storage_view
+        and "showDeferredReportNotice: state.storageHygieneReport == nil" in storage_view,
+    }
+    missing_first_paint = [name for name, present in first_paint_contract.items() if not present]
+    validator.require(
+        not missing_first_paint,
+        "storage cache-first app path",
+        "StorageSituation reaches MCP, FFI, AppState, and first paint"
+        if not missing_first_paint
+        else "missing: " + ", ".join(missing_first_paint),
+    )
+
+    projection_missing = missing_needles(
+        report + jobs,
+        [
+            "build_storage_hygiene_report_from_index",
+            "Compatibility report projected from the materialized storage index/situation",
+            "Cache-first projection does not run live git status or active file-handle checks",
+            "StorageScanMode::InstantCached",
+            "StorageScanMode::ForensicVerified",
+            "build_storage_hygiene_verification_report_with_options",
+        ],
+    )
+    validator.require(
+        not projection_missing,
+        "storage report projection contract",
+        "instant reads project from index; forensic remains explicit verification"
+        if not projection_missing
+        else "missing symbols: " + ", ".join(projection_missing),
+    )
+
+    event_missing = missing_needles(
+        events + state_store,
+        [
+            "poll_native_storage_filesystem_events",
+            "storage_event_flags_indicate_unknown_gap",
+            "record_native_filesystem_events",
+            "storage_event_cursor",
+            "mark_unknown_gap_roots",
+            "dirty_path_summary",
+        ],
+    )
+    validator.require(
+        not event_missing,
+        "storage event replay and gap tracking",
+        "native/ledger events persist cursor, dirty paths, and unknown gaps"
+        if not event_missing
+        else "missing symbols: " + ", ".join(event_missing),
+    )
+
+    incremental_missing = missing_needles(
+        incremental + state_store,
+        [
+            "measure_dirty_storage_subtrees_once",
+            "load_dirty_path_records",
+            "store_indexed_row",
+            "remove_indexed_subtree",
+            "commit_typed_storage_domains",
+            "persist_storage_situation_snapshot_for_index",
+        ],
+    )
+    validator.require(
+        not incremental_missing,
+        "storage incremental measurement",
+        "dirty subtrees update indexed rows, typed domains, and snapshots"
+        if not incremental_missing
+        else "missing symbols: " + ", ".join(incremental_missing),
+    )
+
+    safety_missing = missing_needles(
+        models + cleanup,
+        [
+            "facts_stale",
+            "facts_partial",
+            "unknown_gap_above_path",
+            "Storage facts are stale",
+            "Storage facts are partial",
+            "unknown gap above this path",
+            "cleanup_allowed",
+        ],
+    )
+    validator.require(
+        not safety_missing,
+        "storage cleanup fresh-facts gate",
+        "stale, partial, and unknown-gap rows stay visible but cannot be one-click cleaned"
+        if not safety_missing
+        else "missing symbols: " + ", ".join(safety_missing),
+    )
+
+    required_tests = [
+        "storage_situation_snapshot_preserves_partial_empty_cache_status",
+        "storage_hygiene_mode_json_projects_from_index_unless_forensic",
+        "storage_dirty_queue_records_and_clears_subtree_events",
+        "storage_dirty_queue_marks_unknown_gap_for_dropped_events",
+        "storage_size_index_fingerprint_rejects_changed_file_metadata",
+        "storage_size_index_directory_fingerprint_rejects_shallow_child_changes",
+        "storage_dirty_queue_coalesces_to_nearest_indexed_ancestor",
+        "storage_incremental_measurer_updates_dirty_subtree_and_snapshot",
+        "cleanup_guardrails_gate_cleanup_on_fresh_storage_facts",
+    ]
+    missing_tests = missing_needles(storage_tests, [f"fn {test_name}" for test_name in required_tests])
+    validator.require(
+        not missing_tests,
+        "storage materialized workflow tests",
+        "focused Rust tests cover cache-first, event replay/loss, fingerprints, coalescing, incremental refresh, and cleanup gating"
+        if not missing_tests
+        else "missing tests: " + ", ".join(test.replace("fn ", "") for test in missing_tests),
     )
 
 
@@ -584,6 +748,7 @@ def main(argv: list[str]) -> int:
     check_mcp_default_tool_safety(validator)
     check_published_tool_count(validator)
     check_outbound_defaults(validator)
+    check_storage_materialized_workflow(validator)
     check_local_release_artifacts(validator, context, args.require_local_release)
     if args.published:
         check_published_release_assets(validator, context, args.timeout)

@@ -31,6 +31,15 @@ sh scripts/verify-storage-release.sh
 
 This proves the release-blocking invariants that can be checked locally:
 
+- Storage opens from a cached `StorageSituation` snapshot before the richer
+  report path is loaded
+- filesystem event replay, event loss, dirty queue coalescing, fingerprint
+  invalidation, and incremental dirty-subtree measurement are pinned by focused
+  Rust tests
+- stale, partial, or unknown-gap storage rows remain visible while one-click
+  cleanup is blocked
+- the public claims validator confirms the materialized storage architecture is
+  still wired through Rust, MCP, FFI, AppState, and first paint
 - reclaim dry-run manifests validate exact byte totals and paths
 - cleanup bundles only stage paths whose default action is Finder Trash
 - risky, protected, tracked, modified, or untracked source-like files are not

@@ -10,6 +10,11 @@ usage() {
 usage: $0 [--skip-trash-smoke] [--manual-only]
 
 Validate the Storage release criteria that can be proven locally:
+  - materialized StorageSituation opens from cached facts
+  - filesystem event replay, event loss, dirty queue, and fingerprints work
+  - incremental dirty-subtree measurement updates ancestors and snapshots
+  - stale/partial/unknown-gap rows remain visible but cleanup is blocked
+  - public claims validator verifies the storage architecture contract
   - reclaim dry-run manifests validate bytes and paths
   - cleanup plans only stage Trash-actionable items
   - risky/protected files are not auto-staged
@@ -48,6 +53,23 @@ run_storage_test() {
     filter="$1"
     printf '\n==> cargo test %s\n' "$filter"
     cargo test --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-mcp "$filter" -- --nocapture
+}
+
+run_storage_materialized_workflow_tests() {
+    run_storage_test "storage_situation_snapshot_preserves_partial_empty_cache_status"
+    run_storage_test "storage_hygiene_mode_json_projects_from_index_unless_forensic"
+    run_storage_test "storage_dirty_queue_records_and_clears_subtree_events"
+    run_storage_test "storage_dirty_queue_marks_unknown_gap_for_dropped_events"
+    run_storage_test "storage_size_index_fingerprint_rejects_changed_file_metadata"
+    run_storage_test "storage_size_index_directory_fingerprint_rejects_shallow_child_changes"
+    run_storage_test "storage_dirty_queue_coalesces_to_nearest_indexed_ancestor"
+    run_storage_test "storage_incremental_measurer_updates_dirty_subtree_and_snapshot"
+    run_storage_test "cleanup_guardrails_gate_cleanup_on_fresh_storage_facts"
+}
+
+run_claims_validation() {
+    printf '\n==> public claims validation\n'
+    python3 "$ROOT/scripts/validate-public-claims.py"
 }
 
 run_trash_smoke() {
@@ -107,6 +129,8 @@ EOF
 }
 
 if [ "$MANUAL_ONLY" -eq 0 ]; then
+    run_storage_materialized_workflow_tests
+    run_claims_validation
     run_storage_test "storage_release_criteria"
     run_storage_test "storage_hygiene_reclaimable_regression_detects_build_logs_and_caches"
     run_storage_test "storage_performance_budget_flags_million_file_payload_and_table_pressure"
