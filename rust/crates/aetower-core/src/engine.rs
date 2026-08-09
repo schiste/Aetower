@@ -1881,6 +1881,9 @@ impl Engine {
             return;
         }
 
+        let previous_state = capability.state.clone();
+        let previous_detail = capability.detail.clone();
+        let previous_updated_millis = capability.last_updated_millis;
         capability.state = state.clone();
         capability.last_updated_millis = now;
         if let Some(detail) = detail_override {
@@ -1899,7 +1902,14 @@ impl Engine {
                 "Capability state updated.",
             )
             .capability(format!("{kind:?}"))
+            .field("previous_state", format!("{previous_state:?}"))
             .field("state", format!("{state:?}"))
+            .field("detail_changed", detail_changed)
+            .field(
+                "transition_millis",
+                now.saturating_sub(previous_updated_millis),
+            )
+            .field("previous_detail", previous_detail)
             .build(),
         );
     }
@@ -3537,6 +3547,35 @@ mod tests {
             .filter(|event| event.event_type == "capability-state-changed")
             .collect::<Vec<_>>();
         assert_eq!(emitted.len(), 2);
+        let latest = emitted.first().expect("latest capability diagnostic");
+        assert_eq!(
+            diagnostic_field_value(latest, "previous_state").as_deref(),
+            Some("Unavailable")
+        );
+        assert_eq!(
+            diagnostic_field_value(latest, "state").as_deref(),
+            Some("Unavailable")
+        );
+        assert_eq!(
+            diagnostic_field_value(latest, "detail_changed").as_deref(),
+            Some("true")
+        );
+        assert!(
+            diagnostic_field_value(latest, "transition_millis")
+                .and_then(|value| value.parse::<u64>().ok())
+                .is_some()
+        );
+    }
+
+    fn diagnostic_field_value(
+        event: &aetower_diagnostics::DiagnosticsEvent,
+        key: &str,
+    ) -> Option<String> {
+        event
+            .fields
+            .iter()
+            .find(|field| field.key == key)
+            .map(|field| field.value.clone())
     }
 
     #[test]
