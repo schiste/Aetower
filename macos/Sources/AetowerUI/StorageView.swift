@@ -9066,6 +9066,7 @@ public struct StorageView: View {
             }
 
             storageSituationVolumeHeader(situation)
+            storageBacklogDrainRow(situation)
 
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: 168), spacing: AetowerDesign.Spacing.sm)],
@@ -9144,6 +9145,150 @@ public struct StorageView: View {
                 }
             }
         }
+    }
+
+    private func storageBacklogDrainRow(_ situation: StorageSituationModel) -> some View {
+        let appStatus = state.storageBacklogDrainStatus
+        let pipelineStatus = situation.backlogDrain
+        let tone = storageBacklogDrainTone(appStatus: appStatus, pipelineStatus: pipelineStatus)
+        return AetowerOperationalListRow(tone: tone, minHeight: 72) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                Label("Backlog refresh", systemImage: storageBacklogDrainImage(appStatus: appStatus, pipelineStatus: pipelineStatus))
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                AetowerBadge(
+                    storageBacklogDrainStateLabel(appStatus: appStatus, pipelineStatus: pipelineStatus),
+                    tone: tone
+                )
+                if let pipelineStatus {
+                    AetowerBadge(
+                        "pipeline \(storageBacklogReasonLabel(pipelineStatus.state))",
+                        tone: AetowerDesign.Status.neutral
+                    )
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(storageBacklogDrainDetail(appStatus: appStatus, pipelineStatus: pipelineStatus))
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(storageBacklogDrainMetadata(appStatus: appStatus, pipelineStatus: pipelineStatus, situation: situation))
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func storageBacklogDrainStateLabel(
+        appStatus: StorageBacklogDrainStatus?,
+        pipelineStatus: StorageSituationBacklogDrainModel?
+    ) -> String {
+        if let appStatus {
+            return storageBacklogReasonLabel(appStatus.state)
+        }
+        if let pipelineStatus {
+            return storageBacklogReasonLabel(pipelineStatus.state)
+        }
+        return "Waiting"
+    }
+
+    private func storageBacklogDrainImage(
+        appStatus: StorageBacklogDrainStatus?,
+        pipelineStatus: StorageSituationBacklogDrainModel?
+    ) -> String {
+        let state = appStatus?.state ?? pipelineStatus?.state ?? "waiting"
+        switch state {
+        case "draining", "published", "scheduled":
+            return "arrow.triangle.2.circlepath"
+        case "paused", "blocked", "failed":
+            return "pause.circle"
+        case "idle":
+            return "checkmark.circle"
+        default:
+            return "clock"
+        }
+    }
+
+    private func storageBacklogDrainTone(
+        appStatus: StorageBacklogDrainStatus?,
+        pipelineStatus: StorageSituationBacklogDrainModel?
+    ) -> Color {
+        let state = appStatus?.state ?? pipelineStatus?.state ?? "waiting"
+        if state == "failed" || state == "blocked" || state == "paused" {
+            return AetowerDesign.Status.warning
+        }
+        if state == "draining" || state == "published" || state == "scheduled" {
+            return AetowerDesign.Tone.disk
+        }
+        if state == "idle" {
+            return AetowerDesign.Status.ready
+        }
+        return AetowerDesign.Status.neutral
+    }
+
+    private func storageBacklogDrainDetail(
+        appStatus: StorageBacklogDrainStatus?,
+        pipelineStatus: StorageSituationBacklogDrainModel?
+    ) -> String {
+        if let appStatus {
+            return appStatus.detail
+        }
+        if let pipelineStatus {
+            return "Pipeline state: \(storageBacklogReasonLabel(pipelineStatus.reason))."
+        }
+        return "Waiting for the storage situation snapshot poll."
+    }
+
+    private func storageBacklogDrainMetadata(
+        appStatus: StorageBacklogDrainStatus?,
+        pipelineStatus: StorageSituationBacklogDrainModel?,
+        situation: StorageSituationModel
+    ) -> String {
+        var parts: [String] = []
+        if let appStatus {
+            parts.append("decision \(appStatus.decisionCount): \(appStatus.reason)")
+            parts.append("retry \(storageDurationLabel(appStatus.retryDelayMillis))")
+            parts.append("dirty \(appStatus.dirtyPathCount)")
+            parts.append("CPU \(String(format: "%.0f", appStatus.hostCpuPercent))%")
+            if appStatus.swapBytes > 0 {
+                parts.append("swap \(formatBytes(appStatus.swapBytes))")
+            }
+        } else {
+            parts.append("dirty \(situation.dirtyPaths.dirtyPathCount)")
+        }
+        if let pipelineStatus {
+            parts.append("pipeline \(pipelineStatus.state)")
+            if let measurement = pipelineStatus.latestMeasurementStatus {
+                parts.append("measurement \(measurement)")
+            }
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func storageBacklogReasonLabel(_ reason: String) -> String {
+        reason
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .capitalized
+    }
+
+    private func storageDurationLabel(_ millis: UInt64) -> String {
+        let seconds = millis / 1000
+        if seconds < 60 {
+            return "\(seconds)s"
+        }
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+        return "\(minutes / 60)h"
     }
 
     private func storageSituationVolumeHeader(_ situation: StorageSituationModel) -> some View {

@@ -6,6 +6,7 @@ struct StorageSituationModel: Decodable, Sendable {
     let storageIndexStatus: String
     let roots: [String]
     let dirtyPaths: StorageDirtyPathSummaryModel
+    let backlogDrain: StorageSituationBacklogDrainModel?
     let summary: StorageSituationSummaryModel
     let topOffenders: [StorageSituationTopOffenderModel]
     let volumeStates: [StorageVolumeStateModel]
@@ -14,6 +15,19 @@ struct StorageSituationModel: Decodable, Sendable {
     var hasCachedFacts: Bool {
         summary.itemCount > 0 || summary.inventorySizeBytes > 0 || !topOffenders.isEmpty
     }
+}
+
+struct StorageSituationBacklogDrainModel: Decodable, Sendable {
+    let state: String
+    let reason: String
+    let updatedAtMillis: UInt64
+    let retryAfterMillis: UInt64?
+    let dirtyPathCount: UInt64
+    let latestEventId: UInt64?
+    let latestMeasurementMillis: UInt64?
+    let latestMeasurementStatus: String?
+    let lastError: String?
+    let source: String
 }
 
 struct StorageDirtyPathSummaryModel: Decodable, Sendable {
