@@ -1,9 +1,9 @@
 use super::*;
 
-const STORAGE_INCREMENTAL_DIRTY_BATCH_LIMIT: usize = 8;
-const STORAGE_INCREMENTAL_PER_SUBTREE_BUDGET: Duration = Duration::from_millis(1_500);
+const STORAGE_INCREMENTAL_DIRTY_BATCH_LIMIT: usize = 3;
+const STORAGE_INCREMENTAL_PER_SUBTREE_BUDGET: Duration = Duration::from_millis(900);
 const STORAGE_INCREMENTAL_REPORT_ITEM_LIMIT: usize = 40;
-const STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT: usize = 3;
+const STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT: usize = 1;
 const STORAGE_INCREMENTAL_CONTINUATION_DELAY: Duration = Duration::from_millis(750);
 
 pub(super) fn ensure_dirty_storage_subtree_measurement(

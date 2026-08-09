@@ -76,7 +76,8 @@ final class StorageScanController {
                 roots: roots,
                 maxDepth: maxDepth,
                 limit: limit,
-                mode: mode
+                mode: mode,
+                lastPublishedJob: startJob
             )
         }
     }
@@ -140,10 +141,12 @@ final class StorageScanController {
         roots: [String],
         maxDepth: UInt32,
         limit: UInt32,
-        mode: String
+        mode: String,
+        lastPublishedJob: StorageScanJobResponseModel
     ) async {
+        var lastPublishedJob = lastPublishedJob
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 350_000_000)
+            try? await Task.sleep(nanoseconds: 900_000_000)
             guard !Task.isCancelled else { return }
             let statusResult = bridge.storageScanStatusJSON(jobId: jobId)
             guard let job = decodeJob(statusResult) else {
@@ -152,8 +155,14 @@ final class StorageScanController {
                 )
                 return
             }
-            await publisher.publishJob(job)
+            if shouldPublishJob(job, after: lastPublishedJob) {
+                await publisher.publishJob(job)
+                lastPublishedJob = job
+            }
             if job.status == "complete" {
+                if lastPublishedJob.status != "complete" {
+                    await publisher.publishJob(job)
+                }
                 let result = bridge.storageScanResultJSON(jobId: jobId)
                 let prepared = StorageHygieneDecodePipeline.prepare(
                     result,
@@ -167,14 +176,53 @@ final class StorageScanController {
                 return
             }
             if job.status == "failed" {
+                if lastPublishedJob.status != "failed" {
+                    await publisher.publishJob(job)
+                }
                 await publisher.publishFailure(job.errorMessage ?? "Storage scan failed.")
                 return
             }
             if job.status == "cancelled" {
+                if lastPublishedJob.status != "cancelled" {
+                    await publisher.publishJob(job)
+                }
                 await publisher.publishFailure("Storage scan cancelled.")
                 return
             }
         }
+    }
+
+    nonisolated private static func shouldPublishJob(
+        _ job: StorageScanJobResponseModel,
+        after previous: StorageScanJobResponseModel
+    ) -> Bool {
+        if job.status != previous.status
+            || job.resultAvailable != previous.resultAvailable
+            || job.errorMessage != previous.errorMessage
+        {
+            return true
+        }
+        if job.status == "complete" || job.status == "failed" || job.status == "cancelled" {
+            return true
+        }
+        if job.progress.phase != previous.progress.phase {
+            return true
+        }
+        if job.progress.scannedFiles >= addingClamped(previous.progress.scannedFiles, 2_000) {
+            return true
+        }
+        if job.progress.scannedDirectories >= addingClamped(previous.progress.scannedDirectories, 500) {
+            return true
+        }
+        if job.progress.scannedBytes >= addingClamped(previous.progress.scannedBytes, 256 * 1_024 * 1_024) {
+            return true
+        }
+        return job.updatedAtMillis >= addingClamped(previous.updatedAtMillis, 2_000)
+    }
+
+    nonisolated private static func addingClamped(_ value: UInt64, _ delta: UInt64) -> UInt64 {
+        let result = value.addingReportingOverflow(delta)
+        return result.overflow ? UInt64.max : result.partialValue
     }
 
     nonisolated private static func decodeJob(_ result: JsonQueryResult) -> StorageScanJobResponseModel? {
