@@ -1046,6 +1046,7 @@ public struct StorageView: View {
                 }
             }
 
+            storageReclaimBucketTracks(report)
             storageReclaimQuickDeleteRow(report)
 
             if actions.isEmpty {
@@ -1064,6 +1065,81 @@ public struct StorageView: View {
             }
         }
         .padding(AetowerDesign.Spacing.lg)
+    }
+
+    private func storageReclaimBucketTracks(_ report: StorageHygieneReportModel) -> some View {
+        VStack(spacing: AetowerDesign.Spacing.xs) {
+            storageReclaimBucketTrack(
+                title: "Safe now",
+                systemImage: "checkmark.shield",
+                bytes: report.summary.safelyReclaimableNowBytes,
+                detail: "Fresh, verified artifacts eligible for direct cleanup.",
+                tone: AetowerDesign.Status.ready,
+                buttonTitle: "Review safe",
+                buttonImage: "magnifyingglass"
+            ) {
+                focusExploreBrowseTable(filter: .safe, scope: .all, sort: .recommended)
+            }
+            storageReclaimBucketTrack(
+                title: "Review required",
+                systemImage: "eye",
+                bytes: report.summary.reviewRequiredBytes,
+                detail: "Large or ambiguous paths that need an operator decision.",
+                tone: AetowerDesign.Status.warning,
+                buttonTitle: "Review",
+                buttonImage: "magnifyingglass"
+            ) {
+                focusExploreBrowseTable(filter: .attention, scope: .all, sort: .largest)
+            }
+            storageReclaimBucketTrack(
+                title: "User data",
+                systemImage: "person.crop.circle.badge.exclamationmark",
+                bytes: report.summary.dangerousUserDataBytes,
+                detail: "App data, AI sessions, offline media, VM disks, or protected content. Never auto-cleaned.",
+                tone: AetowerDesign.Status.error,
+                buttonTitle: "Inspect",
+                buttonImage: "exclamationmark.magnifyingglass"
+            ) {
+                focusExploreBrowseTable(filter: .attention, scope: .all, sort: .largest)
+            }
+        }
+    }
+
+    private func storageReclaimBucketTrack(
+        title: String,
+        systemImage: String,
+        bytes: UInt64,
+        detail: String,
+        tone: Color,
+        buttonTitle: String,
+        buttonImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        AetowerOperationalListRow(tone: tone, minHeight: 66) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                Label(title, systemImage: systemImage)
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .frame(width: 132, alignment: .leading)
+                Text(formatBytes(bytes))
+                    .font(AetowerDesign.Typography.compactData(size: 16, weight: .semibold))
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .monospacedDigit()
+                    .frame(width: 92, alignment: .trailing)
+                Text(detail)
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: AetowerDesign.Spacing.md)
+                Button(action: action) {
+                    Label(buttonTitle, systemImage: buttonImage)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(bytes == 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     @ViewBuilder
