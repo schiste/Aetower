@@ -6697,6 +6697,23 @@ fn storage_dirty_queue_ignores_aetower_storage_chatter() {
     let index_dir = root.join("index");
     let watched = root.join("Library").join("Application Support");
     let aetower_wal = watched.join("Aetower").join("storage-index-v1.sqlite3-wal");
+    let biome_wal = root
+        .join("Library")
+        .join("Biome")
+        .join("Streams")
+        .join("event.db-wal");
+    let duet_shm = root
+        .join("Library")
+        .join("DuetExpertCenter")
+        .join("people.db-shm");
+    let preferences_plist = root
+        .join("Library")
+        .join("Preferences")
+        .join("com.apple.finder.plist");
+    let apple_media_services_wal = root
+        .join("Library")
+        .join("AppleMediaServices")
+        .join("Cookies.sqlitedb-wal");
     let ds_store = root.join("Repositories").join(".DS_Store");
     let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
     let now_millis = storage_now_millis();
@@ -6712,6 +6729,34 @@ fn storage_dirty_queue_ignores_aetower_storage_chatter() {
             timestamp_millis: Some(now_millis + 1),
             path: Some(ds_store.display().to_string()),
             event_id: Some(602),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis + 2),
+            path: Some(biome_wal.display().to_string()),
+            event_id: Some(603),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis + 3),
+            path: Some(duet_shm.display().to_string()),
+            event_id: Some(604),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis + 4),
+            path: Some(preferences_plist.display().to_string()),
+            event_id: Some(605),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis + 5),
+            path: Some(apple_media_services_wal.display().to_string()),
+            event_id: Some(606),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
         },

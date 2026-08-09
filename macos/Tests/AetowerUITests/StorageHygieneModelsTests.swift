@@ -112,13 +112,58 @@ final class StorageHygieneModelsTests: XCTestCase {
             ),
             StorageRootChangeEventRecord(
                 timestampMillis: nowMillis,
+                path: temporarySupportURL
+                    .appendingPathComponent("Library")
+                    .appendingPathComponent("Biome")
+                    .appendingPathComponent("Streams")
+                    .appendingPathComponent("event.db-wal")
+                    .path,
+                eventId: 2,
+                flags: nil,
+                source: "test"
+            ),
+            StorageRootChangeEventRecord(
+                timestampMillis: nowMillis,
+                path: temporarySupportURL
+                    .appendingPathComponent("Library")
+                    .appendingPathComponent("DuetExpertCenter")
+                    .appendingPathComponent("people.db-shm")
+                    .path,
+                eventId: 3,
+                flags: nil,
+                source: "test"
+            ),
+            StorageRootChangeEventRecord(
+                timestampMillis: nowMillis,
+                path: temporarySupportURL
+                    .appendingPathComponent("Library")
+                    .appendingPathComponent("Preferences")
+                    .appendingPathComponent("com.apple.finder.plist")
+                    .path,
+                eventId: 4,
+                flags: nil,
+                source: "test"
+            ),
+            StorageRootChangeEventRecord(
+                timestampMillis: nowMillis,
+                path: temporarySupportURL
+                    .appendingPathComponent("Library")
+                    .appendingPathComponent("AppleMediaServices")
+                    .appendingPathComponent("Cookies.sqlitedb-wal")
+                    .path,
+                eventId: 5,
+                flags: nil,
+                source: "test"
+            ),
+            StorageRootChangeEventRecord(
+                timestampMillis: nowMillis,
                 path: repositoryRoot
                     .appendingPathComponent(".git")
                     .appendingPathComponent("objects")
                     .appendingPathComponent("aa")
                     .appendingPathComponent("changed")
                     .path,
-                eventId: 2,
+                eventId: 6,
                 flags: nil,
                 source: "test"
             ),
@@ -129,14 +174,14 @@ final class StorageHygieneModelsTests: XCTestCase {
                     .appendingPathComponent("Sessions")
                     .appendingPathComponent("Session_1")
                     .path,
-                eventId: 3,
+                eventId: 7,
                 flags: nil,
                 source: "test"
             ),
             StorageRootChangeEventRecord(
                 timestampMillis: nowMillis,
                 path: repositoryRoot.appendingPathComponent(".DS_Store").path,
-                eventId: 4,
+                eventId: 8,
                 flags: nil,
                 source: "test"
             ),

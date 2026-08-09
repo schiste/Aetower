@@ -25,6 +25,18 @@ enum StorageRootChangeJournal {
     private static let maxDirtyPaths = 256
     private static let maxEventLedgerBytes: UInt64 = 2 * 1_024 * 1_024
     private static let maxEventLedgerLines = 2_048
+    private static let maxBufferedEvents = 512
+    private static let bufferedFlushDelayMillis = 5_000
+    private static let journalQueueKey = DispatchSpecificKey<Bool>()
+    private static let journalQueue: DispatchQueue = {
+        let queue = DispatchQueue(label: "com.aetower.storage.fsevents.journal", qos: .utility)
+        queue.setSpecific(key: journalQueueKey, value: true)
+        return queue
+    }()
+    nonisolated(unsafe) private static var pendingEvents: [StorageRootChangeEventRecord] = []
+    nonisolated(unsafe) private static var pendingDirtyPaths: Set<String> = []
+    nonisolated(unsafe) private static var pendingLastChangeMillis: UInt64?
+    nonisolated(unsafe) private static var pendingFlushScheduled = false
 
     static func recordChange(paths: [String] = []) {
         let timestampMillis = currentMillis()
@@ -41,11 +53,21 @@ enum StorageRootChangeJournal {
     }
 
     static func recordEvents(_ events: [StorageRootChangeEventRecord]) {
-        let normalized = events.compactMap(sanitizedEvent)
-        guard !normalized.isEmpty else { return }
-        UserDefaults.standard.set(currentMillis(), forKey: key)
-        recordDirtyPaths(normalized.map(\.path))
-        appendEventLedger(normalized)
+        guard !events.isEmpty else { return }
+        journalQueue.async {
+            let normalized = events.compactMap(sanitizedEvent)
+            guard !normalized.isEmpty else { return }
+            pendingLastChangeMillis = currentMillis()
+            pendingEvents.append(contentsOf: normalized)
+            for event in normalized {
+                pendingDirtyPaths.insert(event.path)
+            }
+            if pendingEvents.count >= maxBufferedEvents {
+                flushPendingEventsOnQueue()
+            } else {
+                scheduleBufferedFlushOnQueue()
+            }
+        }
     }
 
     private static func recordDirtyPaths(_ paths: [String]) {
@@ -130,7 +152,22 @@ enum StorageRootChangeJournal {
             return true
         }
         if lowercase.contains("/library/metadata/corespotlight/")
-            || lowercase.contains("/library/biome/tmp/")
+            || lowercase.contains("/library/biome/")
+            || lowercase.contains("/library/duetexpertcenter/")
+        {
+            return true
+        }
+        if lowercase.contains("/library/preferences/") && lastPathComponent.hasSuffix(".plist") {
+            return true
+        }
+        if lowercase.contains("/library/applemediaservices/")
+            && (
+                lastPathComponent.hasSuffix("-wal")
+                    || lastPathComponent.hasSuffix("-shm")
+                    || lastPathComponent == "cookies.sqlitedb"
+                    || lastPathComponent.hasSuffix(".sqlitedb-wal")
+                    || lastPathComponent.hasSuffix(".sqlitedb-shm")
+            )
         {
             return true
         }
@@ -146,6 +183,7 @@ enum StorageRootChangeJournal {
     }
 
     static func lastChangeMillis() -> UInt64? {
+        flushPendingEventsForRead()
         let value = UserDefaults.standard.object(forKey: key)
         if let number = value as? NSNumber {
             return number.uint64Value
@@ -163,18 +201,70 @@ enum StorageRootChangeJournal {
     }
 
     static func dirtyPaths() -> [String] {
-        UserDefaults.standard.stringArray(forKey: dirtyPathsKey) ?? []
+        flushPendingEventsForRead()
+        return UserDefaults.standard.stringArray(forKey: dirtyPathsKey) ?? []
     }
 
     static func clearDirtyPaths() {
-        UserDefaults.standard.removeObject(forKey: dirtyPathsKey)
+        runOnJournalQueueSynchronously {
+            pendingDirtyPaths.removeAll()
+            pendingEvents.removeAll()
+            pendingLastChangeMillis = nil
+            UserDefaults.standard.removeObject(forKey: dirtyPathsKey)
+        }
     }
 
     static func clearChangeStateForTesting() {
-        UserDefaults.standard.removeObject(forKey: key)
-        UserDefaults.standard.removeObject(forKey: dirtyPathsKey)
-        if let path = eventLedgerPath() {
-            try? FileManager.default.removeItem(at: path)
+        runOnJournalQueueSynchronously {
+            pendingEvents.removeAll()
+            pendingDirtyPaths.removeAll()
+            pendingLastChangeMillis = nil
+            pendingFlushScheduled = false
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: dirtyPathsKey)
+            if let path = eventLedgerPath() {
+                try? FileManager.default.removeItem(at: path)
+            }
+        }
+    }
+
+    static func flushPendingEventsForTesting() {
+        flushPendingEventsForRead()
+    }
+
+    private static func scheduleBufferedFlushOnQueue() {
+        guard !pendingFlushScheduled else { return }
+        pendingFlushScheduled = true
+        journalQueue.asyncAfter(deadline: .now() + .milliseconds(bufferedFlushDelayMillis)) {
+            pendingFlushScheduled = false
+            flushPendingEventsOnQueue()
+        }
+    }
+
+    private static func flushPendingEventsForRead() {
+        runOnJournalQueueSynchronously {
+            flushPendingEventsOnQueue()
+        }
+    }
+
+    private static func flushPendingEventsOnQueue() {
+        guard !pendingEvents.isEmpty || !pendingDirtyPaths.isEmpty else { return }
+        let events = pendingEvents
+        let dirtyPaths = Array(pendingDirtyPaths)
+        let lastChangeMillis = pendingLastChangeMillis ?? currentMillis()
+        pendingEvents.removeAll(keepingCapacity: true)
+        pendingDirtyPaths.removeAll(keepingCapacity: true)
+        pendingLastChangeMillis = nil
+        UserDefaults.standard.set(lastChangeMillis, forKey: key)
+        recordDirtyPaths(dirtyPaths)
+        appendEventLedger(events)
+    }
+
+    private static func runOnJournalQueueSynchronously(_ work: @escaping () -> Void) {
+        if DispatchQueue.getSpecific(key: journalQueueKey) == true {
+            work()
+        } else {
+            journalQueue.sync(execute: work)
         }
     }
 
@@ -245,16 +335,7 @@ enum StorageRootChangeJournal {
     private static func normalizedPath(_ path: String) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
-        if trimmed == "~" {
-            return FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
-        }
-        if trimmed.hasPrefix("~/") {
-            return FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(String(trimmed.dropFirst(2)))
-                .standardizedFileURL
-                .path
-        }
-        return URL(fileURLWithPath: trimmed, isDirectory: false).standardizedFileURL.path
+        return ((trimmed as NSString).expandingTildeInPath as NSString).standardizingPath
     }
 }
 

@@ -5630,7 +5630,20 @@ fn storage_dirty_event_path_is_ignored(path: &str) -> bool {
         return true;
     }
     if lowercase.contains("/library/metadata/corespotlight/")
-        || lowercase.contains("/library/biome/tmp/")
+        || lowercase.contains("/library/biome/")
+        || lowercase.contains("/library/duetexpertcenter/")
+    {
+        return true;
+    }
+    if lowercase.contains("/library/preferences/") && file_name.ends_with(".plist") {
+        return true;
+    }
+    if lowercase.contains("/library/applemediaservices/")
+        && (file_name.ends_with("-wal")
+            || file_name.ends_with("-shm")
+            || file_name == "cookies.sqlitedb"
+            || file_name.ends_with(".sqlitedb-wal")
+            || file_name.ends_with(".sqlitedb-shm"))
     {
         return true;
     }
