@@ -81,9 +81,15 @@ pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String
         now_millis,
     );
     ensure_dirty_storage_subtree_measurement(&roots, &dirty_summary);
-    if let Some(snapshot) = storage_index.load_situation_snapshot(&roots, limit.clamp(1, 40)) {
-        let snapshot =
-            overlay_storage_situation_snapshot(snapshot, &storage_index, &roots, dirty_summary);
+    let limit = limit.clamp(1, 40);
+    if let Some(snapshot) = storage_index.load_situation_snapshot(&roots, limit) {
+        let snapshot = overlay_storage_situation_snapshot(
+            snapshot,
+            &storage_index,
+            &roots,
+            dirty_summary,
+            limit,
+        );
         if snapshot.dirty_paths.dirty_path_count > 0 {
             let _ = storage_index.persist_situation_snapshot(
                 &roots,
@@ -152,7 +158,7 @@ fn build_storage_situation_response(
     let domains = storage_index.load_storage_domains(roots, 80);
     let situation_summary = summarize_storage_situation_with_domains(&summaries, &domains);
     let top_offenders = storage_index
-        .load_top_offenders(roots, limit.clamp(1, 40))
+        .load_situation_top_offenders(roots, limit.clamp(1, 40))
         .into_iter()
         .map(|row| {
             let stale = path_matches_dirty_prefix(Path::new(&row.path), &dirty_paths);
@@ -217,6 +223,7 @@ fn overlay_storage_situation_snapshot(
     storage_index: &StorageSizeIndex,
     roots: &[PathBuf],
     dirty_summary: StorageDirtyPathSummary,
+    limit: usize,
 ) -> StorageSituationResponse {
     let dirty_paths = if dirty_summary.dirty_path_count == 0 {
         Vec::new()
@@ -226,9 +233,30 @@ fn overlay_storage_situation_snapshot(
     for offender in &mut snapshot.top_offenders {
         offender.stale = path_matches_dirty_prefix(Path::new(&offender.path), &dirty_paths);
     }
+    let summaries = storage_index.load_index_summaries(roots);
     let domains = storage_index.load_storage_domains(roots, 80);
     if !domains.is_empty() {
         snapshot.domains = domains;
+    }
+    let refreshed_summary = summarize_storage_situation_with_domains(&summaries, &snapshot.domains);
+    if refreshed_summary.item_count > 0 || refreshed_summary.inventory_size_bytes > 0 {
+        snapshot.summary = merge_storage_situation_summaries(snapshot.summary, refreshed_summary);
+    }
+    let fresh_top_offenders = storage_index.load_situation_top_offenders(roots, limit);
+    if !fresh_top_offenders.is_empty() {
+        snapshot.top_offenders = fresh_top_offenders
+            .into_iter()
+            .map(|row| StorageSituationTopOffender {
+                stale: path_matches_dirty_prefix(Path::new(&row.path), &dirty_paths),
+                path: row.path,
+                source_root: row.source_root,
+                kind: row.kind,
+                cleanup_tier: row.cleanup_tier,
+                physical_bytes: row.physical_bytes,
+                recommendation_score: row.recommendation_score,
+                last_scan_millis: row.last_scan_millis,
+            })
+            .collect();
     }
     snapshot.cache_status.source = "situation_snapshot".to_owned();
     snapshot.cache_status.age_millis = Some(
@@ -384,39 +412,65 @@ fn summarize_storage_situation_with_domains(
     domains: &[StorageSituationDomain],
 ) -> StorageSituationSummary {
     let mut summary = summarize_storage_situation(rows);
-    let covered_roots = rows
-        .iter()
-        .map(|row| row.source_root.as_str())
-        .collect::<BTreeSet<_>>();
     let mut domain_roots = BTreeSet::new();
+    let mut domain_summary = StorageSituationSummary::default();
     for domain in domains
         .iter()
         .filter(|domain| domain.source == "typed_detector")
     {
         domain_roots.insert(domain.source_root.as_str());
-        if covered_roots.contains(domain.source_root.as_str()) {
-            continue;
-        }
-        summary.item_count = summary.item_count.saturating_add(domain.item_count);
-        summary.inventory_size_bytes = summary
+        domain_summary.item_count = domain_summary.item_count.saturating_add(domain.item_count);
+        domain_summary.inventory_size_bytes = domain_summary
             .inventory_size_bytes
             .saturating_add(domain.physical_bytes);
-        summary.safely_reclaimable_now_bytes = summary
+        domain_summary.safely_reclaimable_now_bytes = domain_summary
             .safely_reclaimable_now_bytes
             .saturating_add(domain.safely_reclaimable_now_bytes);
-        summary.maybe_reclaimable_bytes = summary
+        domain_summary.maybe_reclaimable_bytes = domain_summary
             .maybe_reclaimable_bytes
             .saturating_add(domain.maybe_reclaimable_bytes);
-        summary.review_required_bytes = summary
+        domain_summary.review_required_bytes = domain_summary
             .review_required_bytes
             .saturating_add(domain.review_required_bytes);
-        summary.dangerous_user_data_bytes = summary
+        domain_summary.dangerous_user_data_bytes = domain_summary
             .dangerous_user_data_bytes
             .saturating_add(domain.dangerous_user_data_bytes);
     }
     if summary.source_root_count == 0 {
         summary.source_root_count = domain_roots.len();
     }
+    merge_storage_situation_summaries(summary, domain_summary)
+}
+
+fn merge_storage_situation_summaries(
+    mut summary: StorageSituationSummary,
+    domain_summary: StorageSituationSummary,
+) -> StorageSituationSummary {
+    summary.source_root_count = summary
+        .source_root_count
+        .max(domain_summary.source_root_count);
+    summary.item_count = summary.item_count.max(domain_summary.item_count);
+    summary.inventory_size_bytes = summary
+        .inventory_size_bytes
+        .max(domain_summary.inventory_size_bytes);
+    summary.safely_reclaimable_now_bytes = summary
+        .safely_reclaimable_now_bytes
+        .max(domain_summary.safely_reclaimable_now_bytes);
+    summary.maybe_reclaimable_bytes = summary
+        .maybe_reclaimable_bytes
+        .max(domain_summary.maybe_reclaimable_bytes);
+    summary.review_required_bytes = summary
+        .review_required_bytes
+        .max(domain_summary.review_required_bytes);
+    summary.dangerous_user_data_bytes = summary
+        .dangerous_user_data_bytes
+        .max(domain_summary.dangerous_user_data_bytes);
+    let bucket_total = summary
+        .safely_reclaimable_now_bytes
+        .saturating_add(summary.maybe_reclaimable_bytes)
+        .saturating_add(summary.review_required_bytes)
+        .saturating_add(summary.dangerous_user_data_bytes);
+    summary.inventory_size_bytes = summary.inventory_size_bytes.max(bucket_total);
     summary
 }
 

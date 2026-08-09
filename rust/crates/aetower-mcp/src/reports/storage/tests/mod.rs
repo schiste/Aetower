@@ -647,6 +647,80 @@ fn storage_situation_snapshot_requires_exact_root_set() {
 }
 
 #[test]
+fn storage_situation_repairs_summary_from_typed_domains() {
+    let _index_guard = storage_index_test_guard();
+    let root = test_root("situation-repairs-domain-buckets");
+    let safe_artifact = root.join("build").join("target").join("blob");
+    let session_root = root.join(".codex").join("sessions");
+    write_allocated_fixture(&safe_artifact, MIN_ITEM_BYTES + 512);
+    write_allocated_fixture(&session_root.join("session.jsonl"), 3 * MIN_ITEM_BYTES);
+    mark_tree_old(&root);
+
+    let storage_index = StorageSizeIndex::open();
+    let mut metrics = StorageScanMetrics::default();
+    storage_index.store_indexed_row(
+        &seeded_index_row(
+            &root,
+            &safe_artifact,
+            MIN_ITEM_BYTES + 512,
+            "safe",
+            None,
+            Some(storage_now_millis().saturating_sub(DAY_MILLIS)),
+            Some(storage_now_millis().saturating_sub(DAY_MILLIS)),
+            storage_now_millis(),
+        ),
+        &mut metrics,
+    );
+    storage_index.flush_pending_rows();
+    storage_index
+        .store_typed_storage_domains(
+            std::slice::from_ref(&root),
+            &[StorageSituationDomain {
+                domain_id: format!("typed|ai-session|{}", session_root.display()),
+                label: "AI sessions and logs".to_owned(),
+                source_root: root.display().to_string(),
+                domain_kind: "ai-session".to_owned(),
+                path_prefix: session_root.display().to_string(),
+                item_count: 1,
+                directory_count: 1,
+                file_count: 1,
+                logical_bytes: 3 * MIN_ITEM_BYTES,
+                physical_bytes: 3 * MIN_ITEM_BYTES,
+                safely_reclaimable_now_bytes: 0,
+                maybe_reclaimable_bytes: 0,
+                review_required_bytes: 0,
+                dangerous_user_data_bytes: 3 * MIN_ITEM_BYTES,
+                last_measured_millis: storage_now_millis(),
+                confidence: "typed".to_owned(),
+                source: "typed_detector".to_owned(),
+            }],
+        )
+        .unwrap_or_else(|error| panic!("store typed domain: {error}"));
+
+    let situation = must_ok(
+        storage_situation_json(vec![root.display().to_string()], 4),
+        "domain-repaired situation serializes",
+    );
+    let situation = parse_json_value(&situation, "domain-repaired situation parses");
+    assert!(
+        situation["summary"]["dangerous_user_data_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes >= 3 * MIN_ITEM_BYTES),
+        "typed dangerous domains should repair covered-root summaries: {situation:?}"
+    );
+    assert!(
+        situation["top_offenders"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["path"]
+                .as_str()
+                .is_some_and(|path| path == session_root.display().to_string()))),
+        "typed domain roots should be eligible first-paint top offenders: {situation:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_hygiene_indexed_snapshot_returns_empty_cache_without_walk() {
     let _index_guard = storage_index_test_guard();
     let root = test_root("indexed-empty-cache");
@@ -1635,9 +1709,12 @@ fn storage_index_budget_keeps_summaries_and_top_offenders_while_capping_rows() {
     );
     let top_offender_count = storage_index.top_offender_count_with_prefix(&prefix);
     assert!(top_offender_count > 0);
-    assert!(top_offender_count <= retained_rows);
+    assert!(
+        top_offender_count >= retained_rows,
+        "top offenders should preserve high-value insight beyond the raw row cap"
+    );
     let (summary_items, summary_bytes) = storage_index.summary_inventory_with_prefix(&prefix);
-    assert_eq!(summary_items, retained_rows);
+    assert_eq!(summary_items, 30);
     assert!(summary_bytes >= 2 * LARGE_FILE_BYTES);
 
     let _ = fs::remove_dir_all(root);
@@ -6566,6 +6643,50 @@ fn storage_dirty_queue_debounces_noisy_paths_behind_quiet_work() {
         .collect::<Vec<_>>();
 
     assert_eq!(dirty_paths, vec![quiet.display().to_string()]);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_dirty_queue_collapses_chau7_tab_restore_noise() {
+    let root = test_root("dirty-queue-collapses-chau7");
+    let index_dir = root.join("index");
+    let watched = root.join("Library").join("Application Support");
+    let restore_root = watched.join("Chau7").join("TabRestoreBundles");
+    let noisy_tab = restore_root
+        .join("current.tmp-123")
+        .join("contexts")
+        .join("windows")
+        .join("1")
+        .join("tabs")
+        .join("ABC")
+        .join("panes");
+    fs::create_dir_all(&noisy_tab).expect("create Chau7 noisy tab fixture");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let records = (0..12)
+        .map(|index| StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(100).saturating_add(index)),
+            path: Some(
+                noisy_tab
+                    .join(format!(".dat.nosync{index}.tmp"))
+                    .display()
+                    .to_string(),
+            ),
+            event_id: Some(500 + index),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        })
+        .collect::<Vec<_>>();
+
+    storage_index.record_filesystem_events(&records, std::slice::from_ref(&root), now_millis);
+    let dirty_paths = storage_index
+        .load_dirty_path_records_for_test(std::slice::from_ref(&root), 8, now_millis)
+        .into_iter()
+        .map(|record| record.path)
+        .collect::<Vec<_>>();
+
+    assert_eq!(dirty_paths, vec![restore_root.display().to_string()]);
 
     let _ = fs::remove_dir_all(root);
 }

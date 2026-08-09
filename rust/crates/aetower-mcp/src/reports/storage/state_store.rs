@@ -334,6 +334,7 @@ pub(super) struct StorageIncrementalMeasurementResult {
     pub(super) measured_file_count: u64,
     pub(super) measured_bytes: u64,
     pub(super) partial: bool,
+    pub(super) continuation_pending: bool,
     pub(super) last_error: Option<String>,
 }
 
@@ -1564,6 +1565,7 @@ impl StorageSizeIndex {
         if inserted > 0 {
             let detail = format!("ingested {inserted} filesystem event paths");
             self.update_event_cursor(cursor_source, latest_event_id, now_millis, "ready", &detail);
+            self.collapse_volatile_dirty_paths(roots, now_millis);
             self.apply_dirty_queue_backpressure(roots, now_millis, cursor_source, latest_event_id);
             super::report::invalidate_index_report_sections_memo();
         }
@@ -1594,6 +1596,7 @@ impl StorageSizeIndex {
         limit: usize,
         now_millis: u64,
     ) -> Vec<StorageDirtyPathRecord> {
+        self.collapse_volatile_dirty_paths(roots, now_millis);
         let Some(connection) = self.connection.as_ref() else {
             return Vec::new();
         };
@@ -1669,6 +1672,108 @@ impl StorageSizeIndex {
             }
         }
         records
+    }
+
+    fn collapse_volatile_dirty_paths(&self, roots: &[PathBuf], now_millis: u64) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        let Ok(mut statement) = connection.prepare(
+            "SELECT path, source, flags, first_seen_millis, last_seen_millis, event_count
+             FROM storage_dirty_path
+             WHERE status = 'dirty'
+             ORDER BY first_seen_millis ASC, last_seen_millis DESC, path ASC
+             LIMIT ?1",
+        ) else {
+            return;
+        };
+        let Ok(rows) = statement.query_map(
+            params![STORAGE_DIRTY_QUEUE_CANDIDATE_CAP as i64],
+            dirty_path_record_from_sql,
+        ) else {
+            return;
+        };
+        let mut aggregates = BTreeMap::<String, StorageDirtyPathRecord>::new();
+        for record in rows.flatten() {
+            if !roots.is_empty()
+                && !roots
+                    .iter()
+                    .any(|root| path_is_under_root(&record.path, root))
+            {
+                continue;
+            }
+            let Some(ancestor) = volatile_dirty_queue_ancestor(&record.path) else {
+                continue;
+            };
+            if ancestor == record.path {
+                continue;
+            }
+            aggregates
+                .entry(ancestor.clone())
+                .and_modify(|existing| {
+                    existing.flags |= record.flags;
+                    existing.first_seen_millis =
+                        existing.first_seen_millis.min(record.first_seen_millis);
+                    existing.last_seen_millis =
+                        existing.last_seen_millis.max(record.last_seen_millis);
+                    existing.event_count = existing.event_count.saturating_add(record.event_count);
+                })
+                .or_insert_with(|| StorageDirtyPathRecord {
+                    path: ancestor,
+                    source: record.source,
+                    flags: record.flags,
+                    first_seen_millis: record.first_seen_millis,
+                    last_seen_millis: record.last_seen_millis,
+                    event_count: record.event_count,
+                });
+        }
+        drop(statement);
+        if aggregates.is_empty() {
+            return;
+        }
+        let Ok(transaction) = connection.unchecked_transaction() else {
+            return;
+        };
+        for aggregate in aggregates.values() {
+            let _ = transaction.execute(
+                "INSERT INTO storage_dirty_path (
+                    path, source, flags, last_event_id, first_seen_millis, last_seen_millis,
+                    event_count, status
+                 ) VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6, 'dirty')
+                 ON CONFLICT(path) DO UPDATE SET
+                    source = excluded.source,
+                    flags = storage_dirty_path.flags | excluded.flags,
+                    first_seen_millis = MIN(storage_dirty_path.first_seen_millis, excluded.first_seen_millis),
+                    last_seen_millis = MAX(storage_dirty_path.last_seen_millis, excluded.last_seen_millis),
+                    event_count = storage_dirty_path.event_count + excluded.event_count,
+                    status = 'dirty',
+                    last_error = NULL",
+                params![
+                    &aggregate.path,
+                    &aggregate.source,
+                    aggregate.flags.min(i64::MAX as u64) as i64,
+                    aggregate.first_seen_millis.min(i64::MAX as u64) as i64,
+                    aggregate.last_seen_millis.min(i64::MAX as u64) as i64,
+                    aggregate.event_count.min(i64::MAX as u64) as i64,
+                ],
+            );
+            let child_prefix = format!("{}/", aggregate.path);
+            let _ = transaction.execute(
+                "UPDATE storage_dirty_path
+                 SET status = 'clean',
+                     last_seen_millis = MAX(last_seen_millis, ?2)
+                 WHERE status = 'dirty'
+                   AND path <> ?1
+                   AND substr(path, 1, ?3) = ?4",
+                params![
+                    &aggregate.path,
+                    now_millis.min(i64::MAX as u64) as i64,
+                    child_prefix.len().min(i64::MAX as usize) as i64,
+                    child_prefix,
+                ],
+            );
+        }
+        let _ = transaction.commit();
     }
 
     pub(super) fn load_dirty_path_strings(&self, roots: &[PathBuf], limit: usize) -> Vec<String> {
@@ -1786,6 +1891,9 @@ impl StorageSizeIndex {
     }
 
     fn coalesced_dirty_queue_path(&self, path: &str, roots: &[PathBuf]) -> String {
+        if let Some(volatile_ancestor) = volatile_dirty_queue_ancestor(path) {
+            return volatile_ancestor;
+        }
         let Some(connection) = self.connection.as_ref() else {
             return path.to_owned();
         };
@@ -2100,10 +2208,21 @@ impl StorageSizeIndex {
         let dirty_paths_json =
             serde_json::to_string(dirty_paths).unwrap_or_else(|_| "[]".to_owned());
         let root_key = storage_situation_roots_key(roots);
-        let status = if result.partial {
+        let status = if result.continuation_pending {
+            "pending"
+        } else if result.partial {
             "partial"
         } else {
             "complete"
+        };
+        let last_error = if result.continuation_pending {
+            result
+                .last_error
+                .as_deref()
+                .map(|error| format!("{error};continuation_pending"))
+                .or_else(|| Some("continuation_pending".to_owned()))
+        } else {
+            result.last_error.clone()
         };
         let _ = connection.execute(
             "INSERT OR REPLACE INTO storage_measurement_job (
@@ -2127,7 +2246,7 @@ impl StorageSizeIndex {
                 result.measured_file_count.min(i64::MAX as u64) as i64,
                 result.measured_bytes.min(i64::MAX as u64) as i64,
                 if result.partial { 1i64 } else { 0i64 },
-                result.last_error.as_deref(),
+                last_error.as_deref(),
             ],
         );
     }
@@ -2565,10 +2684,6 @@ impl StorageSizeIndex {
             emergency_changed = true;
             let _ = connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
             bytes = self.index_total_file_bytes();
-        }
-
-        if changed || emergency_changed {
-            rebuild_storage_index_summaries_and_top_offenders(connection);
         }
 
         if emergency_changed || self.index_total_file_bytes() > limits.hard_cap_bytes {
@@ -3835,6 +3950,113 @@ impl StorageSizeIndex {
         offenders
     }
 
+    pub(super) fn load_situation_top_offenders(
+        &self,
+        roots: &[PathBuf],
+        limit: usize,
+    ) -> Vec<StorageTopOffenderRow> {
+        let limit = limit.clamp(1, 40);
+        let read_limit = limit.saturating_mul(4).clamp(1, 1_000);
+        let mut offenders = self.load_materialized_path_top_offenders(roots, read_limit);
+        offenders.extend(self.load_domain_top_offenders(roots, read_limit));
+        offenders.extend(self.load_top_offenders(roots, read_limit));
+
+        let mut seen_paths = BTreeSet::new();
+        offenders.retain(|row| seen_paths.insert(row.path.clone()));
+        offenders.sort_by(|left, right| {
+            right
+                .physical_bytes
+                .cmp(&left.physical_bytes)
+                .then_with(|| {
+                    right
+                        .recommendation_score
+                        .total_cmp(&left.recommendation_score)
+                })
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        offenders.truncate(limit);
+        offenders
+    }
+
+    fn load_materialized_path_top_offenders(
+        &self,
+        roots: &[PathBuf],
+        limit: usize,
+    ) -> Vec<StorageTopOffenderRow> {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let mut predicate = "physical_bytes > 0".to_owned();
+        let mut bindings = Vec::new();
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "source_root");
+        bindings.push((limit.clamp(1, 1_000) as i64).into());
+        let Ok(mut statement) = connection.prepare(&format!(
+            "SELECT source_root, path, artifact_kind, cleanup_tier, physical_bytes,
+                    recommendation_score, last_measured_millis
+             FROM storage_path
+             WHERE {predicate}
+             ORDER BY physical_bytes DESC, recommendation_score DESC, last_measured_millis DESC, path ASC
+             LIMIT ?"
+        )) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            params_from_iter(bindings.iter()),
+            storage_top_offender_row_from_sql,
+        ) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
+
+    fn load_domain_top_offenders(
+        &self,
+        roots: &[PathBuf],
+        limit: usize,
+    ) -> Vec<StorageTopOffenderRow> {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let mut predicate = "physical_bytes > 0 AND path_prefix <> ''".to_owned();
+        let mut bindings = Vec::new();
+        push_roots_predicate(&mut predicate, &mut bindings, roots, "source_root");
+        bindings.push((limit.clamp(1, 1_000) as i64).into());
+        let Ok(mut statement) = connection.prepare(&format!(
+            "SELECT source_root, path_prefix, domain_kind,
+                    CASE
+                        WHEN dangerous_user_data_bytes > 0 THEN 'dangerous'
+                        WHEN review_required_bytes > 0 THEN 'review'
+                        WHEN safely_reclaimable_now_bytes > 0 THEN 'rebuildable'
+                        WHEN maybe_reclaimable_bytes > 0 THEN 'review'
+                        ELSE ''
+                    END,
+                    physical_bytes,
+                    CASE
+                        WHEN dangerous_user_data_bytes > 0 THEN 20.0
+                        WHEN review_required_bytes > 0 THEN 40.0
+                        WHEN maybe_reclaimable_bytes > 0 THEN 60.0
+                        WHEN safely_reclaimable_now_bytes > 0 THEN 80.0
+                        ELSE 0.0
+                    END,
+                    last_measured_millis
+             FROM storage_domain
+             WHERE {predicate}
+             ORDER BY physical_bytes DESC, last_measured_millis DESC, path_prefix ASC
+             LIMIT ?"
+        )) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            params_from_iter(bindings.iter()),
+            storage_top_offender_row_from_sql,
+        ) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
+
     pub(super) fn store_typed_storage_domains(
         &self,
         roots: &[PathBuf],
@@ -4287,22 +4509,46 @@ fn refresh_storage_index_summaries_and_top_offenders(
                         THEN physical_bytes ELSE 0 END), 0),
                     COALESCE(SUM(CASE
                         WHEN cleanup_tier IN ('safe', 'rebuildable') AND safety <> 'safe'
+                          AND NOT (
+                            kind IN ('macos-app-bundle', 'app-support-data', 'app-container',
+                                     'app-launch-item', 'app-preferences', 'app-receipt',
+                                     'ai-session-data', 'offline-media', 'colima-vm',
+                                     'docker-vm', 'ios-backup', 'mail-attachments',
+                                     'message-attachments', 'local-snapshot')
+                            OR storage_role IN ('application', 'app-data', 'agent-data',
+                                                'offline-media', 'system-data', 'user-data')
+                            OR cleanup_tier IN ('blocked', 'dangerous')
+                            OR safety IN ('blocked', 'dangerous')
+                          )
                         THEN physical_bytes ELSE 0 END), 0),
                     COALESCE(SUM(CASE
-                        WHEN cleanup_tier = 'review' OR safety = 'review'
+                        WHEN (cleanup_tier = 'review' OR safety = 'review')
+                          AND NOT (
+                            kind IN ('macos-app-bundle', 'app-support-data', 'app-container',
+                                     'app-launch-item', 'app-preferences', 'app-receipt',
+                                     'ai-session-data', 'offline-media', 'colima-vm',
+                                     'docker-vm', 'ios-backup', 'mail-attachments',
+                                     'message-attachments', 'local-snapshot')
+                            OR storage_role IN ('application', 'app-data', 'agent-data',
+                                                'offline-media', 'system-data', 'user-data')
+                            OR cleanup_tier IN ('blocked', 'dangerous')
+                            OR safety IN ('blocked', 'dangerous')
+                          )
                         THEN physical_bytes ELSE 0 END), 0),
                     COALESCE(SUM(CASE
-                        WHEN cleanup_tier IN ('blocked', 'dangerous')
+                        WHEN kind IN ('macos-app-bundle', 'app-support-data', 'app-container',
+                                      'app-launch-item', 'app-preferences', 'app-receipt',
+                                      'ai-session-data', 'offline-media', 'colima-vm',
+                                      'docker-vm', 'ios-backup', 'mail-attachments',
+                                      'message-attachments', 'local-snapshot')
+                          OR storage_role IN ('application', 'app-data', 'agent-data',
+                                              'offline-media', 'system-data', 'user-data')
+                          OR cleanup_tier IN ('blocked', 'dangerous')
                           OR safety IN ('blocked', 'dangerous')
-                          OR storage_role = 'user-data'
                         THEN physical_bytes ELSE 0 END), 0)
              FROM storage_file_index
              WHERE source_root = ?1",
             params![source_root, captured_at_millis.min(i64::MAX as u64) as i64,],
-        );
-        let _ = transaction.execute(
-            "DELETE FROM storage_top_offender WHERE source_root = ?1",
-            params![source_root],
         );
         let _ = transaction.execute(
             "INSERT OR REPLACE INTO storage_top_offender (
@@ -4314,45 +4560,22 @@ fn refresh_storage_index_summaries_and_top_offenders(
              FROM storage_file_index
              WHERE source_root = ?1
              ORDER BY recommendation_score DESC, physical_bytes DESC, last_scan_millis DESC, path ASC
-             LIMIT ?2",
+            LIMIT ?2",
+            params![source_root, STORAGE_TOP_OFFENDERS_PER_ROOT as i64],
+        );
+        let _ = transaction.execute(
+            "DELETE FROM storage_top_offender
+             WHERE source_root = ?1
+               AND path NOT IN (
+                    SELECT path
+                    FROM storage_top_offender
+                    WHERE source_root = ?1
+                    ORDER BY physical_bytes DESC, recommendation_score DESC, last_scan_millis DESC, path ASC
+                    LIMIT ?2
+               )",
             params![source_root, STORAGE_TOP_OFFENDERS_PER_ROOT as i64],
         );
     }
-}
-
-fn rebuild_storage_index_summaries_and_top_offenders(connection: &Connection) {
-    let Ok(mut statement) = connection
-        .prepare("SELECT DISTINCT source_root FROM storage_file_index ORDER BY source_root")
-    else {
-        return;
-    };
-    let Ok(rows) = statement.query_map([], |row| row.get::<_, String>(0)) else {
-        return;
-    };
-    let source_roots = rows.flatten().collect::<BTreeSet<_>>();
-    let Ok(transaction) = connection.unchecked_transaction() else {
-        return;
-    };
-    let _ = transaction.execute("DELETE FROM storage_index_summary", []);
-    let _ = transaction.execute(
-        "DELETE FROM storage_top_offender
-         WHERE NOT EXISTS (
-            SELECT 1 FROM storage_file_index
-            WHERE storage_file_index.source_root = storage_top_offender.source_root
-              AND storage_file_index.path = storage_top_offender.path
-         )",
-        [],
-    );
-    refresh_storage_index_summaries_and_top_offenders(
-        &transaction,
-        &source_roots,
-        storage_now_millis(),
-    );
-    let _ = refresh_materialized_storage_index_for_roots(&transaction, &source_roots);
-    if let Ok(generation) = materialized_storage_index_generation(&transaction) {
-        let _ = set_materialized_storage_index_generation(&transaction, &generation);
-    }
-    let _ = transaction.commit();
 }
 
 fn materialized_storage_index_generation(connection: &Connection) -> rusqlite::Result<String> {
@@ -4577,14 +4800,42 @@ fn refresh_materialized_storage_domain_job_for_root(
                     THEN physical_bytes ELSE 0 END), 0),
                 COALESCE(SUM(CASE
                     WHEN cleanup_tier IN ('safe', 'rebuildable') AND safety <> 'safe'
+                      AND NOT (
+                        kind IN ('macos-app-bundle', 'app-support-data', 'app-container',
+                                 'app-launch-item', 'app-preferences', 'app-receipt',
+                                 'ai-session-data', 'offline-media', 'colima-vm',
+                                 'docker-vm', 'ios-backup', 'mail-attachments',
+                                 'message-attachments', 'local-snapshot')
+                        OR storage_role IN ('application', 'app-data', 'agent-data',
+                                            'offline-media', 'system-data', 'user-data')
+                        OR cleanup_tier IN ('blocked', 'dangerous')
+                        OR safety IN ('blocked', 'dangerous')
+                      )
                     THEN physical_bytes ELSE 0 END), 0),
                 COALESCE(SUM(CASE
-                    WHEN cleanup_tier = 'review' OR safety = 'review'
+                    WHEN (cleanup_tier = 'review' OR safety = 'review')
+                      AND NOT (
+                        kind IN ('macos-app-bundle', 'app-support-data', 'app-container',
+                                 'app-launch-item', 'app-preferences', 'app-receipt',
+                                 'ai-session-data', 'offline-media', 'colima-vm',
+                                 'docker-vm', 'ios-backup', 'mail-attachments',
+                                 'message-attachments', 'local-snapshot')
+                        OR storage_role IN ('application', 'app-data', 'agent-data',
+                                            'offline-media', 'system-data', 'user-data')
+                        OR cleanup_tier IN ('blocked', 'dangerous')
+                        OR safety IN ('blocked', 'dangerous')
+                      )
                     THEN physical_bytes ELSE 0 END), 0),
                 COALESCE(SUM(CASE
-                    WHEN cleanup_tier IN ('blocked', 'dangerous')
+                    WHEN kind IN ('macos-app-bundle', 'app-support-data', 'app-container',
+                                  'app-launch-item', 'app-preferences', 'app-receipt',
+                                  'ai-session-data', 'offline-media', 'colima-vm',
+                                  'docker-vm', 'ios-backup', 'mail-attachments',
+                                  'message-attachments', 'local-snapshot')
+                      OR storage_role IN ('application', 'app-data', 'agent-data',
+                                          'offline-media', 'system-data', 'user-data')
+                      OR cleanup_tier IN ('blocked', 'dangerous')
                       OR safety IN ('blocked', 'dangerous')
-                      OR storage_role = 'user-data'
                     THEN physical_bytes ELSE 0 END), 0),
                 COALESCE(MIN(last_scan_millis), 0),
                 COALESCE(MAX(last_scan_millis), 0),
@@ -5343,6 +5594,27 @@ fn nearest_indexed_dirty_queue_ancestor(
     dirty_queue_ancestor_candidates(path, roots)
         .into_iter()
         .find(|candidate| dirty_queue_has_indexed_directory(connection, candidate))
+}
+
+fn volatile_dirty_queue_ancestor(path: &str) -> Option<String> {
+    const VOLATILE_DIR_MARKERS: [&str; 2] = [
+        "/Library/Application Support/Chau7/TabRestoreBundles",
+        "/Library/Application Support/Chau7/TabStateBackups",
+    ];
+    let lowercase = path.to_ascii_lowercase();
+    for marker in VOLATILE_DIR_MARKERS {
+        let marker_lowercase = marker.to_ascii_lowercase();
+        if let Some(index) = lowercase.find(&marker_lowercase) {
+            let end = index.saturating_add(marker.len()).min(path.len());
+            return Some(path[..end].to_owned());
+        }
+    }
+    if lowercase.contains(".dat.nosync") {
+        return Path::new(path)
+            .parent()
+            .map(|parent| parent.display().to_string());
+    }
+    None
 }
 
 fn dirty_queue_ancestor_candidates(path: &str, roots: &[PathBuf]) -> Vec<String> {
