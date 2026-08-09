@@ -3595,6 +3595,7 @@ mod tests {
             "aetower_reboot_report",
             "aetower_explain_anomalies",
             "aetower_entity_process_tree",
+            "aetower_host_pressure_report",
             "aetower_watch_self",
             "aetower_runtime_burst_explanation",
             "aetower_top_findings",

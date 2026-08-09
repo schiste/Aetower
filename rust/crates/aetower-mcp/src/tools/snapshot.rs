@@ -7,6 +7,46 @@ use serde_json::{Value, json};
 
 use crate::*;
 
+#[derive(Serialize)]
+struct PressureEntity {
+    entity_id: String,
+    display_name: String,
+    friction: f32,
+    cpu_percent: f32,
+    memory_bytes: u64,
+    wakeups_per_second: f32,
+    badges: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct HostPressureSignals {
+    memory_used_bytes: u64,
+    memory_total_bytes: u64,
+    memory_used_ratio: f64,
+    compressed_memory_bytes: u64,
+    swap_used_bytes: u64,
+    cpu_percent: f32,
+    wakeups_per_second: f32,
+    disk_read_bps: u64,
+    disk_write_bps: u64,
+    thermal_state: String,
+    gpu_percent: f32,
+    gpu_memory_bytes: u64,
+}
+
+#[derive(Serialize)]
+struct HostPressureReport {
+    sequence: u64,
+    captured_at_millis: u64,
+    signals: HostPressureSignals,
+    aetower_self: Vec<PressureEntity>,
+    external_memory_leaders: Vec<PressureEntity>,
+    external_cpu_leaders: Vec<PressureEntity>,
+    external_wakeup_leaders: Vec<PressureEntity>,
+    assessment: Vec<String>,
+    investigation_phases: Vec<String>,
+}
+
 impl AetowerMcpServer {
     pub(crate) fn tool_current_snapshot(&self, arguments: Value) -> Result<Value, Value> {
         #[derive(serde::Deserialize, Default)]
@@ -108,6 +148,79 @@ impl AetowerMcpServer {
             host: snapshot.host,
             capability_states,
             top_entities,
+        })
+    }
+
+    pub(crate) fn tool_host_pressure_report(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(serde::Deserialize)]
+        struct Args {
+            #[serde(default = "default_pressure_entity_limit")]
+            entity_limit: usize,
+        }
+
+        fn default_pressure_entity_limit() -> usize {
+            6
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let limit = args.entity_limit.clamp(1, 20);
+        let snapshot = self.wait_for_nonzero_snapshot()?;
+        let memory_used_ratio = if snapshot.host.memory_total_bytes == 0 {
+            0.0
+        } else {
+            snapshot.host.memory_used_bytes as f64 / snapshot.host.memory_total_bytes as f64
+        };
+        let aetower_self = pressure_entities(
+            snapshot
+                .entities
+                .iter()
+                .filter(|entity| is_aetower_entity(entity))
+                .collect(),
+            limit,
+        );
+        let external_memory_leaders =
+            pressure_entities(top_external_memory_entities(&snapshot, limit), limit);
+        let external_cpu_leaders =
+            pressure_entities(top_external_cpu_entities(&snapshot, limit), limit);
+        let external_wakeup_leaders =
+            pressure_entities(top_external_wakeup_entities(&snapshot, limit), limit);
+        let assessment = host_pressure_assessment(
+            &snapshot,
+            memory_used_ratio,
+            &aetower_self,
+            &external_memory_leaders,
+            &external_cpu_leaders,
+            &external_wakeup_leaders,
+        );
+
+        tool_json(HostPressureReport {
+            sequence: snapshot.sequence,
+            captured_at_millis: snapshot.captured_at_millis,
+            signals: HostPressureSignals {
+                memory_used_bytes: snapshot.host.memory_used_bytes,
+                memory_total_bytes: snapshot.host.memory_total_bytes,
+                memory_used_ratio,
+                compressed_memory_bytes: snapshot.host.compressed_memory_bytes,
+                swap_used_bytes: snapshot.host.swap_used_bytes,
+                cpu_percent: snapshot.host.cpu_percent,
+                wakeups_per_second: snapshot.host.wakeups_per_second,
+                disk_read_bps: snapshot.host.disk_read_bps,
+                disk_write_bps: snapshot.host.disk_write_bps,
+                thermal_state: format!("{:?}", snapshot.host.thermal_state),
+                gpu_percent: snapshot.host.gpu_percent,
+                gpu_memory_bytes: snapshot.host.gpu_memory_bytes,
+            },
+            aetower_self,
+            external_memory_leaders,
+            external_cpu_leaders,
+            external_wakeup_leaders,
+            assessment,
+            investigation_phases: vec![
+                "Confirm host pressure first: memory compression, swap, wakeups, thermal state, and disk I/O.".to_owned(),
+                "Then compare Aetower self rows against external leaders; do not blame Aetower if external leaders dominate.".to_owned(),
+                "If Aetower self is a leader, inspect runtime lag, MCP request rate, storage dirty queue, and adapter diagnostics.".to_owned(),
+                "Recheck after stopping the top external leader to separate observer overhead from system-wide pressure.".to_owned(),
+            ],
         })
     }
 
@@ -501,6 +614,119 @@ impl AetowerMcpServer {
             capabilities,
         })
     }
+}
+
+fn pressure_entities(
+    mut entities: Vec<&aetower_model::EntitySnapshot>,
+    limit: usize,
+) -> Vec<PressureEntity> {
+    entities.truncate(limit);
+    entities
+        .into_iter()
+        .map(|entity| PressureEntity {
+            entity_id: entity.entity_id.clone(),
+            display_name: entity.display_name.clone(),
+            friction: entity.friction.total_score,
+            cpu_percent: entity.metrics.cpu_percent,
+            memory_bytes: entity.metrics.memory_resident_bytes,
+            wakeups_per_second: entity.metrics.wakeups_per_second,
+            badges: entity.badges.clone(),
+        })
+        .collect()
+}
+
+fn top_external_cpu_entities(
+    snapshot: &aetower_model::SystemSnapshot,
+    limit: usize,
+) -> Vec<&aetower_model::EntitySnapshot> {
+    let mut entities = snapshot
+        .entities
+        .iter()
+        .filter(|entity| !is_aetower_entity(entity))
+        .collect::<Vec<_>>();
+    entities.sort_by(|left, right| {
+        right
+            .metrics
+            .cpu_percent
+            .total_cmp(&left.metrics.cpu_percent)
+            .then_with(|| {
+                right
+                    .friction
+                    .total_score
+                    .total_cmp(&left.friction.total_score)
+            })
+            .then_with(|| left.display_name.cmp(&right.display_name))
+    });
+    entities.truncate(limit);
+    entities
+}
+
+fn host_pressure_assessment(
+    snapshot: &aetower_model::SystemSnapshot,
+    memory_used_ratio: f64,
+    aetower_self: &[PressureEntity],
+    external_memory_leaders: &[PressureEntity],
+    external_cpu_leaders: &[PressureEntity],
+    external_wakeup_leaders: &[PressureEntity],
+) -> Vec<String> {
+    let mut assessment = Vec::new();
+    if memory_used_ratio >= MEMORY_PRESSURE_WARNING_RATIO
+        || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_WARNING_BYTES
+        || snapshot.host.swap_used_bytes >= SWAP_WARNING_BYTES
+    {
+        assessment.push(format!(
+            "Host memory pressure is active: {:.0}% used, {} compressed, {} swap.",
+            memory_used_ratio * 100.0,
+            format_bytes(snapshot.host.compressed_memory_bytes),
+            format_bytes(snapshot.host.swap_used_bytes)
+        ));
+    }
+    if let Some(leader) = external_memory_leaders.first() {
+        assessment.push(format!(
+            "Top external memory leader is {} at {} resident.",
+            leader.display_name,
+            format_bytes(leader.memory_bytes)
+        ));
+    }
+    if let Some(leader) = external_cpu_leaders.first()
+        && leader.cpu_percent >= 10.0
+    {
+        assessment.push(format!(
+            "Top external CPU leader is {} at {:.1}% CPU.",
+            leader.display_name, leader.cpu_percent
+        ));
+    }
+    if let Some(leader) = external_wakeup_leaders.first()
+        && leader.wakeups_per_second >= WAKEUPS_WARNING
+    {
+        assessment.push(format!(
+            "Top external wakeup leader is {} at {:.0}/s.",
+            leader.display_name, leader.wakeups_per_second
+        ));
+    }
+    let aetower_memory = aetower_self
+        .iter()
+        .map(|entity| entity.memory_bytes)
+        .fold(0u64, u64::saturating_add);
+    let aetower_cpu = aetower_self
+        .iter()
+        .map(|entity| entity.cpu_percent as f64)
+        .sum::<f64>();
+    if aetower_memory > 0 || aetower_cpu > 0.0 {
+        assessment.push(format!(
+            "Aetower self currently accounts for {} resident and {:.1}% CPU across {} visible row(s).",
+            format_bytes(aetower_memory),
+            aetower_cpu,
+            aetower_self.len()
+        ));
+    } else {
+        assessment.push("Aetower self is not visible as a current pressure leader.".to_owned());
+    }
+    if assessment.is_empty() {
+        assessment
+            .push("No active host pressure signal crossed the investigation threshold.".to_owned());
+    }
+    assessment
 }
 
 fn resource_cost_rollup_matches_id(rollup: &aetower_model::ResourceCostRollup, id: &str) -> bool {

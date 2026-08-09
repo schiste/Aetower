@@ -175,6 +175,12 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
             AetowerMcpServer::tool_host_summary,
         ),
         ToolDescriptor::with_args(
+            "aetower_host_pressure_report",
+            "Separate host-level pressure from Aetower self overhead by reporting memory compression, swap, wakeups, thermal state, Aetower rows, and external resource leaders.",
+            vec![uint("entity_limit", Some(1), Some(20), Some(6))],
+            AetowerMcpServer::tool_host_pressure_report,
+        ),
+        ToolDescriptor::with_args(
             "aetower_resource_cost_rollups",
             "Return normalized resource cost rollups for machine, entity, repository, and session scopes. Supports optional scope/id filtering.",
             vec![
