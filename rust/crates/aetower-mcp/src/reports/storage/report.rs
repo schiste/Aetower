@@ -878,6 +878,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         &requested_roots,
         now_millis,
     );
+    ensure_dirty_storage_subtree_measurement(&requested_roots, &dirty_summary);
     let dirty_paths = storage_index.load_dirty_path_strings(&requested_roots, 512);
     let volume_states = summarize_volume_states(&requested_roots);
     let (sections, sections_from_memo) = index_report_sections(

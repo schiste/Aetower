@@ -80,6 +80,7 @@ pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String
         &roots,
         now_millis,
     );
+    ensure_dirty_storage_subtree_measurement(&roots, &dirty_summary);
     if let Some(snapshot) = storage_index.load_situation_snapshot(&roots, limit.clamp(1, 40)) {
         let snapshot =
             overlay_storage_situation_snapshot(snapshot, &storage_index, &roots, dirty_summary);
@@ -122,6 +123,21 @@ pub(super) fn persist_storage_situation_snapshot_from_report(report: &StorageHyg
         &dirty_paths,
     );
     let _ = storage_index.persist_situation_snapshot(&roots, "scan_finalized", &response);
+}
+
+pub(super) fn persist_storage_situation_snapshot_for_index(
+    storage_index: &StorageSizeIndex,
+    roots: &[PathBuf],
+    source: &str,
+) {
+    if roots.is_empty() {
+        return;
+    }
+    let now_millis = storage_now_millis();
+    let dirty_summary = storage_index.dirty_path_summary(roots, 5);
+    let response =
+        build_storage_situation_response(storage_index, roots, now_millis, 40, dirty_summary);
+    let _ = storage_index.persist_situation_snapshot(roots, source, &response);
 }
 
 fn build_storage_situation_response(

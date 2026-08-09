@@ -28,6 +28,29 @@ pub(super) fn scan_root(
     collector: &mut StorageCandidateCollector,
     metrics: &mut StorageScanMetrics,
 ) -> StorageRootScanResult {
+    scan_root_with_source_root(
+        root,
+        root,
+        options,
+        deadline,
+        now_millis,
+        storage_index,
+        collector,
+        metrics,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn scan_root_with_source_root(
+    root: &Path,
+    source_root: &Path,
+    options: &StorageHygieneOptions,
+    deadline: Instant,
+    now_millis: u64,
+    storage_index: &StorageSizeIndex,
+    collector: &mut StorageCandidateCollector,
+    metrics: &mut StorageScanMetrics,
+) -> StorageRootScanResult {
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     let mut repositories = BTreeSet::new();
     let mut large_directory_candidates: Vec<(usize, PathBuf)> = Vec::new();
@@ -62,7 +85,7 @@ pub(super) fn scan_root(
             let size = size_of_path(
                 &path,
                 &metadata,
-                root,
+                source_root,
                 rule.clone(),
                 deadline,
                 options.mode,
@@ -122,6 +145,7 @@ pub(super) fn scan_root(
 
     sizing_truncated |= surface_large_directories(
         root,
+        source_root,
         options,
         deadline,
         now_millis,
@@ -153,7 +177,8 @@ pub(super) fn scan_root(
 /// Returns whether the pass ran out of budget before finishing.
 #[allow(clippy::too_many_arguments)]
 fn surface_large_directories(
-    root: &Path,
+    _root: &Path,
+    source_root: &Path,
     options: &StorageHygieneOptions,
     deadline: Instant,
     now_millis: u64,
@@ -206,7 +231,7 @@ fn surface_large_directories(
         let size = size_of_path(
             &path,
             &metadata,
-            root,
+            source_root,
             rule.clone(),
             deadline,
             options.mode,

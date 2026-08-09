@@ -327,6 +327,17 @@ pub(super) struct StorageDirtyPathSummary {
 }
 
 #[derive(Clone, Debug, Default)]
+pub(super) struct StorageIncrementalMeasurementResult {
+    pub(super) started_at_millis: u64,
+    pub(super) measured_path_count: u64,
+    pub(super) measured_directory_count: u64,
+    pub(super) measured_file_count: u64,
+    pub(super) measured_bytes: u64,
+    pub(super) partial: bool,
+    pub(super) last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub(super) struct StorageIndexSummaryRow {
     pub(super) source_root: String,
     pub(super) item_count: u64,
@@ -1930,6 +1941,195 @@ impl StorageSizeIndex {
                 ],
             );
         }
+    }
+
+    pub(super) fn source_root_for_incremental_path(
+        &self,
+        path: &Path,
+        requested_roots: &[PathBuf],
+    ) -> PathBuf {
+        let path_display = path.display().to_string();
+        if let Some(connection) = self.connection.as_ref()
+            && let Some(source_root) = indexed_source_root_for_path(connection, &path_display)
+        {
+            return PathBuf::from(source_root);
+        }
+        requested_roots
+            .iter()
+            .filter(|root| path_is_under_root(&path_display, root))
+            .max_by_key(|root| root.display().to_string().len())
+            .cloned()
+            .unwrap_or_else(|| path.to_path_buf())
+    }
+
+    pub(super) fn indexed_source_roots_for_subtree(
+        &self,
+        path: &Path,
+        requested_roots: &[PathBuf],
+    ) -> BTreeSet<String> {
+        let mut source_roots = BTreeSet::new();
+        let path_display = path.display().to_string();
+        if let Some(connection) = self.connection.as_ref() {
+            load_indexed_source_roots_for_subtree(connection, &path_display, &mut source_roots);
+        }
+        if source_roots.is_empty() {
+            source_roots.insert(
+                self.source_root_for_incremental_path(path, requested_roots)
+                    .display()
+                    .to_string(),
+            );
+        }
+        source_roots
+    }
+
+    pub(super) fn remove_indexed_subtree(
+        &self,
+        path: &Path,
+        requested_roots: &[PathBuf],
+        now_millis: u64,
+    ) -> BTreeSet<String> {
+        self.flush_pending_rows();
+        let source_roots = self.indexed_source_roots_for_subtree(path, requested_roots);
+        let Some(connection) = self.connection.as_ref() else {
+            return source_roots;
+        };
+        let path_display = path.display().to_string();
+        let child_prefix = format!("{path_display}/");
+        let Ok(transaction) = connection.unchecked_transaction() else {
+            return source_roots;
+        };
+        let params = params![
+            &path_display,
+            child_prefix.len().min(i64::MAX as usize) as i64,
+            &child_prefix,
+        ];
+        let _ = transaction.execute(
+            "DELETE FROM storage_file_index
+             WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
+            params,
+        );
+        let params = params![
+            &path_display,
+            child_prefix.len().min(i64::MAX as usize) as i64,
+            &child_prefix,
+        ];
+        let _ = transaction.execute(
+            "DELETE FROM storage_size_index
+             WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
+            params,
+        );
+        let params = params![
+            &path_display,
+            child_prefix.len().min(i64::MAX as usize) as i64,
+            &child_prefix,
+        ];
+        let _ = transaction.execute(
+            "DELETE FROM storage_path_fingerprint
+             WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
+            params,
+        );
+        let params = params![
+            &path_display,
+            child_prefix.len().min(i64::MAX as usize) as i64,
+            &child_prefix,
+        ];
+        let _ = transaction.execute(
+            "DELETE FROM storage_path
+             WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
+            params,
+        );
+        let params = params![
+            &path_display,
+            child_prefix.len().min(i64::MAX as usize) as i64,
+            &child_prefix,
+        ];
+        let _ = transaction.execute(
+            "DELETE FROM storage_directory_rollup
+             WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
+            params,
+        );
+        refresh_storage_index_summaries_and_top_offenders(&transaction, &source_roots, now_millis);
+        let _ = refresh_materialized_storage_index_for_roots(&transaction, &source_roots);
+        if let Ok(generation) = materialized_storage_index_generation(&transaction) {
+            let _ = set_materialized_storage_index_generation(&transaction, &generation);
+        }
+        let _ = transaction.commit();
+        super::report::invalidate_index_report_sections_memo();
+        source_roots
+    }
+
+    pub(super) fn refresh_materialized_storage_for_source_roots(
+        &self,
+        source_roots: &BTreeSet<String>,
+    ) {
+        self.flush_pending_rows();
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        if source_roots.is_empty() {
+            return;
+        }
+        let Ok(transaction) = connection.unchecked_transaction() else {
+            return;
+        };
+        let _ = refresh_materialized_storage_index_for_roots(&transaction, source_roots);
+        if let Ok(generation) = materialized_storage_index_generation(&transaction) {
+            let _ = set_materialized_storage_index_generation(&transaction, &generation);
+        }
+        let _ = transaction.commit();
+        super::report::invalidate_index_report_sections_memo();
+    }
+
+    pub(super) fn record_incremental_measurement_job(
+        &self,
+        roots: &[PathBuf],
+        dirty_paths: &[String],
+        result: &StorageIncrementalMeasurementResult,
+        now_millis: u64,
+    ) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        let roots_json = serde_json::to_string(
+            &roots
+                .iter()
+                .map(|root| root.display().to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_owned());
+        let dirty_paths_json =
+            serde_json::to_string(dirty_paths).unwrap_or_else(|_| "[]".to_owned());
+        let root_key = storage_situation_roots_key(roots);
+        let status = if result.partial {
+            "partial"
+        } else {
+            "complete"
+        };
+        let _ = connection.execute(
+            "INSERT OR REPLACE INTO storage_measurement_job (
+                job_id, job_kind, status, source, root_key, roots_json, dirty_paths_json,
+                started_at_millis, updated_at_millis, completed_at_millis, measured_path_count,
+                measured_directory_count, measured_file_count, measured_bytes, partial, last_error
+             ) VALUES (
+                ?1, 'dirty_subtree_incremental', ?2, 'dirty_queue', ?3, ?4, ?5,
+                ?6, ?7, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+             )",
+            params![
+                format!("dirty-subtree-incremental:{root_key}"),
+                status,
+                root_key,
+                roots_json,
+                dirty_paths_json,
+                result.started_at_millis.min(i64::MAX as u64) as i64,
+                now_millis.min(i64::MAX as u64) as i64,
+                result.measured_path_count.min(i64::MAX as u64) as i64,
+                result.measured_directory_count.min(i64::MAX as u64) as i64,
+                result.measured_file_count.min(i64::MAX as u64) as i64,
+                result.measured_bytes.min(i64::MAX as u64) as i64,
+                if result.partial { 1i64 } else { 0i64 },
+                result.last_error.as_deref(),
+            ],
+        );
     }
 
     fn mark_unknown_gap_roots(
@@ -5175,6 +5375,56 @@ fn dirty_queue_root_has_dirty_descendant(connection: &Connection, root: &str) ->
             |row| row.get::<_, i64>(0),
         )
         .is_ok()
+}
+
+fn indexed_source_root_for_path(connection: &Connection, path: &str) -> Option<String> {
+    connection
+        .query_row(
+            "SELECT source_root
+             FROM storage_file_index
+             WHERE ?1 = source_root
+                OR substr(?1, 1, length(source_root) + 1) = source_root || '/'
+                OR path = ?1
+                OR substr(path, 1, length(?1) + 1) = ?1 || '/'
+             GROUP BY source_root
+             ORDER BY
+                CASE
+                    WHEN ?1 = source_root
+                      OR substr(?1, 1, length(source_root) + 1) = source_root || '/'
+                    THEN 0 ELSE 1
+                END,
+                length(source_root) DESC
+             LIMIT 1",
+            params![path],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+}
+
+fn load_indexed_source_roots_for_subtree(
+    connection: &Connection,
+    path: &str,
+    source_roots: &mut BTreeSet<String>,
+) {
+    let child_prefix = format!("{path}/");
+    let Ok(mut statement) = connection.prepare(
+        "SELECT DISTINCT source_root
+         FROM storage_file_index
+         WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
+    ) else {
+        return;
+    };
+    let Ok(rows) = statement.query_map(
+        params![
+            path,
+            child_prefix.len().min(i64::MAX as usize) as i64,
+            child_prefix
+        ],
+        |row| row.get::<_, String>(0),
+    ) else {
+        return;
+    };
+    source_roots.extend(rows.flatten());
 }
 
 fn indexed_file_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<StorageIndexedFileRow> {

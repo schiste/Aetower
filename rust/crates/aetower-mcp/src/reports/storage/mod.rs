@@ -461,6 +461,7 @@ mod cleanup;
 mod detectors;
 mod events;
 mod fingerprint;
+mod incremental;
 mod jobs;
 mod models;
 mod projection;
@@ -504,6 +505,9 @@ use fingerprint::{
     STORAGE_PATH_FINGERPRINT_VERSION, StorageDirectoryFingerprint, StoragePathFingerprint,
     metadata_birth_millis,
 };
+use incremental::ensure_dirty_storage_subtree_measurement;
+#[cfg(test)]
+use incremental::measure_dirty_storage_subtrees_once;
 pub(crate) use jobs::StorageScanJobProgress;
 #[cfg(test)]
 use jobs::{StorageScanControl, StorageScanJobRequest, StorageScanThrottle};
@@ -577,12 +581,12 @@ pub use report::{
 };
 use state_store::{
     RepositoryInventoryCacheEntry, RepositoryInventoryCacheState, StorageDirtyPathSummary,
-    StorageIndexSummaryRow, StorageIndexedFileRow, StorageScanPersistedRecord,
-    StorageScanPersistedState, StorageScanStateStore, StorageSizeIndex,
+    StorageIncrementalMeasurementResult, StorageIndexSummaryRow, StorageIndexedFileRow,
+    StorageScanPersistedRecord, StorageScanPersistedState, StorageScanStateStore, StorageSizeIndex,
 };
 use treemap::build_storage_treemap_roots;
 use walk::{
     SizeWalkResult, file_access_age_days, is_cloud_storage_path, is_network_storage_path,
-    is_source_control_dir, scan_root, should_retain_storage_item, size_of_path,
-    storage_item_for_indexed_row, storage_item_for_path, unix_metadata_millis,
+    is_source_control_dir, scan_root, scan_root_with_source_root, should_retain_storage_item,
+    size_of_path, storage_item_for_indexed_row, storage_item_for_path, unix_metadata_millis,
 };

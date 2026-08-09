@@ -6442,6 +6442,126 @@ fn storage_dirty_queue_backpressure_collapses_descendants_to_root() {
 }
 
 #[test]
+fn storage_incremental_measurer_updates_dirty_subtree_and_snapshot() {
+    let root = test_root("incremental-measurer-updates");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let target = watched.join("project").join("target");
+    let changed = target.join("debug").join("changed.bin");
+    let sibling = watched
+        .join("sibling")
+        .join("target")
+        .join("debug")
+        .join("ignored.bin");
+    write_allocated_fixture(&changed, MIN_ITEM_BYTES + 4096);
+    write_allocated_fixture(&sibling, MIN_ITEM_BYTES + 8192);
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    store_indexed_directory_for_dirty_queue(&storage_index, &target, MIN_ITEM_BYTES);
+    let now_millis = storage_now_millis();
+    let records = vec![StorageFilesystemEventRecord {
+        timestamp_millis: Some(now_millis),
+        path: Some(changed.display().to_string()),
+        event_id: Some(201),
+        flags: Some(0),
+        source: Some("test-fsevents".to_owned()),
+    }];
+    storage_index.record_filesystem_events(&records, std::slice::from_ref(&watched), now_millis);
+
+    let result =
+        measure_dirty_storage_subtrees_once(&storage_index, std::slice::from_ref(&watched));
+
+    assert!(!result.partial, "incremental subtree should complete");
+    assert!(result.measured_path_count > 0);
+    let clean_summary = storage_index.dirty_path_summary(std::slice::from_ref(&watched), 16);
+    assert_eq!(clean_summary.dirty_path_count, 0);
+    let mut metrics = StorageScanMetrics::default();
+    let indexed_paths = storage_index
+        .load_candidate_rows(std::slice::from_ref(&watched), 16, &mut metrics)
+        .expect("load indexed rows after incremental measurement")
+        .into_iter()
+        .map(|row| row.path)
+        .collect::<Vec<_>>();
+    assert!(
+        indexed_paths
+            .iter()
+            .any(|path| path == &target.display().to_string()),
+        "dirty target subtree should be indexed: {indexed_paths:?}"
+    );
+    assert!(
+        indexed_paths
+            .iter()
+            .all(|path| !path.starts_with(&sibling.display().to_string())),
+        "incremental measurement must not scan clean siblings: {indexed_paths:?}"
+    );
+    let snapshot = storage_index
+        .load_situation_snapshot(std::slice::from_ref(&watched), 8)
+        .expect("incremental measurement persists situation snapshot");
+    assert_eq!(snapshot.dirty_paths.dirty_path_count, 0);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_incremental_measurer_removes_deleted_dirty_subtree() {
+    let root = test_root("incremental-measurer-removes-deleted");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let target = watched.join("project").join("target");
+    fs::create_dir_all(&target).expect("create deleted target fixture");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let mut metrics = StorageScanMetrics::default();
+    let mut row = seeded_index_row(
+        &watched,
+        &target,
+        MIN_ITEM_BYTES + 1_024,
+        "safe",
+        None,
+        Some(now_millis),
+        Some(now_millis),
+        now_millis,
+    );
+    row.kind = "large-directory".to_owned();
+    row.is_directory = true;
+    storage_index.store_indexed_row(&row, &mut metrics);
+    storage_index.flush_pending_rows();
+    assert_eq!(
+        storage_index.count_indexed_rows_with_prefix(&target.display().to_string()),
+        1
+    );
+    fs::remove_dir_all(&target).expect("remove deleted target fixture");
+    let records = vec![StorageFilesystemEventRecord {
+        timestamp_millis: Some(now_millis + 1),
+        path: Some(target.display().to_string()),
+        event_id: Some(211),
+        flags: Some(0),
+        source: Some("test-fsevents".to_owned()),
+    }];
+    storage_index.record_filesystem_events(
+        &records,
+        std::slice::from_ref(&watched),
+        now_millis + 1,
+    );
+
+    let result =
+        measure_dirty_storage_subtrees_once(&storage_index, std::slice::from_ref(&watched));
+
+    assert!(!result.partial);
+    assert_eq!(
+        storage_index.count_indexed_rows_with_prefix(&target.display().to_string()),
+        0
+    );
+    let clean_summary = storage_index.dirty_path_summary(std::slice::from_ref(&watched), 16);
+    assert_eq!(clean_summary.dirty_path_count, 0);
+    let snapshot = storage_index
+        .load_situation_snapshot(std::slice::from_ref(&watched), 8)
+        .expect("incremental delete persists situation snapshot");
+    assert_eq!(snapshot.summary.item_count, 0);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_dirty_queue_marks_unknown_gap_for_dropped_events() {
     let root = test_root("dirty-queue-unknown-gap");
     let index_dir = root.join("index");
