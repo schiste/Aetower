@@ -1569,6 +1569,16 @@ public struct StorageView: View {
 
     private func storageScanFreshnessLabel(_ report: StorageHygieneReportModel) -> String {
         let capturedAt = Date(timeIntervalSince1970: Double(report.capturedAtMillis) / 1_000)
+        return storageRelativeTimeLabel(capturedAt)
+    }
+
+    private func storageSituationFreshnessLabel(_ situation: StorageSituationModel) -> String {
+        let timestamp = situation.cacheStatus.latestScanMillis ?? situation.capturedAtMillis
+        let capturedAt = Date(timeIntervalSince1970: Double(timestamp) / 1_000)
+        return storageRelativeTimeLabel(capturedAt)
+    }
+
+    private func storageRelativeTimeLabel(_ capturedAt: Date) -> String {
         let seconds = max(0, Int(Date().timeIntervalSince(capturedAt)))
         if seconds < 60 {
             return "\(seconds)s ago"
@@ -9034,6 +9044,19 @@ public struct StorageView: View {
                     systemImage: storageSituationStatusImage(situation),
                     tone: storageSituationTone(situation)
                 )
+                if situation.dirtyPaths.unknownGap {
+                    AetowerBadge(
+                        "event gap",
+                        systemImage: "exclamationmark.triangle",
+                        tone: AetowerDesign.Status.warning
+                    )
+                } else if situation.dirtyPaths.dirtyPathCount > 0 {
+                    AetowerBadge(
+                        "updating",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        tone: AetowerDesign.Tone.disk
+                    )
+                }
                 Spacer(minLength: AetowerDesign.Spacing.md)
                 Text(storageSituationDetail(situation))
                     .font(AetowerDesign.Typography.caption)
@@ -9080,7 +9103,7 @@ public struct StorageView: View {
                 summaryCard(
                     "Dirty",
                     value: "\(situation.dirtyPaths.dirtyPathCount)",
-                    detail: "paths queued",
+                    detail: storageSituationDirtyDetail(situation),
                     systemImage: "waveform.path.ecg",
                     tone: situation.dirtyPaths.dirtyPathCount > 0
                         ? AetowerDesign.Status.warning
@@ -9151,6 +9174,7 @@ public struct StorageView: View {
                 )
                 HStack(spacing: AetowerDesign.Spacing.md) {
                     Text("\(formatBytes(volume.totalBytes - free)) used")
+                    Text(storageSituationVerificationDetail(situation))
                     if reclaimable > 0 {
                         Text("\(formatBytes(reclaimable)) safe reclaim indexed")
                     }
@@ -9272,6 +9296,12 @@ public struct StorageView: View {
         if !situation.hasCachedFacts {
             return "Volume state loaded; run a scan to build the reclaim index."
         }
+        if situation.dirtyPaths.unknownGap {
+            return "Watcher history has a gap; safe cleanup waits for verification."
+        }
+        if situation.dirtyPaths.dirtyPathCount > 0 {
+            return "\(situation.dirtyPaths.dirtyPathCount) changed paths queued; updating in the background."
+        }
         if !situation.cacheStatus.message.isEmpty {
             return situation.cacheStatus.message
         }
@@ -9280,6 +9310,32 @@ public struct StorageView: View {
             return "Last indexed \(date.formatted(date: .omitted, time: .shortened))"
         }
         return "Loaded from persistent storage index"
+    }
+
+    private func storageSituationDirtyDetail(_ situation: StorageSituationModel) -> String {
+        if situation.dirtyPaths.unknownGap {
+            return "verification required"
+        }
+        if situation.dirtyPaths.dirtyPathCount > 0 {
+            return "queued for refresh"
+        }
+        if situation.cacheStatus.partial {
+            return "partial facts retained"
+        }
+        return "no pending changes"
+    }
+
+    private func storageSituationVerificationDetail(_ situation: StorageSituationModel) -> String {
+        if situation.dirtyPaths.unknownGap {
+            return "verification required"
+        }
+        if situation.cacheStatus.partial {
+            return "partial facts \(storageSituationFreshnessLabel(situation))"
+        }
+        if situation.dirtyPaths.dirtyPathCount > 0 || situation.cacheStatus.stale {
+            return "last verified \(storageSituationFreshnessLabel(situation))"
+        }
+        return "verified \(storageSituationFreshnessLabel(situation))"
     }
 
     private var loadingSection: some View {
