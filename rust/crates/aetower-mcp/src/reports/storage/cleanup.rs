@@ -276,6 +276,31 @@ fn measured_rebuild_cost_label(seconds: u64) -> String {
 
 pub(super) fn apply_cleanup_guardrails(items: &mut [StorageHygieneItem], now_millis: u64) {
     for item in items {
+        if item.facts_stale {
+            block_cleanup(
+                item,
+                "Storage facts are stale because the filesystem watcher saw changes after this row was measured; refresh before cleanup.",
+            );
+        }
+        if item.facts_partial || item.size_truncated {
+            item.facts_partial = true;
+            block_cleanup(
+                item,
+                "Storage facts are partial; run a complete measurement before cleanup.",
+            );
+        }
+        if item.unknown_gap_above_path {
+            block_cleanup(
+                item,
+                "Filesystem watcher history has an unknown gap above this path; run a verified refresh before cleanup.",
+            );
+        }
+        if storage_item_is_dangerous_user_data(item) {
+            block_cleanup(
+                item,
+                "Dangerous or user-data storage is review-only and cannot be one-click cleaned.",
+            );
+        }
         if item.cleanup_tier.is_empty() {
             block_cleanup(
                 item,
@@ -350,9 +375,6 @@ pub(super) fn apply_cleanup_guardrails(items: &mut [StorageHygieneItem], now_mil
                 "Recently modified path may still be active; wait or review manually.",
             );
         }
-        if item.size_truncated {
-            block_cleanup(item, "Size estimate is partial; confirm before cleanup.");
-        }
         if item.cloud_placeholder {
             block_cleanup(
                 item,
@@ -369,6 +391,38 @@ pub(super) fn apply_cleanup_guardrails(items: &mut [StorageHygieneItem], now_mil
             item.default_cleanup_action = "manual_review".to_owned();
         }
     }
+}
+
+pub(super) fn storage_item_is_dangerous_user_data(item: &StorageHygieneItem) -> bool {
+    if item.protected_path
+        || matches!(
+            item.git_status.as_str(),
+            "tracked" | "modified" | "deleted" | "renamed" | "conflicted"
+        )
+    {
+        return true;
+    }
+
+    matches!(
+        item.kind.as_str(),
+        "macos-app-bundle"
+            | "app-support-data"
+            | "app-container"
+            | "app-launch-item"
+            | "app-preferences"
+            | "app-receipt"
+            | "ai-session-data"
+            | "offline-media"
+            | "colima-vm"
+            | "docker-vm"
+            | "ios-backup"
+            | "mail-attachments"
+            | "message-attachments"
+            | "local-snapshot"
+    ) || matches!(
+        item.storage_role.as_str(),
+        "application" | "app-data" | "agent-data" | "offline-media" | "system-data"
+    )
 }
 
 pub(super) fn block_cleanup(item: &mut StorageHygieneItem, reason: &str) {

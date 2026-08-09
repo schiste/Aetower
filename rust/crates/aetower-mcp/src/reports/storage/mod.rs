@@ -493,8 +493,8 @@ use cleanup::{
     cleanup_item_confidence, cleanup_tier_label, cleanup_tier_rank, evaluate_budget_guardrails,
     git_status_label, is_app_cache_path, is_app_container_path, is_app_preferences_path,
     is_app_receipt_path, is_app_support_path, is_launch_item_path, is_protected_cleanup_path,
-    large_directory_rule, semantic_artifact_intelligence, storage_role_for_kind,
-    storage_role_label, summarize_cleanup_tiers,
+    large_directory_rule, semantic_artifact_intelligence, storage_item_is_dangerous_user_data,
+    storage_role_for_kind, storage_role_label, summarize_cleanup_tiers,
 };
 use detectors::{
     collect_typed_detector_items, merge_typed_detector_items, typed_storage_domains_for_items,
@@ -562,7 +562,8 @@ use repo::{
 pub(crate) use report::build_storage_hygiene_report_with_mode;
 #[cfg(test)]
 use report::{
-    CleanupPathHolder, apply_active_cleanup_holders, build_storage_cold_data, per_root_walk_slice,
+    CleanupPathHolder, apply_active_cleanup_holders, build_storage_cold_data,
+    mark_storage_fact_safety, per_root_walk_slice,
 };
 use report::{
     StorageCandidateCollector, StorageReclaimBucket, apply_dirty_summary_to_cache_status,

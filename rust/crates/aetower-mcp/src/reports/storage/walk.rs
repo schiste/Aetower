@@ -351,6 +351,9 @@ pub(super) fn storage_item_for_path(
         access_age_days,
         cold,
         stale,
+        facts_stale: false,
+        facts_partial: size.truncated,
+        unknown_gap_above_path: false,
         reason: rule.reason.to_string(),
         recommendation: rule.recommendation.to_string(),
         next_step: String::new(),
@@ -470,6 +473,9 @@ pub(super) fn storage_item_for_indexed_row(
         access_age_days,
         cold,
         stale,
+        facts_stale: false,
+        facts_partial: row.truncated,
+        unknown_gap_above_path: false,
         reason: "Loaded from Aetower's persistent storage index.".to_owned(),
         recommendation:
             "Review the indexed candidate; run a refresh before destructive cleanup if the path changed recently."

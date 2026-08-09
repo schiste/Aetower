@@ -5324,6 +5324,95 @@ fn cleanup_guardrails_block_tracked_modified_and_protected_paths() {
 }
 
 #[test]
+fn cleanup_guardrails_gate_cleanup_on_fresh_storage_facts() {
+    let now_millis = crate::current_unix_millis().unwrap_or_default();
+    let old_millis = now_millis.saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000);
+    let dirty_path = "/tmp/aetower-storage/project/target/debug";
+    let gap_path = "/tmp/aetower-storage/project/.build";
+    let mut items = vec![
+        test_storage_item(
+            dirty_path,
+            "rust-build",
+            "build-artifact",
+            "safe",
+            "rebuildable",
+            old_millis,
+        ),
+        test_storage_item(
+            "/tmp/aetower-storage/project/.swiftpm/cache",
+            "swift-build",
+            "build-artifact",
+            "safe",
+            "rebuildable",
+            old_millis,
+        ),
+        test_storage_item(
+            gap_path,
+            "swift-build",
+            "build-artifact",
+            "safe",
+            "rebuildable",
+            old_millis,
+        ),
+        test_storage_item(
+            "/tmp/aetower-storage/.codex/sessions/2026/08/session.jsonl",
+            "ai-session-data",
+            "agent-data",
+            "safe",
+            "safe",
+            old_millis,
+        ),
+        test_storage_item(
+            "/tmp/aetower-storage/project/target/release",
+            "rust-build",
+            "build-artifact",
+            "safe",
+            "rebuildable",
+            old_millis,
+        ),
+    ];
+    mark_storage_fact_safety(&mut items, &[dirty_path.to_owned()], &[gap_path.to_owned()]);
+    items[1].facts_partial = true;
+
+    apply_cleanup_guardrails(&mut items, now_millis);
+
+    assert!(!items[0].cleanup_allowed);
+    assert!(items[0].facts_stale);
+    assert!(
+        items[0]
+            .cleanup_blockers
+            .iter()
+            .any(|blocker| blocker.contains("Storage facts are stale"))
+    );
+    assert!(!items[1].cleanup_allowed);
+    assert!(
+        items[1]
+            .cleanup_blockers
+            .iter()
+            .any(|blocker| blocker.contains("Storage facts are partial"))
+    );
+    assert!(!items[2].cleanup_allowed);
+    assert!(items[2].unknown_gap_above_path);
+    assert!(
+        items[2]
+            .cleanup_blockers
+            .iter()
+            .any(|blocker| blocker.contains("unknown gap above this path"))
+    );
+    assert!(!items[3].cleanup_allowed);
+    assert!(
+        items[3]
+            .cleanup_blockers
+            .iter()
+            .any(|blocker| blocker.contains("Dangerous or user-data storage"))
+    );
+    assert!(
+        items[4].cleanup_allowed,
+        "old build output should remain cleanable when its storage facts are fresh"
+    );
+}
+
+#[test]
 fn cleanup_recipes_require_trash_actionable_items() {
     let now_millis = crate::current_unix_millis().unwrap_or_default();
     let old_millis = now_millis.saturating_sub(RECENT_CLEANUP_BLOCK_MILLIS + 60_000);
@@ -7276,6 +7365,9 @@ fn test_storage_item(
         access_age_days: None,
         cold: false,
         stale: true,
+        facts_stale: false,
+        facts_partial: false,
+        unknown_gap_above_path: false,
         reason: "test item".to_owned(),
         recommendation: "test recommendation".to_owned(),
         next_step: String::new(),

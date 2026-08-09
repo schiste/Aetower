@@ -506,11 +506,23 @@ pub(super) fn build_storage_hygiene_report_with_options(
         storage_index.mark_dirty_paths_clean(&scanned_roots, now_millis);
     }
 
+    let fact_safety_summary = storage_index.dirty_path_summary(&requested_roots, 512);
+    let fact_safety_dirty_paths = if fact_safety_summary.dirty_path_count == 0 {
+        Vec::new()
+    } else {
+        storage_index.load_dirty_path_strings(&requested_roots, 512)
+    };
+
     let generic_candidate_seen_count = collector.seen;
     metrics.scanned_directory_count = scanned_directory_count;
     metrics.discovered_repository_count = repository_roots.len().min(u64::MAX as usize) as u64;
     let mut items = collector.into_sorted_items();
     let detector_merged_count = merge_typed_detector_items(&mut items, detector_items);
+    mark_storage_fact_safety(
+        &mut items,
+        &fact_safety_dirty_paths,
+        &fact_safety_summary.unknown_gap_roots,
+    );
     metrics.candidate_seen_count = metrics
         .candidate_seen_count
         .max(generic_candidate_seen_count)
@@ -910,7 +922,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         .into_iter()
         .map(|row| storage_item_for_indexed_row(row, now_millis))
         .collect::<Vec<_>>();
-    mark_dirty_indexed_items_stale(&mut items, &dirty_paths);
+    mark_storage_fact_safety(&mut items, &dirty_paths, &dirty_summary.unknown_gap_roots);
     items.sort_by(|left, right| {
         right
             .size_bytes
@@ -1064,16 +1076,21 @@ pub(super) fn build_storage_hygiene_report_from_index(
     })
 }
 
-fn mark_dirty_indexed_items_stale(items: &mut [StorageHygieneItem], dirty_paths: &[String]) {
-    if dirty_paths.is_empty() {
-        return;
-    }
+pub(super) fn mark_storage_fact_safety(
+    items: &mut [StorageHygieneItem],
+    dirty_paths: &[String],
+    unknown_gap_roots: &[String],
+) {
     for item in items {
         if path_matches_dirty_prefix(Path::new(&item.path), dirty_paths) {
+            item.facts_stale = true;
             item.stale = true;
             item.evidence.push(
                 "Path was touched by the filesystem watcher after the cached scan.".to_owned(),
             );
+        }
+        if path_matches_dirty_prefix(Path::new(&item.path), unknown_gap_roots) {
+            item.unknown_gap_above_path = true;
         }
     }
 }
@@ -1472,6 +1489,18 @@ pub(super) fn storage_item_evidence(item: &StorageHygieneItem) -> Vec<String> {
             "Size walk was truncated by the scan budget; actual size may be larger.".to_owned(),
         );
     }
+    if item.facts_stale {
+        evidence.push(
+            "Storage facts are stale because the filesystem watcher saw changes after measurement."
+                .to_owned(),
+        );
+    }
+    if item.facts_partial && !item.size_truncated {
+        evidence.push("Storage facts are partial.".to_owned());
+    }
+    if item.unknown_gap_above_path {
+        evidence.push("Filesystem watcher history has an unknown gap above this path.".to_owned());
+    }
     if let Some(age_days) = item.age_days {
         evidence.push(if age_days == 0 {
             "Modified today.".to_owned()
@@ -1491,7 +1520,7 @@ pub(super) fn storage_item_evidence(item: &StorageHygieneItem) -> Vec<String> {
             "Access age is past the {COLD_AFTER_DAYS}-day cold-file threshold."
         ));
     }
-    if item.stale {
+    if item.stale && !item.facts_stale {
         evidence.push(format!(
             "Older than the {STALE_AFTER_DAYS}-day stale threshold."
         ));
@@ -1555,6 +1584,15 @@ pub(super) fn storage_byte_accounting_label(logical_bytes: u64, physical_bytes: 
 }
 
 pub(super) fn storage_item_next_step(item: &StorageHygieneItem) -> String {
+    if item.unknown_gap_above_path {
+        return "Run a verified refresh for this root before cleanup; the filesystem watcher reported an unknown event gap above this path.".to_owned();
+    }
+    if item.facts_stale {
+        return "Run a changed-only refresh before cleanup; the filesystem watcher touched this path after the cached row was measured.".to_owned();
+    }
+    if item.facts_partial {
+        return "Run a complete measurement before cleanup; this row is based on partial storage facts.".to_owned();
+    }
     if item.size_truncated {
         return "Reveal the path and run the copied `du` command when the machine is idle to confirm true size.".to_owned();
     }
@@ -1615,41 +1653,12 @@ fn storage_item_is_safely_reclaimable_now(item: &StorageHygieneItem) -> bool {
         && item.safety == "safe"
         && matches!(item.cleanup_tier.as_str(), "safe" | "rebuildable")
         && !item.size_truncated
+        && !item.facts_stale
+        && !item.facts_partial
+        && !item.unknown_gap_above_path
         && !item.cloud_placeholder
         && !item.has_hardlinks
         && !item.protected_path
-}
-
-fn storage_item_is_dangerous_user_data(item: &StorageHygieneItem) -> bool {
-    if item.protected_path
-        || matches!(
-            item.git_status.as_str(),
-            "tracked" | "modified" | "deleted" | "renamed" | "conflicted"
-        )
-    {
-        return true;
-    }
-
-    matches!(
-        item.kind.as_str(),
-        "macos-app-bundle"
-            | "app-support-data"
-            | "app-container"
-            | "app-launch-item"
-            | "app-preferences"
-            | "app-receipt"
-            | "ai-session-data"
-            | "offline-media"
-            | "colima-vm"
-            | "docker-vm"
-            | "ios-backup"
-            | "mail-attachments"
-            | "message-attachments"
-            | "local-snapshot"
-    ) || matches!(
-        item.storage_role.as_str(),
-        "application" | "app-data" | "agent-data" | "offline-media" | "system-data"
-    )
 }
 
 fn storage_item_is_maybe_reclaimable(item: &StorageHygieneItem) -> bool {
