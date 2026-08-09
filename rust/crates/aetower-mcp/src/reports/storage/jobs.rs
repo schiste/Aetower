@@ -31,6 +31,7 @@ impl StorageScanMode {
 
     pub(super) fn result_scan_mode(self, partial: bool) -> &'static str {
         match (self, partial) {
+            (Self::DeepNative, true) => "deep_partial",
             (Self::ForensicVerified, true) => "forensic_partial",
             _ => self.as_str(),
         }
@@ -56,27 +57,26 @@ impl StorageScanMode {
     }
 
     /// Wall-clock budget for the artifact size walk. The ambient fast pass
-    /// must stay snappy; Deep/Forensic run as cancellable background jobs
-    /// with checkpoints, so minutes-scale walks are safe there. This budget
-    /// covers ONLY the walk phase — the git/inventory phase has its own
-    /// (SCAN_TIME_BUDGET) so it can never starve the walk to zero again.
+    /// must stay snappy; Deep can end partial under a larger background
+    /// budget. Forensic is a manual proof pass: it is progress/cancellation
+    /// bounded instead of practically time-capped.
     pub(super) fn size_walk_time_budget(self) -> Duration {
         match self {
             Self::InstantCached | Self::FastChangedOnly => SCAN_TIME_BUDGET,
             Self::DeepNative => Duration::from_secs(180),
-            Self::ForensicVerified => Duration::from_secs(600),
+            Self::ForensicVerified => Duration::from_secs(24 * 60 * 60),
         }
     }
 
     /// Repository discovery is useful context for repo attribution, but it is
     /// not the storage walk itself. Quick scans keep this bounded tightly;
-    /// Complete/Forensic scans can spend longer so repo coverage does not mark
-    /// a successful whole-computer storage scan as globally partial.
+    /// Complete can end partial; Forensic should keep making progress until
+    /// cancelled or verified.
     pub(super) fn repository_inventory_time_budget(self) -> Duration {
         match self {
             Self::InstantCached | Self::FastChangedOnly => REPOSITORY_INVENTORY_TIME_BUDGET,
             Self::DeepNative => Duration::from_secs(180),
-            Self::ForensicVerified => Duration::from_secs(600),
+            Self::ForensicVerified => Duration::from_secs(24 * 60 * 60),
         }
     }
 
@@ -123,13 +123,14 @@ impl StorageScanMode {
     }
 
     /// Directory-visit cap for a single `scan_root` call. Instant/Fast keep
-    /// the historical 25k cap for snappiness; Deep/Forensic are cancellable
-    /// background jobs that can afford whole-computer coverage.
+    /// the historical 25k cap for snappiness; Complete is allowed to be
+    /// partial. Forensic has no practical count cap and relies on cancellation
+    /// plus throttled checkpoints.
     pub(super) fn dir_budget(self) -> u64 {
         match self {
             Self::InstantCached | Self::FastChangedOnly => MAX_DIRECTORIES,
             Self::DeepNative => 100_000,
-            Self::ForensicVerified => 200_000,
+            Self::ForensicVerified => PRACTICALLY_UNBOUNDED_SCAN_COUNT,
         }
     }
 

@@ -7981,7 +7981,11 @@ fn size_walk_budget_is_scaled_per_mode() {
     );
     assert_eq!(
         StorageScanMode::ForensicVerified.size_walk_time_budget(),
-        Duration::from_secs(600)
+        Duration::from_secs(24 * 60 * 60)
+    );
+    assert_eq!(
+        StorageScanMode::ForensicVerified.size_walk_entry_budget(),
+        PRACTICALLY_UNBOUNDED_SCAN_COUNT
     );
     assert_eq!(StorageScanMode::FastChangedOnly.report_item_limit(120), 120);
     assert_eq!(
@@ -8002,7 +8006,15 @@ fn size_walk_budget_is_scaled_per_mode() {
     );
     assert_eq!(
         StorageScanMode::ForensicVerified.repository_inventory_time_budget(),
-        Duration::from_secs(600)
+        Duration::from_secs(24 * 60 * 60)
+    );
+    assert_eq!(
+        StorageScanMode::DeepNative.result_scan_mode(true),
+        "deep_partial"
+    );
+    assert_eq!(
+        StorageScanMode::ForensicVerified.result_scan_mode(true),
+        "forensic_partial"
     );
     assert_eq!(
         StorageScanMode::FastChangedOnly.scan_latency_critical_millis(),
@@ -8330,7 +8342,10 @@ fn directory_budget_is_scaled_per_mode() {
     assert_eq!(StorageScanMode::InstantCached.dir_budget(), 25_000);
     assert_eq!(StorageScanMode::FastChangedOnly.dir_budget(), 25_000);
     assert_eq!(StorageScanMode::DeepNative.dir_budget(), 100_000);
-    assert_eq!(StorageScanMode::ForensicVerified.dir_budget(), 200_000);
+    assert_eq!(
+        StorageScanMode::ForensicVerified.dir_budget(),
+        PRACTICALLY_UNBOUNDED_SCAN_COUNT
+    );
 }
 
 #[test]
