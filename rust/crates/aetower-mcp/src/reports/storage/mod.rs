@@ -461,6 +461,9 @@ mod cleanup;
 mod detectors;
 mod events;
 mod fingerprint;
+// Incremental measurement is kept behind explicit/event-driven entry points.
+// Read-only situation/report projections must not spawn it.
+#[allow(dead_code)]
 mod incremental;
 mod jobs;
 mod models;
@@ -507,7 +510,6 @@ use fingerprint::{
     STORAGE_PATH_FINGERPRINT_VERSION, StorageDirectoryFingerprint, StoragePathFingerprint,
     metadata_birth_millis,
 };
-use incremental::ensure_dirty_storage_subtree_measurement;
 #[cfg(test)]
 use incremental::measure_dirty_storage_subtrees_once;
 pub(crate) use jobs::StorageScanJobProgress;

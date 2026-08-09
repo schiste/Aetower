@@ -2127,7 +2127,6 @@ public final class AppState {
 
     private static let storageEstimateQuietMillis: UInt64 = 45_000
     private static let storageEstimateRefreshCooldownMillis: UInt64 = 120_000
-    private static let storageEstimateFullScanDirtyPathThreshold = 220
     private static let storageCacheReverifyIntervalMillis: UInt64 = 6 * 60 * 60 * 1000
 
     @discardableResult
@@ -2157,23 +2156,21 @@ public final class AppState {
         }
 
         lastStorageEstimateDecisionMillis = nowMillis
-        let broadChurn = summary.dirtyPathCount >= Self.storageEstimateFullScanDirtyPathThreshold
-        let mode = broadChurn ? "deep_native" : "fast_changed_only"
-        let maxDepth: UInt32 = broadChurn ? 8 : 5
+        let dirtyClassification = Self.storageDirtyRefreshClassification(summary)
+        let mode = "fast_changed_only"
+        let maxDepth: UInt32 = 5
         recordLocalDiagnosticsEvent(
             level: .info,
             subsystem: .ui,
-            eventType: broadChurn
-                ? "storage-estimate-refresh-started-deep"
-                : "storage-estimate-refresh-started",
-            message: broadChurn
-                ? "Started deep storage refresh because cached data is stale after broad filesystem changes."
-                : "Started changed-only storage refresh because cached data is stale.",
+            eventType: "storage-estimate-refresh-started",
+            message: "Started changed-only storage refresh because cached data is stale.",
             fields: [
                 DiagnosticsField(key: "trigger", value: trigger),
                 DiagnosticsField(key: "dirty_path_count", value: String(summary.dirtyPathCount)),
+                DiagnosticsField(key: "dirty_classification", value: dirtyClassification),
                 DiagnosticsField(key: "root_count", value: String(report.roots.count)),
                 DiagnosticsField(key: "mode", value: mode),
+                DiagnosticsField(key: "auto_deep_scan_enabled", value: "false"),
                 DiagnosticsField(key: "sample_paths", value: summary.samplePaths.joined(separator: " | ")),
             ]
         )
@@ -2226,13 +2223,29 @@ public final class AppState {
     }
 
     /// Low-impact storage freshness loop. FSEvents only marks roots dirty; this
-    /// waits for quiescence and starts a refresh scan. Small dirty sets use the
-    /// changed-only job; broad churn uses a deeper scan so deletions and moves
-    /// do not leave stale indexed rows visible.
+    /// waits for quiescence and starts a bounded changed-only refresh. Complete
+    /// and forensic scans are explicit operator actions only.
     private func refreshStorageEstimateIfQuiescent() {
         guard let report = storageHygieneReport else { return }
         updateStorageEstimateStatus(report: report)
         startStorageRefreshForDirtyDisplayedReportIfNeeded(report, trigger: "storage-fsevents")
+    }
+
+    private static func storageDirtyRefreshClassification(_ summary: StorageDirtyPathSummary) -> String {
+        if summary.dirtyPathCount == 0 {
+            return "clean"
+        }
+        let lowercasedSamples = summary.samplePaths.map { $0.lowercased() }
+        if lowercasedSamples.contains(where: { $0.contains("/.git/") }) {
+            return "repository_metadata"
+        }
+        if lowercasedSamples.contains(where: { $0.contains("/library/caches/") }) {
+            return "cache_churn"
+        }
+        if summary.dirtyPathCount >= 128 {
+            return "broad_changed_only"
+        }
+        return "focused_changed_only"
     }
 
     private func updateStorageEstimateStatus(report: StorageHygieneReportModel? = nil) {
@@ -2282,25 +2295,13 @@ public final class AppState {
             return
         }
 
-        if summary.dirtyPathCount >= Self.storageEstimateFullScanDirtyPathThreshold {
-            storageEstimateStatus = StorageEstimateStatus(
-                confidence: .needsFullScan,
-                title: "Full Scan Needed",
-                detail: "\(summary.dirtyPathCount) changed paths are queued; this is too broad for a cheap estimate.",
-                dirtyPathCount: summary.dirtyPathCount,
-                lastChangeMillis: lastChange,
-                lastRefreshMillis: lastRefresh
-            )
-            return
-        }
-
         let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
         let isQuiet = nowMillis >= lastChange + Self.storageEstimateQuietMillis
         storageEstimateStatus = StorageEstimateStatus(
             confidence: isQuiet ? .estimated : .stale,
-            title: isQuiet ? "Estimating" : "Watching",
+            title: isQuiet ? "Refresh Ready" : "Watching",
             detail: isQuiet
-                ? "\(summary.dirtyPathCount) changed paths are ready for a changed-only refresh."
+                ? "\(summary.dirtyPathCount) changed paths are ready for a bounded changed-only refresh."
                 : "\(summary.dirtyPathCount) changed paths recorded; waiting for filesystem activity to quiet.",
             dirtyPathCount: summary.dirtyPathCount,
             lastChangeMillis: lastChange,
@@ -2893,6 +2894,31 @@ public final class AppState {
         refreshRepositoryInventoryForVisibleCache(roots: roots)
     }
 
+    func loadStorageForDisplay(roots: [String] = []) {
+        loadStorageSituationForDisplay(roots: roots)
+        guard !storageHygieneIsLoading, !storageHygieneIsVerifyingCache else { return }
+        if let storageHygieneReport,
+           roots.isEmpty || Self.storageHygieneReportMatchesRequestedRoots(storageHygieneReport, roots: roots)
+        {
+            updateStorageEstimateStatus(report: storageHygieneReport)
+            return
+        }
+        storageHygieneTask?.cancel()
+
+        switch StorageHygieneReportCacheStore.loadForDisplay(roots: roots) {
+        case let .hit(display):
+            publishStorageHygieneCacheHit(display.cache)
+            if let staleReason = display.staleReason {
+                publishStorageHygieneCacheStale(reason: staleReason)
+            }
+            return
+        case let .miss(reason):
+            publishStorageHygieneCacheStale(reason: reason)
+            publishStorageHygieneCacheMissAwaitingScan(reason: reason)
+            return
+        }
+    }
+
     func ensureStorageHygieneScan(roots: [String] = []) {
         loadStorageSituationForDisplay(roots: roots)
         guard !storageHygieneIsLoading, !storageHygieneIsVerifyingCache else { return }
@@ -3235,6 +3261,7 @@ public final class AppState {
             }
         }
 
+        let dirtySummary = StorageRootChangeJournal.summary(sampleLimit: 4)
         recordLocalDiagnosticsEvent(
             level: .info,
             subsystem: .ui,
@@ -3245,6 +3272,11 @@ public final class AppState {
                 DiagnosticsField(key: "root_count", value: String(roots.count)),
                 DiagnosticsField(key: "max_depth", value: String(maxDepth)),
                 DiagnosticsField(key: "limit", value: String(limit)),
+                DiagnosticsField(key: "dirty_path_count", value: String(dirtySummary.dirtyPathCount)),
+                DiagnosticsField(
+                    key: "dirty_sample_paths",
+                    value: dirtySummary.samplePaths.joined(separator: " | ")
+                ),
             ]
         )
         startStorageScanJob(
@@ -4140,13 +4172,29 @@ public final class AppState {
         storageHygieneError = nil
         repositoryInventoryRefreshState = nil
         storageScanJob = nil
+        let dirtyPaths = StorageRootChangeJournal.dirtyPaths()
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-scan-job-dispatched",
+            message: "Dispatched storage scan job to the Rust worker.",
+            fields: [
+                DiagnosticsField(key: "mode", value: mode),
+                DiagnosticsField(key: "root_count", value: String(roots.count)),
+                DiagnosticsField(key: "max_depth", value: String(maxDepth)),
+                DiagnosticsField(key: "limit", value: String(limit)),
+                DiagnosticsField(key: "throttle_hint", value: storageScanThrottleHint),
+                DiagnosticsField(key: "dirty_path_count", value: String(dirtyPaths.count)),
+                DiagnosticsField(key: "dirty_sample_paths", value: dirtyPaths.prefix(4).joined(separator: " | ")),
+            ]
+        )
         storageScanController.start(
             roots: roots,
             maxDepth: maxDepth,
             limit: limit,
             mode: mode,
             throttleHint: storageScanThrottleHint,
-            dirtyPaths: StorageRootChangeJournal.dirtyPaths()
+            dirtyPaths: dirtyPaths
         )
     }
 

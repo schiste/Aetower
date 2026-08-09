@@ -75,12 +75,7 @@ pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String
     let now_millis = storage_now_millis();
     let roots = normalize_roots(roots);
     let storage_index = StorageSizeIndex::open();
-    let dirty_summary = storage_index.ingest_filesystem_events(
-        &load_storage_filesystem_event_records(),
-        &roots,
-        now_millis,
-    );
-    ensure_dirty_storage_subtree_measurement(&roots, &dirty_summary);
+    let dirty_summary = storage_index.dirty_path_summary(&roots, 5);
     let limit = limit.clamp(1, 40);
     if let Some(snapshot) = storage_index.load_situation_snapshot(&roots, limit) {
         let snapshot = overlay_storage_situation_snapshot(

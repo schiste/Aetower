@@ -419,7 +419,7 @@ public struct StorageView: View {
                 Array(trashedItemURLsByOriginalPath.keys),
                 refresh: false
             )
-            state.ensureStorageHygieneScan()
+            state.loadStorageForDisplay()
         }
         .sheet(item: $candidateCommandPreviewBundle) { bundle in
             cleanupCommandPreviewSheet(bundle)

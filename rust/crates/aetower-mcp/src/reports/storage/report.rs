@@ -920,12 +920,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
     };
     let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
-    let dirty_summary = storage_index.ingest_filesystem_events(
-        &load_storage_filesystem_event_records(),
-        &requested_roots,
-        now_millis,
-    );
-    ensure_dirty_storage_subtree_measurement(&requested_roots, &dirty_summary);
+    let dirty_summary = storage_index.dirty_path_summary(&requested_roots, 5);
     let dirty_paths = storage_index.load_dirty_path_strings(&requested_roots, 512);
     let volume_states = summarize_volume_states(&requested_roots);
     let (sections, sections_from_memo) = index_report_sections(
