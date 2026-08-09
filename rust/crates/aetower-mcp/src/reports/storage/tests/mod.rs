@@ -6692,6 +6692,79 @@ fn storage_dirty_queue_collapses_chau7_tab_restore_noise() {
 }
 
 #[test]
+fn storage_dirty_queue_ignores_aetower_storage_chatter() {
+    let root = test_root("dirty-queue-ignores-aetower");
+    let index_dir = root.join("index");
+    let watched = root.join("Library").join("Application Support");
+    let aetower_wal = watched.join("Aetower").join("storage-index-v1.sqlite3-wal");
+    let ds_store = root.join("Repositories").join(".DS_Store");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let records = vec![
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis),
+            path: Some(aetower_wal.display().to_string()),
+            event_id: Some(601),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis + 1),
+            path: Some(ds_store.display().to_string()),
+            event_id: Some(602),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+        },
+    ];
+
+    let summary =
+        storage_index.record_filesystem_events(&records, std::slice::from_ref(&root), now_millis);
+
+    assert_eq!(summary.dirty_path_count, 0);
+    assert!(
+        storage_index
+            .load_dirty_path_strings(std::slice::from_ref(&root), 16)
+            .is_empty()
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_dirty_queue_coalesces_git_churn_to_repository_root() {
+    let root = test_root("dirty-queue-coalesces-git");
+    let index_dir = root.join("index");
+    let watched = root.join("Repositories");
+    let repository = watched.join("Aetower");
+    let git_object = repository
+        .join(".git")
+        .join("objects")
+        .join("aa")
+        .join("changed");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let records = vec![StorageFilesystemEventRecord {
+        timestamp_millis: Some(now_millis),
+        path: Some(git_object.display().to_string()),
+        event_id: Some(611),
+        flags: Some(0),
+        source: Some("test-fsevents".to_owned()),
+    }];
+
+    let summary = storage_index.record_filesystem_events(
+        &records,
+        std::slice::from_ref(&watched),
+        now_millis,
+    );
+    let dirty_paths = storage_index.load_dirty_path_strings(std::slice::from_ref(&watched), 16);
+
+    assert_eq!(summary.dirty_path_count, 1);
+    assert_eq!(dirty_paths, vec![repository.display().to_string()]);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_dirty_queue_backpressure_collapses_descendants_to_root() {
     let root = test_root("dirty-queue-backpressure");
     let index_dir = root.join("index");

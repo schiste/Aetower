@@ -8,7 +8,9 @@ final class StorageHygieneModelsTests: XCTestCase {
             .temporaryDirectory
             .appendingPathComponent("aetower-cache-miss-\(UUID().uuidString)", isDirectory: true)
         StorageSupportDirectoryOverride.applicationSupportURL = temporarySupportURL
+        StorageRootChangeJournal.clearChangeStateForTesting()
         defer {
+            StorageRootChangeJournal.clearChangeStateForTesting()
             StorageSupportDirectoryOverride.applicationSupportURL = nil
             try? FileManager.default.removeItem(at: temporarySupportURL)
         }
@@ -23,6 +25,127 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertFalse(state.storageHygieneIsLoading)
         XCTAssertFalse(state.storageHygieneIsVerifyingCache)
         XCTAssertEqual(state.storageEstimateStatus.title, "Scan Needed")
+    }
+
+    @MainActor
+    func testStorageDisplayLoadWithDirtyCacheDoesNotStartScan() throws {
+        let temporarySupportURL = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("aetower-cache-display-passive-\(UUID().uuidString)", isDirectory: true)
+        StorageSupportDirectoryOverride.applicationSupportURL = temporarySupportURL
+        StorageRootChangeJournal.clearChangeStateForTesting()
+        defer {
+            StorageRootChangeJournal.clearChangeStateForTesting()
+            StorageSupportDirectoryOverride.applicationSupportURL = nil
+            try? FileManager.default.removeItem(at: temporarySupportURL)
+        }
+
+        let rootURL = temporarySupportURL.appendingPathComponent("Repositories", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let rawJSON = Self.minimalStorageReportJSON(root: rootURL.path)
+        let report = try AetowerJSON.snakeCaseDecoder().decode(
+            StorageHygieneReportModel.self,
+            from: Data(rawJSON.utf8)
+        )
+        StorageHygieneReportCacheStore.save(
+            report: report,
+            rawJSON: rawJSON,
+            roots: [rootURL.path],
+            maxDepth: 5,
+            limit: 80,
+            mode: "deep_native"
+        )
+        StorageRootChangeJournal.recordChange(
+            paths: [
+                rootURL
+                    .appendingPathComponent("Aetower")
+                    .appendingPathComponent(".git")
+                    .appendingPathComponent("objects")
+                    .appendingPathComponent("aa")
+                    .appendingPathComponent("changed")
+                    .path,
+            ]
+        )
+
+        let state = AppState()
+        state.loadStorageForDisplay(roots: [rootURL.path])
+
+        XCTAssertNotNil(state.storageHygieneReport)
+        XCTAssertFalse(state.storageHygieneIsLoading)
+        XCTAssertFalse(state.storageHygieneIsVerifyingCache)
+        XCTAssertNil(state.storageScanJob)
+    }
+
+    func testStorageRootChangeJournalFiltersAndCoalescesNoise() throws {
+        let temporarySupportURL = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("aetower-dirty-journal-\(UUID().uuidString)", isDirectory: true)
+        StorageSupportDirectoryOverride.applicationSupportURL = temporarySupportURL
+        StorageRootChangeJournal.clearChangeStateForTesting()
+        defer {
+            StorageRootChangeJournal.clearChangeStateForTesting()
+            StorageSupportDirectoryOverride.applicationSupportURL = nil
+            try? FileManager.default.removeItem(at: temporarySupportURL)
+        }
+
+        let repositoryRoot = temporarySupportURL
+            .appendingPathComponent("Repositories")
+            .appendingPathComponent("Aetower", isDirectory: true)
+        let chromeRoot = temporarySupportURL
+            .appendingPathComponent("Library")
+            .appendingPathComponent("Application Support")
+            .appendingPathComponent("Google")
+            .appendingPathComponent("Chrome", isDirectory: true)
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        StorageRootChangeJournal.recordEvents([
+            StorageRootChangeEventRecord(
+                timestampMillis: nowMillis,
+                path: temporarySupportURL
+                    .appendingPathComponent("Library")
+                    .appendingPathComponent("Application Support")
+                    .appendingPathComponent("Aetower")
+                    .appendingPathComponent("storage-index-v1.sqlite3-wal")
+                    .path,
+                eventId: 1,
+                flags: nil,
+                source: "test"
+            ),
+            StorageRootChangeEventRecord(
+                timestampMillis: nowMillis,
+                path: repositoryRoot
+                    .appendingPathComponent(".git")
+                    .appendingPathComponent("objects")
+                    .appendingPathComponent("aa")
+                    .appendingPathComponent("changed")
+                    .path,
+                eventId: 2,
+                flags: nil,
+                source: "test"
+            ),
+            StorageRootChangeEventRecord(
+                timestampMillis: nowMillis,
+                path: chromeRoot
+                    .appendingPathComponent("Default")
+                    .appendingPathComponent("Sessions")
+                    .appendingPathComponent("Session_1")
+                    .path,
+                eventId: 3,
+                flags: nil,
+                source: "test"
+            ),
+            StorageRootChangeEventRecord(
+                timestampMillis: nowMillis,
+                path: repositoryRoot.appendingPathComponent(".DS_Store").path,
+                eventId: 4,
+                flags: nil,
+                source: "test"
+            ),
+        ])
+
+        XCTAssertEqual(
+            Set(StorageRootChangeJournal.dirtyPaths()),
+            Set([repositoryRoot.path, chromeRoot.path])
+        )
     }
 
     @MainActor

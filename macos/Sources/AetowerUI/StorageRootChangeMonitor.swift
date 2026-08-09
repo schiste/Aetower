@@ -41,7 +41,7 @@ enum StorageRootChangeJournal {
     }
 
     static func recordEvents(_ events: [StorageRootChangeEventRecord]) {
-        let normalized = events.filter { !$0.path.isEmpty }
+        let normalized = events.compactMap(sanitizedEvent)
         guard !normalized.isEmpty else { return }
         UserDefaults.standard.set(currentMillis(), forKey: key)
         recordDirtyPaths(normalized.map(\.path))
@@ -49,7 +49,7 @@ enum StorageRootChangeJournal {
     }
 
     private static func recordDirtyPaths(_ paths: [String]) {
-        let normalized = paths.map(normalizedPath).filter { !$0.isEmpty }
+        let normalized = paths.compactMap { coalescedDirtyPath(normalizedPath($0)) }
         guard !normalized.isEmpty else { return }
         var existing = Set(UserDefaults.standard.stringArray(forKey: dirtyPathsKey) ?? [])
         for path in normalized {
@@ -59,6 +59,90 @@ enum StorageRootChangeJournal {
             .sorted()
             .suffix(maxDirtyPaths)
         UserDefaults.standard.set(Array(retained), forKey: dirtyPathsKey)
+    }
+
+    private static func sanitizedEvent(_ event: StorageRootChangeEventRecord) -> StorageRootChangeEventRecord? {
+        guard let path = coalescedDirtyPath(normalizedPath(event.path)) else { return nil }
+        return StorageRootChangeEventRecord(
+            timestampMillis: event.timestampMillis,
+            path: path,
+            eventId: event.eventId,
+            flags: event.flags,
+            source: event.source
+        )
+    }
+
+    private static func coalescedDirtyPath(_ path: String) -> String? {
+        guard !path.isEmpty, !shouldIgnoreStorageEventPath(path) else { return nil }
+        let lowercase = path.lowercased()
+        if let gitRange = path.range(of: "/.git/", options: [.caseInsensitive]) {
+            return String(path[..<gitRange.lowerBound])
+        }
+        if let nodeModulesRange = path.range(of: "/node_modules/", options: [.caseInsensitive]) {
+            let end = path.index(before: nodeModulesRange.upperBound)
+            return String(path[..<end])
+        }
+        if let chromeSupportRoot = prefixThroughMarker(
+            path,
+            marker: "/Library/Application Support/Google/Chrome"
+        ) {
+            return chromeSupportRoot
+        }
+        if let chromeCacheRoot = prefixThroughMarker(
+            path,
+            marker: "/Library/Caches/Google/Chrome"
+        ) {
+            return chromeCacheRoot
+        }
+        if let chau7RestoreRoot = prefixThroughMarker(
+            path,
+            marker: "/Library/Application Support/Chau7/TabRestoreBundles"
+        ) {
+            return chau7RestoreRoot
+        }
+        if let chau7BackupRoot = prefixThroughMarker(
+            path,
+            marker: "/Library/Application Support/Chau7/TabStateBackups"
+        ) {
+            return chau7BackupRoot
+        }
+        if lowercase.contains(".dat.nosync") {
+            return URL(fileURLWithPath: path).deletingLastPathComponent().path
+        }
+        if let claudeRoot = prefixThroughMarker(path, marker: "/.claude") {
+            return claudeRoot
+        }
+        if let codexRoot = prefixThroughMarker(path, marker: "/.codex") {
+            return codexRoot
+        }
+        return path
+    }
+
+    private static func shouldIgnoreStorageEventPath(_ path: String) -> Bool {
+        let lowercase = path.lowercased()
+        let lastPathComponent = URL(fileURLWithPath: path).lastPathComponent.lowercased()
+        if lastPathComponent == ".ds_store" {
+            return true
+        }
+        if lowercase.contains("/library/application support/aetower/")
+            || lowercase.contains("/library/caches/aetower/")
+        {
+            return true
+        }
+        if lowercase.contains("/library/metadata/corespotlight/")
+            || lowercase.contains("/library/biome/tmp/")
+        {
+            return true
+        }
+        return false
+    }
+
+    private static func prefixThroughMarker(
+        _ path: String,
+        marker: String
+    ) -> String? {
+        guard let range = path.range(of: marker, options: [.caseInsensitive]) else { return nil }
+        return String(path[..<range.upperBound])
     }
 
     static func lastChangeMillis() -> UInt64? {
@@ -84,6 +168,14 @@ enum StorageRootChangeJournal {
 
     static func clearDirtyPaths() {
         UserDefaults.standard.removeObject(forKey: dirtyPathsKey)
+    }
+
+    static func clearChangeStateForTesting() {
+        UserDefaults.standard.removeObject(forKey: key)
+        UserDefaults.standard.removeObject(forKey: dirtyPathsKey)
+        if let path = eventLedgerPath() {
+            try? FileManager.default.removeItem(at: path)
+        }
     }
 
     private static func appendEventLedger(_ events: [StorageRootChangeEventRecord]) {

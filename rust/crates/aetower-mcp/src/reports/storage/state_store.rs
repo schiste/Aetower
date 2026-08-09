@@ -1527,6 +1527,9 @@ impl StorageSizeIndex {
             else {
                 continue;
             };
+            if storage_dirty_event_path_is_ignored(path) {
+                continue;
+            }
             if !roots.is_empty() && !roots.iter().any(|root| path_is_under_root(path, root)) {
                 continue;
             }
@@ -1694,12 +1697,17 @@ impl StorageSizeIndex {
             return;
         };
         let mut aggregates = BTreeMap::<String, StorageDirtyPathRecord>::new();
+        let mut ignored_paths = Vec::new();
         for record in rows.flatten() {
             if !roots.is_empty()
                 && !roots
                     .iter()
                     .any(|root| path_is_under_root(&record.path, root))
             {
+                continue;
+            }
+            if storage_dirty_event_path_is_ignored(&record.path) {
+                ignored_paths.push(record.path);
                 continue;
             }
             let Some(ancestor) = volatile_dirty_queue_ancestor(&record.path) else {
@@ -1728,12 +1736,22 @@ impl StorageSizeIndex {
                 });
         }
         drop(statement);
-        if aggregates.is_empty() {
+        if aggregates.is_empty() && ignored_paths.is_empty() {
             return;
         }
         let Ok(transaction) = connection.unchecked_transaction() else {
             return;
         };
+        for ignored_path in ignored_paths {
+            let _ = transaction.execute(
+                "UPDATE storage_dirty_path
+                 SET status = 'clean',
+                     last_seen_millis = MAX(last_seen_millis, ?2),
+                     last_error = 'ignored_storage_event_noise'
+                 WHERE path = ?1",
+                params![ignored_path, now_millis.min(i64::MAX as u64) as i64],
+            );
+        }
         for aggregate in aggregates.values() {
             let _ = transaction.execute(
                 "INSERT INTO storage_dirty_path (
@@ -5596,12 +5614,46 @@ fn nearest_indexed_dirty_queue_ancestor(
         .find(|candidate| dirty_queue_has_indexed_directory(connection, candidate))
 }
 
+fn storage_dirty_event_path_is_ignored(path: &str) -> bool {
+    let lowercase = path.to_ascii_lowercase();
+    let file_name = Path::new(path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if file_name == ".ds_store" {
+        return true;
+    }
+    if lowercase.contains("/library/application support/aetower/")
+        || lowercase.contains("/library/caches/aetower/")
+    {
+        return true;
+    }
+    if lowercase.contains("/library/metadata/corespotlight/")
+        || lowercase.contains("/library/biome/tmp/")
+    {
+        return true;
+    }
+    false
+}
+
 fn volatile_dirty_queue_ancestor(path: &str) -> Option<String> {
-    const VOLATILE_DIR_MARKERS: [&str; 2] = [
+    const VOLATILE_DIR_MARKERS: [&str; 6] = [
         "/Library/Application Support/Chau7/TabRestoreBundles",
         "/Library/Application Support/Chau7/TabStateBackups",
+        "/Library/Application Support/Google/Chrome",
+        "/Library/Caches/Google/Chrome",
+        "/.claude",
+        "/.codex",
     ];
     let lowercase = path.to_ascii_lowercase();
+    if let Some(index) = lowercase.find("/.git/") {
+        return Some(path[..index].to_owned());
+    }
+    if let Some(index) = lowercase.find("/node_modules/") {
+        let end = index.saturating_add("/node_modules".len()).min(path.len());
+        return Some(path[..end].to_owned());
+    }
     for marker in VOLATILE_DIR_MARKERS {
         let marker_lowercase = marker.to_ascii_lowercase();
         if let Some(index) = lowercase.find(&marker_lowercase) {
