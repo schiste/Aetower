@@ -1,8 +1,10 @@
 use super::*;
 
-const STORAGE_INCREMENTAL_DIRTY_BATCH_LIMIT: usize = 24;
+const STORAGE_INCREMENTAL_DIRTY_BATCH_LIMIT: usize = 8;
 const STORAGE_INCREMENTAL_PER_SUBTREE_BUDGET: Duration = Duration::from_millis(1_500);
 const STORAGE_INCREMENTAL_REPORT_ITEM_LIMIT: usize = 40;
+const STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT: usize = 3;
+const STORAGE_INCREMENTAL_CONTINUATION_DELAY: Duration = Duration::from_millis(750);
 
 pub(super) fn ensure_dirty_storage_subtree_measurement(
     roots: &[PathBuf],
@@ -29,12 +31,32 @@ pub(super) fn ensure_dirty_storage_subtree_measurement(
                 roots_key: worker_roots_key,
             };
             let storage_index = StorageSizeIndex::open();
-            let _ = measure_dirty_storage_subtrees_once(&storage_index, &roots);
+            run_dirty_storage_subtree_measurement_worker(&storage_index, &roots);
         }) {
         Ok(_handle) => {}
         Err(_) => {
             lock_or_recover(active).remove(&roots_key);
         }
+    }
+}
+
+fn run_dirty_storage_subtree_measurement_worker(
+    storage_index: &StorageSizeIndex,
+    roots: &[PathBuf],
+) {
+    for round in 0..STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT {
+        let result = measure_dirty_storage_subtrees_once(storage_index, roots);
+        let remaining_dirty = storage_index.dirty_path_summary(roots, 1).dirty_path_count;
+        if remaining_dirty == 0 {
+            break;
+        }
+        if result.measured_path_count == 0 && result.measured_file_count == 0 && !result.partial {
+            break;
+        }
+        if round + 1 >= STORAGE_INCREMENTAL_WORKER_ROUND_LIMIT {
+            break;
+        }
+        thread::sleep(STORAGE_INCREMENTAL_CONTINUATION_DELAY);
     }
 }
 
@@ -125,6 +147,7 @@ pub(super) fn measure_dirty_storage_subtrees_once(
             .saturating_add(scan_result.scanned_dirs);
         result.partial |= scan_result.walk_truncated || scan_result.sizing_truncated;
         if scan_result.walk_truncated || scan_result.sizing_truncated {
+            result.continuation_pending = true;
             result.last_error = Some("incremental_subtree_budget_exhausted".to_owned());
         } else {
             completed_dirty_paths.push(record.path);
