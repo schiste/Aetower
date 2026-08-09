@@ -476,6 +476,51 @@ pub(super) struct StorageFilesystemEventRecord {
     pub(super) flags: Option<u64>,
     #[serde(default)]
     pub(super) source: Option<String>,
+    #[serde(default)]
+    pub(super) event_count: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub(super) struct StoragePipelineDebugResponse {
+    pub(super) captured_at_millis: u64,
+    pub(super) roots: Vec<String>,
+    pub(super) storage_index_status: String,
+    pub(super) event_ledger: StoragePipelineEventLedgerDebug,
+    pub(super) dirty_paths: StorageDirtyPathSummary,
+    pub(super) measurement: StoragePipelineMeasurementDebug,
+    pub(super) situation_snapshot: StoragePipelineSituationSnapshotDebug,
+    pub(super) diagnosis: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub(super) struct StoragePipelineEventLedgerDebug {
+    pub(super) loaded_record_count: u64,
+    pub(super) indexed_dirty_path_count: u64,
+    pub(super) latest_event_id: Option<u64>,
+    pub(super) latest_event_millis: Option<u64>,
+    pub(super) total_event_count: u64,
+    pub(super) sample_paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub(super) struct StoragePipelineMeasurementDebug {
+    pub(super) latest_status: Option<String>,
+    pub(super) latest_updated_millis: Option<u64>,
+    pub(super) latest_dirty_path_count: u64,
+    pub(super) latest_measured_path_count: u64,
+    pub(super) latest_measured_file_count: u64,
+    pub(super) latest_partial: bool,
+    pub(super) latest_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub(super) struct StoragePipelineSituationSnapshotDebug {
+    pub(super) exists: bool,
+    pub(super) captured_at_millis: Option<u64>,
+    pub(super) cache_source: Option<String>,
+    pub(super) stale: bool,
+    pub(super) partial: bool,
+    pub(super) item_count: u64,
 }
 
 #[derive(Clone, Debug)]

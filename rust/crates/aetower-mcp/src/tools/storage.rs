@@ -5,6 +5,19 @@ use serde_json::{Value, json};
 use crate::*;
 
 impl AetowerMcpServer {
+    pub(crate) fn tool_storage_pipeline_debug(&self, arguments: Value) -> Result<Value, Value> {
+        #[derive(Deserialize)]
+        struct Args {
+            #[serde(default)]
+            roots: Vec<String>,
+        }
+
+        let args: Args = parse_args(arguments)?;
+        let json = crate::reports::storage::storage_pipeline_debug_json(args.roots)
+            .map_err(|error| tool_error(format!("storage_pipeline_debug_failed: {error}")))?;
+        parse_tool_json(&json)
+    }
+
     pub(crate) fn tool_storage_situation(&self, arguments: Value) -> Result<Value, Value> {
         #[derive(Deserialize)]
         struct Args {

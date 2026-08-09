@@ -15,6 +15,33 @@ impl Drop for StorageIndexTestGuard {
     }
 }
 
+struct EnvVarTestGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvVarTestGuard {
+    fn set(key: &'static str, value: &Path) -> Self {
+        let previous = std::env::var(key).ok();
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarTestGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+}
+
 fn storage_index_test_guard() -> StorageIndexTestGuard {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     static COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -5291,6 +5318,7 @@ fn storage_growth_attribution_reports_controlled_build_from_chau7_writer() {
         event_id: Some(42),
         flags: Some(0),
         source: Some("test-fsevents".to_owned()),
+        event_count: Some(3),
     };
 
     let attribution = attribute_storage_growth_delta(&delta, &[writer], &[filesystem_event]);
@@ -5300,7 +5328,7 @@ fn storage_growth_attribution_reports_controlled_build_from_chau7_writer() {
     assert!(!attribution.ambiguous);
     assert_eq!(attribution.writer_source.as_deref(), Some("chau7"));
     assert_eq!(attribution.matched_writer_count, 1);
-    assert_eq!(attribution.matched_filesystem_event_count, 1);
+    assert_eq!(attribution.matched_filesystem_event_count, 3);
     assert_eq!(
         attribution.command.as_deref(),
         Some("cargo build --workspace --release")
@@ -5358,6 +5386,7 @@ fn storage_growth_attribution_uses_filesystem_event_without_guessing_writer() {
         event_id: Some(99),
         flags: Some(0),
         source: Some("test-fsevents".to_owned()),
+        event_count: None,
     };
 
     let attribution = attribute_storage_growth_delta(&delta, &[], &[filesystem_event]);
@@ -6415,6 +6444,7 @@ fn storage_dirty_queue_records_and_clears_subtree_events() {
         event_id: Some(42),
         flags: Some(1),
         source: Some("test-fsevents".to_owned()),
+        event_count: None,
     }];
 
     let summary = storage_index.record_filesystem_events(
@@ -6431,6 +6461,117 @@ fn storage_dirty_queue_records_and_clears_subtree_events() {
     storage_index.mark_dirty_paths_clean(&[watched.display().to_string()], now_millis + 1);
     let clean_summary = storage_index.dirty_path_summary(&[watched], 16);
     assert_eq!(clean_summary.dirty_path_count, 0);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_dirty_queue_preserves_compacted_event_count() {
+    let root = test_root("dirty-queue-compacted-count");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let nested = watched.join("cache").join("changed.bin");
+    fs::create_dir_all(nested.parent().unwrap()).expect("create watched fixture");
+    fs::write(&nested, b"changed").expect("write changed fixture");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let now_millis = storage_now_millis();
+    let records = vec![
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis),
+            path: Some(nested.display().to_string()),
+            event_id: Some(43),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+            event_count: Some(128),
+        },
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis),
+            path: Some(nested.display().to_string()),
+            event_id: Some(44),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+            event_count: Some(2),
+        },
+    ];
+
+    let summary = storage_index.record_filesystem_events(
+        &records,
+        std::slice::from_ref(&watched),
+        now_millis,
+    );
+    let dirty_records = storage_index.load_dirty_path_records_for_test(
+        std::slice::from_ref(&watched),
+        16,
+        now_millis,
+    );
+
+    assert_eq!(dirty_records.len(), 1);
+    assert_eq!(dirty_records[0].event_count, 130);
+    assert_eq!(summary.latest_event_id, Some(44));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_situation_ingests_fsevents_ledger_before_returning_snapshot() {
+    let _guard = storage_index_test_guard();
+    let root = test_root("situation-ingests-ledger");
+    let watched = root.join("watched");
+    let changed = watched.join("project").join("target").join("changed.bin");
+    let changed_path = changed.display().to_string();
+    fs::create_dir_all(changed.parent().unwrap()).expect("create changed parent");
+    fs::write(&changed, vec![1u8; 4096]).expect("write changed fixture");
+
+    let ledger = root.join("storage-fsevents.ndjson");
+    let now_millis = storage_now_millis();
+    fs::write(
+        &ledger,
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "timestamp_millis": now_millis,
+                "path": changed_path.clone(),
+                "event_id": 9001,
+                "flags": 0,
+                "source": "test-ledger",
+                "event_count": 7
+            })
+        ),
+    )
+    .expect("write event ledger");
+    let _env_guard = EnvVarTestGuard::set("AETOWER_STORAGE_FILESYSTEM_EVENT_LEDGER", &ledger);
+
+    let situation = must_ok(
+        storage_situation_json(vec![watched.display().to_string()], 4),
+        "storage situation serializes after ledger ingestion",
+    );
+    let situation = parse_json_value(&situation, "storage situation JSON parses");
+    assert_eq!(situation["dirty_paths"]["dirty_path_count"], 1);
+    assert_eq!(situation["cache_status"]["stale"], true);
+    assert!(
+        situation["dirty_paths"]["sample_paths"]
+            .as_array()
+            .is_some_and(|paths| paths
+                .iter()
+                .any(|path| path.as_str() == Some(changed_path.as_str())))
+    );
+
+    let debug = must_ok(
+        storage_pipeline_debug_json(vec![watched.display().to_string()]),
+        "storage pipeline debug serializes",
+    );
+    let debug = parse_json_value(&debug, "storage pipeline debug JSON parses");
+    assert_eq!(debug["event_ledger"]["loaded_record_count"], 1);
+    assert_eq!(debug["event_ledger"]["latest_event_id"], 9001);
+    assert_eq!(debug["event_ledger"]["total_event_count"], 7);
+    assert_eq!(debug["event_ledger"]["indexed_dirty_path_count"], 1);
+    assert!(
+        debug["diagnosis"]
+            .as_array()
+            .is_some_and(|diagnosis| diagnosis.iter().any(|line| line
+                .as_str()
+                .is_some_and(|line| line.contains("dirty path"))))
+    );
 
     let _ = fs::remove_dir_all(root);
 }
@@ -6482,6 +6623,7 @@ fn storage_dirty_queue_coalesces_to_nearest_indexed_ancestor() {
         event_id: Some(61),
         flags: Some(0),
         source: Some("test-fsevents".to_owned()),
+        event_count: None,
     }];
 
     let summary = storage_index.record_filesystem_events(
@@ -6522,6 +6664,7 @@ fn storage_dirty_queue_prioritizes_domains_size_and_age() {
             event_id: Some(71),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
         StorageFilesystemEventRecord {
             timestamp_millis: Some(now_millis.saturating_sub(10_000)),
@@ -6529,6 +6672,7 @@ fn storage_dirty_queue_prioritizes_domains_size_and_age() {
             event_id: Some(72),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
         StorageFilesystemEventRecord {
             timestamp_millis: Some(now_millis.saturating_sub(1_000)),
@@ -6536,6 +6680,7 @@ fn storage_dirty_queue_prioritizes_domains_size_and_age() {
             event_id: Some(73),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
     ];
 
@@ -6576,6 +6721,7 @@ fn storage_dirty_queue_prioritizes_oldest_when_other_signals_match() {
             event_id: Some(76),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
         StorageFilesystemEventRecord {
             timestamp_millis: Some(now_millis.saturating_sub(1_000)),
@@ -6583,6 +6729,7 @@ fn storage_dirty_queue_prioritizes_oldest_when_other_signals_match() {
             event_id: Some(77),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
     ];
 
@@ -6625,6 +6772,7 @@ fn storage_dirty_queue_debounces_noisy_paths_behind_quiet_work() {
             event_id: Some(81 + index),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         });
     }
     records.push(StorageFilesystemEventRecord {
@@ -6633,6 +6781,7 @@ fn storage_dirty_queue_debounces_noisy_paths_behind_quiet_work() {
         event_id: Some(100),
         flags: Some(0),
         source: Some("test-fsevents".to_owned()),
+        event_count: None,
     });
 
     storage_index.record_filesystem_events(&records, std::slice::from_ref(&watched), now_millis);
@@ -6676,6 +6825,7 @@ fn storage_dirty_queue_collapses_chau7_tab_restore_noise() {
             event_id: Some(500 + index),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         })
         .collect::<Vec<_>>();
 
@@ -6724,6 +6874,7 @@ fn storage_dirty_queue_ignores_aetower_storage_chatter() {
             event_id: Some(601),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
         StorageFilesystemEventRecord {
             timestamp_millis: Some(now_millis + 1),
@@ -6731,6 +6882,7 @@ fn storage_dirty_queue_ignores_aetower_storage_chatter() {
             event_id: Some(602),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
         StorageFilesystemEventRecord {
             timestamp_millis: Some(now_millis + 2),
@@ -6738,6 +6890,7 @@ fn storage_dirty_queue_ignores_aetower_storage_chatter() {
             event_id: Some(603),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
         StorageFilesystemEventRecord {
             timestamp_millis: Some(now_millis + 3),
@@ -6745,6 +6898,7 @@ fn storage_dirty_queue_ignores_aetower_storage_chatter() {
             event_id: Some(604),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
         StorageFilesystemEventRecord {
             timestamp_millis: Some(now_millis + 4),
@@ -6752,6 +6906,7 @@ fn storage_dirty_queue_ignores_aetower_storage_chatter() {
             event_id: Some(605),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
         StorageFilesystemEventRecord {
             timestamp_millis: Some(now_millis + 5),
@@ -6759,6 +6914,7 @@ fn storage_dirty_queue_ignores_aetower_storage_chatter() {
             event_id: Some(606),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         },
     ];
 
@@ -6794,6 +6950,7 @@ fn storage_dirty_queue_coalesces_git_churn_to_repository_root() {
         event_id: Some(611),
         flags: Some(0),
         source: Some("test-fsevents".to_owned()),
+        event_count: None,
     }];
 
     let summary = storage_index.record_filesystem_events(
@@ -6829,6 +6986,7 @@ fn storage_dirty_queue_backpressure_collapses_descendants_to_root() {
             event_id: Some(111 + index),
             flags: Some(0),
             source: Some("test-fsevents".to_owned()),
+            event_count: None,
         })
         .collect::<Vec<_>>();
 
@@ -6870,6 +7028,7 @@ fn storage_incremental_measurer_updates_dirty_subtree_and_snapshot() {
         event_id: Some(201),
         flags: Some(0),
         source: Some("test-fsevents".to_owned()),
+        event_count: None,
     }];
     storage_index.record_filesystem_events(&records, std::slice::from_ref(&watched), now_millis);
 
@@ -6942,6 +7101,7 @@ fn storage_incremental_measurer_removes_deleted_dirty_subtree() {
         event_id: Some(211),
         flags: Some(0),
         source: Some("test-fsevents".to_owned()),
+        event_count: None,
     }];
     storage_index.record_filesystem_events(
         &records,
@@ -6983,6 +7143,7 @@ fn storage_dirty_queue_marks_unknown_gap_for_dropped_events() {
         event_id: Some(51),
         flags: Some(0x0000_0002),
         source: Some("test-fsevents".to_owned()),
+        event_count: None,
     }];
 
     let summary = storage_index.record_filesystem_events(

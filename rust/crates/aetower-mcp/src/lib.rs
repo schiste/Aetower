@@ -66,9 +66,9 @@ pub use reports::storage::{
     repository_inventory_json, storage_hygiene_actions_json, storage_hygiene_deep_scan_json,
     storage_hygiene_indexed_json, storage_hygiene_items_page_json, storage_hygiene_json,
     storage_hygiene_mode_json, storage_hygiene_overview_json, storage_hygiene_repo_detail_json,
-    storage_scan_cancel_json, storage_scan_pause_json, storage_scan_result_json,
-    storage_scan_resume_json, storage_scan_start_json, storage_scan_status_json,
-    storage_situation_json,
+    storage_pipeline_debug_json, storage_scan_cancel_json, storage_scan_pause_json,
+    storage_scan_result_json, storage_scan_resume_json, storage_scan_start_json,
+    storage_scan_status_json, storage_situation_json,
 };
 
 use reports::diagnostics::{
@@ -3608,6 +3608,7 @@ mod tests {
             "aetower_history_data_quality",
             "aetower_repository_inventory",
             "aetower_repository_scorecard",
+            "aetower_storage_pipeline_debug",
             "aetower_storage_situation",
             "aetower_storage_hygiene",
             "aetower_storage_hygiene_overview",

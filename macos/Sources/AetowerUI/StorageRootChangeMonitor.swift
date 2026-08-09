@@ -7,6 +7,23 @@ struct StorageRootChangeEventRecord: Codable {
     let eventId: UInt64?
     let flags: UInt64?
     let source: String
+    let eventCount: UInt64?
+
+    init(
+        timestampMillis: UInt64,
+        path: String,
+        eventId: UInt64?,
+        flags: UInt64?,
+        source: String,
+        eventCount: UInt64? = nil
+    ) {
+        self.timestampMillis = timestampMillis
+        self.path = path
+        self.eventId = eventId
+        self.flags = flags
+        self.source = source
+        self.eventCount = eventCount
+    }
 }
 
 struct StorageDirtyPathSummary: Sendable {
@@ -23,20 +40,21 @@ enum StorageRootChangeJournal {
     private static let key = "aetower.storageHygiene.lastRootChangeMillis.v1"
     private static let dirtyPathsKey = "aetower.storageHygiene.dirtyPaths.v1"
     private static let maxDirtyPaths = 256
-    private static let maxEventLedgerBytes: UInt64 = 2 * 1_024 * 1_024
-    private static let maxEventLedgerLines = 2_048
+    private static let maxEventLedgerBytes: UInt64 = 2 * 1024 * 1024
+    private static let maxEventLedgerLines = 2048
     private static let maxBufferedEvents = 512
-    private static let bufferedFlushDelayMillis = 5_000
+    private static let bufferedFlushDelayMillis = 5000
     private static let journalQueueKey = DispatchSpecificKey<Bool>()
     private static let journalQueue: DispatchQueue = {
         let queue = DispatchQueue(label: "com.aetower.storage.fsevents.journal", qos: .utility)
         queue.setSpecific(key: journalQueueKey, value: true)
         return queue
     }()
-    nonisolated(unsafe) private static var pendingEvents: [StorageRootChangeEventRecord] = []
-    nonisolated(unsafe) private static var pendingDirtyPaths: Set<String> = []
-    nonisolated(unsafe) private static var pendingLastChangeMillis: UInt64?
-    nonisolated(unsafe) private static var pendingFlushScheduled = false
+
+    private nonisolated(unsafe) static var pendingEvents: [StorageRootChangeEventRecord] = []
+    private nonisolated(unsafe) static var pendingDirtyPaths: Set<String> = []
+    private nonisolated(unsafe) static var pendingLastChangeMillis: UInt64?
+    private nonisolated(unsafe) static var pendingFlushScheduled = false
 
     static func recordChange(paths: [String] = []) {
         let timestampMillis = currentMillis()
@@ -90,7 +108,8 @@ enum StorageRootChangeJournal {
             path: path,
             eventId: event.eventId,
             flags: event.flags,
-            source: event.source
+            source: event.source,
+            eventCount: event.eventCount
         )
     }
 
@@ -249,7 +268,7 @@ enum StorageRootChangeJournal {
 
     private static func flushPendingEventsOnQueue() {
         guard !pendingEvents.isEmpty || !pendingDirtyPaths.isEmpty else { return }
-        let events = pendingEvents
+        let events = summarizedEvents(pendingEvents)
         let dirtyPaths = Array(pendingDirtyPaths)
         let lastChangeMillis = pendingLastChangeMillis ?? currentMillis()
         pendingEvents.removeAll(keepingCapacity: true)
@@ -258,6 +277,55 @@ enum StorageRootChangeJournal {
         UserDefaults.standard.set(lastChangeMillis, forKey: key)
         recordDirtyPaths(dirtyPaths)
         appendEventLedger(events)
+    }
+
+    private static func summarizedEvents(
+        _ events: [StorageRootChangeEventRecord]
+    ) -> [StorageRootChangeEventRecord] {
+        struct EventAggregate {
+            var timestampMillis: UInt64
+            var eventId: UInt64?
+            var flags: UInt64
+            var source: String
+            var eventCount: UInt64
+        }
+
+        var aggregates: [String: EventAggregate] = [:]
+        for event in events {
+            let increment = max(UInt64(1), event.eventCount ?? 1)
+            if var aggregate = aggregates[event.path] {
+                aggregate.timestampMillis = max(aggregate.timestampMillis, event.timestampMillis)
+                if let eventId = event.eventId {
+                    aggregate.eventId = max(aggregate.eventId ?? 0, eventId)
+                }
+                aggregate.flags |= event.flags ?? 0
+                aggregate.eventCount = aggregate.eventCount > UInt64.max - increment
+                    ? UInt64.max
+                    : aggregate.eventCount + increment
+                aggregates[event.path] = aggregate
+            } else {
+                aggregates[event.path] = EventAggregate(
+                    timestampMillis: event.timestampMillis,
+                    eventId: event.eventId,
+                    flags: event.flags ?? 0,
+                    source: event.source,
+                    eventCount: increment
+                )
+            }
+        }
+
+        return aggregates
+            .sorted { $0.key < $1.key }
+            .map { path, aggregate in
+                StorageRootChangeEventRecord(
+                    timestampMillis: aggregate.timestampMillis,
+                    path: path,
+                    eventId: aggregate.eventId,
+                    flags: aggregate.flags == 0 ? nil : aggregate.flags,
+                    source: aggregate.source,
+                    eventCount: aggregate.eventCount
+                )
+            }
     }
 
     private static func runOnJournalQueueSynchronously(_ work: @escaping () -> Void) {
@@ -318,14 +386,7 @@ enum StorageRootChangeJournal {
     }
 
     private static func eventLedgerPath() -> URL? {
-        guard let base = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first else {
-            return nil
-        }
-        return base.appendingPathComponent("Aetower", isDirectory: true)
-            .appendingPathComponent("storage-fsevents.ndjson")
+        storageSupportFileURL(fileName: "storage-fsevents.ndjson", createDirectory: false)
     }
 
     private static func currentMillis() -> UInt64 {
@@ -408,7 +469,7 @@ final class StorageRootChangeMonitor {
     ) -> [StorageRootChangeEventRecord] {
         let array = unsafeBitCast(eventPaths, to: CFArray.self) as NSArray
         let timestampMillis = UInt64(Date().timeIntervalSince1970 * 1000)
-        return (0..<min(count, array.count)).compactMap { index in
+        return (0 ..< min(count, array.count)).compactMap { index in
             guard let path = array[index] as? String else { return nil }
             return StorageRootChangeEventRecord(
                 timestampMillis: timestampMillis,

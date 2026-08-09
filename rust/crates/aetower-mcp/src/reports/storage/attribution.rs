@@ -24,8 +24,7 @@ pub(super) fn attribute_storage_growth_delta(
         .iter()
         .filter(|record| storage_filesystem_event_matches_delta(record, delta))
         .collect::<Vec<_>>();
-    let matched_filesystem_event_count =
-        matching_filesystem_events.len().min(u64::MAX as usize) as u64;
+    let matched_filesystem_event_count = filesystem_event_count(&matching_filesystem_events);
     let mut evidence = vec![format!(
         "Indexed growth delta: {} -> {} bytes.",
         delta.previous_physical_bytes, delta.current_physical_bytes
@@ -247,8 +246,12 @@ fn append_filesystem_event_evidence(
     sources.push("fsevents".to_owned());
     evidence.push(format!(
         "{} filesystem event{} overlapped this growth path/time window.",
-        matching_events.len(),
-        if matching_events.len() == 1 { "" } else { "s" }
+        filesystem_event_count(matching_events),
+        if filesystem_event_count(matching_events) == 1 {
+            ""
+        } else {
+            "s"
+        }
     ));
     for record in matching_events.iter().take(3) {
         if let Some(path) = record
@@ -272,6 +275,13 @@ fn append_filesystem_event_evidence(
             sources.push(source.to_owned());
         }
     }
+}
+
+fn filesystem_event_count(matching_events: &[&StorageFilesystemEventRecord]) -> u64 {
+    matching_events
+        .iter()
+        .map(|record| record.event_count.unwrap_or(1).max(1))
+        .fold(0u64, u64::saturating_add)
 }
 
 fn storage_filesystem_event_matches_delta(

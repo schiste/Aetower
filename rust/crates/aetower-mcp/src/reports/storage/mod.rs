@@ -461,8 +461,8 @@ mod cleanup;
 mod detectors;
 mod events;
 mod fingerprint;
-// Incremental measurement is kept behind explicit/event-driven entry points.
-// Read-only situation/report projections must not spawn it.
+// Incremental measurement is event-driven and bounded. Cache-first projections
+// may schedule it, but they must not block on a full filesystem walk.
 #[allow(dead_code)]
 mod incremental;
 mod jobs;
@@ -510,6 +510,7 @@ use fingerprint::{
     STORAGE_PATH_FINGERPRINT_VERSION, StorageDirectoryFingerprint, StoragePathFingerprint,
     metadata_birth_millis,
 };
+use incremental::ensure_dirty_storage_subtree_measurement;
 #[cfg(test)]
 use incremental::measure_dirty_storage_subtrees_once;
 pub(crate) use jobs::StorageScanJobProgress;
@@ -537,7 +538,9 @@ use models::{
     StorageHygieneItem, StorageHygieneItemsPageResponse, StorageHygieneOptions,
     StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse, StorageHygieneSummary,
     StorageInvestigationFinding, StorageInvestigationSummary, StorageItemSortKey,
-    StoragePerformanceBudgetDiagnostics, StoragePreventionPolicy, StoragePreventionSuggestion,
+    StoragePerformanceBudgetDiagnostics, StoragePipelineDebugResponse,
+    StoragePipelineEventLedgerDebug, StoragePipelineMeasurementDebug,
+    StoragePipelineSituationSnapshotDebug, StoragePreventionPolicy, StoragePreventionSuggestion,
     StorageRedundancyGroup, StorageRedundancyItem, StorageRepoArtifactFolder,
     StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryInventoryItem,
     StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry, StorageScanMetrics,
@@ -548,7 +551,8 @@ use models::{
 };
 pub use projection::{
     storage_growth_insights_json, storage_hygiene_actions_json, storage_hygiene_items_page_json,
-    storage_hygiene_overview_json, storage_hygiene_repo_detail_json, storage_situation_json,
+    storage_hygiene_overview_json, storage_hygiene_repo_detail_json, storage_pipeline_debug_json,
+    storage_situation_json,
 };
 pub use repo::repository_inventory_json;
 use repo::{

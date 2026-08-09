@@ -75,7 +75,9 @@ pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String
     let now_millis = storage_now_millis();
     let roots = normalize_roots(roots);
     let storage_index = StorageSizeIndex::open();
-    let dirty_summary = storage_index.dirty_path_summary(&roots, 5);
+    let ledger_records = load_storage_filesystem_event_records();
+    let dirty_summary = storage_index.ingest_filesystem_events(&ledger_records, &roots, now_millis);
+    ensure_dirty_storage_subtree_measurement(&roots, &dirty_summary);
     let limit = limit.clamp(1, 40);
     if let Some(snapshot) = storage_index.load_situation_snapshot(&roots, limit) {
         let snapshot = overlay_storage_situation_snapshot(
@@ -103,6 +105,166 @@ pub fn storage_situation_json(roots: Vec<String>, limit: usize) -> Result<String
         &response,
     );
     serde_json::to_string(&response).map_err(|error| error.to_string())
+}
+
+pub fn storage_pipeline_debug_json(roots: Vec<String>) -> Result<String, String> {
+    let now_millis = storage_now_millis();
+    let roots = normalize_roots(roots);
+    let storage_index = StorageSizeIndex::open();
+    let ledger_records = load_storage_filesystem_event_records();
+    let dirty_summary = storage_index.ingest_filesystem_events(&ledger_records, &roots, now_millis);
+    ensure_dirty_storage_subtree_measurement(&roots, &dirty_summary);
+    let snapshot = storage_index.load_situation_snapshot(&roots, 40);
+    let event_ledger = storage_pipeline_event_ledger_debug(&ledger_records, &roots, &dirty_summary);
+    let measurement = storage_index.latest_measurement_job_debug(&roots);
+    let situation_snapshot = snapshot
+        .as_ref()
+        .map(storage_pipeline_situation_snapshot_debug)
+        .unwrap_or_default();
+    let diagnosis = storage_pipeline_diagnosis(
+        &event_ledger,
+        &dirty_summary,
+        &measurement,
+        &situation_snapshot,
+    );
+
+    serde_json::to_string(&StoragePipelineDebugResponse {
+        captured_at_millis: now_millis,
+        roots: roots
+            .iter()
+            .map(|root| root.display().to_string())
+            .collect(),
+        storage_index_status: storage_index.status.clone(),
+        event_ledger,
+        dirty_paths: dirty_summary,
+        measurement,
+        situation_snapshot,
+        diagnosis,
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn storage_pipeline_event_ledger_debug(
+    ledger_records: &[StorageFilesystemEventRecord],
+    roots: &[PathBuf],
+    dirty_summary: &StorageDirtyPathSummary,
+) -> StoragePipelineEventLedgerDebug {
+    let mut sample_paths = BTreeSet::new();
+    let mut latest_event_id = None;
+    let mut latest_event_millis = None;
+    let mut total_event_count = 0u64;
+    let mut loaded_record_count = 0u64;
+    for record in ledger_records {
+        let Some(path) = record
+            .path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        if !roots.is_empty() && !roots.iter().any(|root| path_is_under_root(path, root)) {
+            continue;
+        }
+        loaded_record_count = loaded_record_count.saturating_add(1);
+        total_event_count =
+            total_event_count.saturating_add(record.event_count.unwrap_or(1).max(1));
+        latest_event_id = latest_event_id.max(record.event_id);
+        latest_event_millis = latest_event_millis.max(record.timestamp_millis);
+        if sample_paths.len() < 8 {
+            sample_paths.insert(path.to_owned());
+        }
+    }
+
+    StoragePipelineEventLedgerDebug {
+        loaded_record_count,
+        indexed_dirty_path_count: dirty_summary.dirty_path_count,
+        latest_event_id,
+        latest_event_millis,
+        total_event_count,
+        sample_paths: sample_paths.into_iter().collect(),
+    }
+}
+
+fn storage_pipeline_situation_snapshot_debug(
+    snapshot: &StorageSituationResponse,
+) -> StoragePipelineSituationSnapshotDebug {
+    StoragePipelineSituationSnapshotDebug {
+        exists: true,
+        captured_at_millis: Some(snapshot.captured_at_millis),
+        cache_source: Some(snapshot.cache_status.source.clone()),
+        stale: snapshot.cache_status.stale,
+        partial: snapshot.cache_status.partial,
+        item_count: snapshot.summary.item_count,
+    }
+}
+
+fn storage_pipeline_diagnosis(
+    event_ledger: &StoragePipelineEventLedgerDebug,
+    dirty_summary: &StorageDirtyPathSummary,
+    measurement: &StoragePipelineMeasurementDebug,
+    situation_snapshot: &StoragePipelineSituationSnapshotDebug,
+) -> Vec<String> {
+    let mut diagnosis = Vec::new();
+    if !situation_snapshot.exists {
+        diagnosis.push(
+            "No persisted StorageSituation snapshot exists yet; a first baseline or completed scan is required."
+                .to_owned(),
+        );
+    }
+    if event_ledger.loaded_record_count == 0 {
+        diagnosis.push("No root-matching filesystem ledger records were loaded.".to_owned());
+    } else if dirty_summary.dirty_path_count == 0 {
+        diagnosis.push(
+            "Filesystem ledger records were loaded, but no dirty paths are pending for these roots."
+                .to_owned(),
+        );
+    } else {
+        diagnosis.push(format!(
+            "{} dirty path(s) are pending from filesystem events.",
+            dirty_summary.dirty_path_count
+        ));
+    }
+    if dirty_summary.unknown_gap {
+        diagnosis.push(
+            "An unresolved FSEvents gap exists; cleanup should remain blocked until verification."
+                .to_owned(),
+        );
+    }
+    match measurement.latest_status.as_deref() {
+        Some("complete") if dirty_summary.dirty_path_count == 0 => {
+            diagnosis.push(
+                "Latest incremental measurement completed and cleared the dirty batch.".to_owned(),
+            );
+        }
+        Some("complete") => {
+            diagnosis.push(
+                "Latest incremental measurement completed, but additional dirty paths remain queued."
+                    .to_owned(),
+            );
+        }
+        Some("pending") | Some("partial") => {
+            diagnosis.push(
+                "Latest incremental measurement is incomplete and needs continuation.".to_owned(),
+            );
+        }
+        Some(status) => {
+            diagnosis.push(format!(
+                "Latest incremental measurement status is {status}."
+            ));
+        }
+        None if dirty_summary.dirty_path_count > 0 => {
+            diagnosis.push(
+                "Dirty paths are queued, but no incremental measurement job is recorded yet."
+                    .to_owned(),
+            );
+        }
+        None => {}
+    }
+    if situation_snapshot.exists && situation_snapshot.stale {
+        diagnosis.push("The current situation snapshot is correctly marked stale until dirty paths are remeasured.".to_owned());
+    }
+    diagnosis
 }
 
 pub(super) fn persist_storage_situation_snapshot_from_report(report: &StorageHygieneReport) {

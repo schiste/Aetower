@@ -317,6 +317,7 @@ mod native {
                 event_id: Some(event_id),
                 flags: Some(flags),
                 source: Some(STORAGE_NATIVE_FSEVENTS_SOURCE.to_owned()),
+                event_count: None,
             });
         }
     }

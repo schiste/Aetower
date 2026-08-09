@@ -1,5 +1,5 @@
-import XCTest
 @testable import AetowerUI
+import XCTest
 
 final class StorageHygieneModelsTests: XCTestCase {
     @MainActor
@@ -76,7 +76,7 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertNil(state.storageScanJob)
     }
 
-    func testStorageRootChangeJournalFiltersAndCoalescesNoise() throws {
+    func testStorageRootChangeJournalFiltersAndCoalescesNoise() {
         let temporarySupportURL = FileManager.default
             .temporaryDirectory
             .appendingPathComponent("aetower-dirty-journal-\(UUID().uuidString)", isDirectory: true)
@@ -191,6 +191,57 @@ final class StorageHygieneModelsTests: XCTestCase {
             Set(StorageRootChangeJournal.dirtyPaths()),
             Set([repositoryRoot.path, chromeRoot.path])
         )
+    }
+
+    func testStorageRootChangeJournalCompactsLedgerBurstsByDirtyPath() throws {
+        let temporarySupportURL = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("aetower-dirty-ledger-compact-\(UUID().uuidString)", isDirectory: true)
+        StorageSupportDirectoryOverride.applicationSupportURL = temporarySupportURL
+        StorageRootChangeJournal.clearChangeStateForTesting()
+        defer {
+            StorageRootChangeJournal.clearChangeStateForTesting()
+            StorageSupportDirectoryOverride.applicationSupportURL = nil
+            try? FileManager.default.removeItem(at: temporarySupportURL)
+        }
+
+        let restoreRoot = temporarySupportURL
+            .appendingPathComponent("Library")
+            .appendingPathComponent("Application Support")
+            .appendingPathComponent("Chau7")
+            .appendingPathComponent("TabRestoreBundles", isDirectory: true)
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        let events = (0 ..< 128).map { index in
+            StorageRootChangeEventRecord(
+                timestampMillis: nowMillis + UInt64(index),
+                path: restoreRoot
+                    .appendingPathComponent("bundle-\(index)")
+                    .appendingPathComponent("state.json")
+                    .path,
+                eventId: UInt64(10000 + index),
+                flags: UInt64(index % 2),
+                source: "test"
+            )
+        }
+
+        StorageRootChangeJournal.recordEvents(events)
+        StorageRootChangeJournal.flushPendingEventsForTesting()
+
+        XCTAssertEqual(StorageRootChangeJournal.dirtyPaths(), [restoreRoot.path])
+        let ledgerURL = try XCTUnwrap(
+            storageSupportFileURL(fileName: "storage-fsevents.ndjson", createDirectory: false)
+        )
+        let lines = try String(contentsOf: ledgerURL, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+        XCTAssertEqual(lines.count, 1)
+
+        let data = try XCTUnwrap(String(lines[0]).data(using: .utf8))
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        XCTAssertEqual(object["path"] as? String, restoreRoot.path)
+        XCTAssertEqual((object["event_count"] as? NSNumber)?.uint64Value, 128)
+        XCTAssertEqual((object["event_id"] as? NSNumber)?.uint64Value, 10127)
     }
 
     @MainActor
@@ -637,7 +688,7 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertEqual(insights.perRepoRates.first?.seasonalPattern, "variable")
         XCTAssertEqual(insights.perRepoRates.first?.volatilityPercent, 40)
         XCTAssertEqual(insights.perRootRates.first?.trend, "shrinking")
-        XCTAssertEqual(insights.perRootRates.first?.totalDeltaBytes, -1_024)
+        XCTAssertEqual(insights.perRootRates.first?.totalDeltaBytes, -1024)
         XCTAssertEqual(insights.volumeForecasts.first?.volumePath, "/")
         XCTAssertEqual(insights.volumeForecasts.first?.daysToFull ?? 0, 10.0, accuracy: 0.001)
         XCTAssertEqual(insights.volumeForecasts.first?.availableBytes, 471_859_200)
@@ -957,7 +1008,7 @@ final class StorageHygieneModelsTests: XCTestCase {
         )
         XCTAssertEqual(redundancyGroup.items.count, 2)
         XCTAssertEqual(redundancyGroup.items.first?.kind, "duplicate-file")
-        XCTAssertEqual(redundancyGroup.items.first?.logicalBytes, 2_048)
+        XCTAssertEqual(redundancyGroup.items.first?.logicalBytes, 2048)
         XCTAssertEqual(redundancyGroup.items.last?.role, "duplicate-candidate")
     }
 

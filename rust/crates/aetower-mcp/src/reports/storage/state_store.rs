@@ -1492,7 +1492,7 @@ impl StorageSizeIndex {
             "INSERT INTO storage_dirty_path (
                 path, source, flags, last_event_id, first_seen_millis, last_seen_millis,
                 event_count, status
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, 1, 'dirty')
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, 'dirty')
              ON CONFLICT(path) DO UPDATE SET
                 source = excluded.source,
                 flags = storage_dirty_path.flags | excluded.flags,
@@ -1501,10 +1501,11 @@ impl StorageSizeIndex {
                     COALESCE(excluded.last_event_id, 0)
                 ),
                 last_seen_millis = MAX(storage_dirty_path.last_seen_millis, excluded.last_seen_millis),
-                event_count = storage_dirty_path.event_count + 1,
+                event_count = storage_dirty_path.event_count + excluded.event_count,
                 status = 'dirty',
                 last_error = NULL
              WHERE excluded.last_seen_millis > storage_dirty_path.last_seen_millis
+                OR COALESCE(excluded.last_event_id, 0) > COALESCE(storage_dirty_path.last_event_id, 0)
                 OR storage_dirty_path.status <> 'dirty'",
         ) else {
             return 0;
@@ -1540,6 +1541,7 @@ impl StorageSizeIndex {
             }
             let dirty_path = self.coalesced_dirty_queue_path(path, roots);
             let event_millis = record.timestamp_millis.unwrap_or(now_millis);
+            let event_count = record.event_count.unwrap_or(1).max(1);
             if upsert
                 .execute(params![
                     &dirty_path,
@@ -1549,6 +1551,7 @@ impl StorageSizeIndex {
                         .event_id
                         .map(|value| value.min(i64::MAX as u64) as i64),
                     event_millis.min(i64::MAX as u64) as i64,
+                    event_count.min(i64::MAX as u64) as i64,
                 ])
                 .unwrap_or(0)
                 > 0
@@ -1566,7 +1569,13 @@ impl StorageSizeIndex {
             latest_event_id,
         );
         if inserted > 0 {
-            let detail = format!("ingested {inserted} filesystem event paths");
+            let total_events = records
+                .iter()
+                .map(|record| record.event_count.unwrap_or(1).max(1))
+                .fold(0u64, u64::saturating_add);
+            let detail = format!(
+                "ingested {inserted} filesystem event path(s) covering {total_events} event(s)"
+            );
             self.update_event_cursor(cursor_source, latest_event_id, now_millis, "ready", &detail);
             self.collapse_volatile_dirty_paths(roots, now_millis);
             self.apply_dirty_queue_backpressure(roots, now_millis, cursor_source, latest_event_id);
@@ -2267,6 +2276,49 @@ impl StorageSizeIndex {
                 last_error.as_deref(),
             ],
         );
+    }
+
+    pub(super) fn latest_measurement_job_debug(
+        &self,
+        roots: &[PathBuf],
+    ) -> StoragePipelineMeasurementDebug {
+        let Some(connection) = self.connection.as_ref() else {
+            return StoragePipelineMeasurementDebug::default();
+        };
+        let root_key = storage_situation_roots_key(roots);
+        let Ok(mut statement) = connection.prepare(
+            "SELECT status, updated_at_millis, dirty_paths_json, measured_path_count,
+                    measured_file_count, partial, last_error
+             FROM storage_measurement_job
+             WHERE root_key = ?1
+             ORDER BY updated_at_millis DESC
+             LIMIT 1",
+        ) else {
+            return StoragePipelineMeasurementDebug::default();
+        };
+        statement
+            .query_row(params![root_key], |row| {
+                let status: String = row.get(0)?;
+                let updated_at_millis: i64 = row.get(1)?;
+                let dirty_paths_json: String = row.get(2)?;
+                let measured_path_count: i64 = row.get(3)?;
+                let measured_file_count: i64 = row.get(4)?;
+                let partial: i64 = row.get(5)?;
+                let last_error: Option<String> = row.get(6)?;
+                let dirty_path_count = serde_json::from_str::<Vec<String>>(&dirty_paths_json)
+                    .map(|paths| paths.len().min(u64::MAX as usize) as u64)
+                    .unwrap_or_default();
+                Ok(StoragePipelineMeasurementDebug {
+                    latest_status: Some(status),
+                    latest_updated_millis: Some(updated_at_millis.max(0) as u64),
+                    latest_dirty_path_count: dirty_path_count,
+                    latest_measured_path_count: measured_path_count.max(0) as u64,
+                    latest_measured_file_count: measured_file_count.max(0) as u64,
+                    latest_partial: partial != 0,
+                    latest_error: last_error,
+                })
+            })
+            .unwrap_or_default()
     }
 
     fn mark_unknown_gap_roots(

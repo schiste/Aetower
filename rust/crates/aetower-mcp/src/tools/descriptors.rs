@@ -355,8 +355,16 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
             AetowerMcpServer::tool_repository_scorecard,
         ),
         ToolDescriptor::with_args(
+            "aetower_storage_pipeline_debug",
+            "Diagnose the cache-first storage pipeline by reporting filesystem ledger ingestion, dirty queue state, latest incremental measurement, and the persisted situation snapshot. Bounded metadata only; never walks the filesystem.",
+            vec![
+                string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths. Defaults to common developer and Xcode cache locations."),
+            ],
+            AetowerMcpServer::tool_storage_pipeline_debug,
+        ),
+        ToolDescriptor::with_args(
             "aetower_storage_situation",
-            "Return the fastest cache-first storage situation: last known summary bytes, top offenders, dirty-path freshness, volume state, and cache status. Never walks the filesystem; set refresh=true to start an optional background scan.",
+            "Return the fastest cache-first storage situation: last known summary bytes, top offenders, dirty-path freshness, volume state, and cache status. Never waits on a filesystem walk; watcher-marked dirty paths may start a bounded incremental refresh in the background.",
             vec![
                 string_array("roots", Some(24)).described("Optional absolute paths or ~/ paths. Defaults to common developer and Xcode cache locations."),
                 uint("limit", Some(1), Some(40), Some(12)).described("Number of top offenders to return."),
