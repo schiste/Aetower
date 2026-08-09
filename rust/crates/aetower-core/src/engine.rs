@@ -1869,6 +1869,28 @@ impl Engine {
         state: CapabilityState,
         detail_override: Option<String>,
     ) {
+        let mut guard = self.state.lock();
+        let now = aet_time::now_millis();
+        let Some(capability) = guard.capabilities.get_mut(&kind) else {
+            return;
+        };
+        let detail_changed = detail_override
+            .as_ref()
+            .is_some_and(|detail| capability.detail != *detail);
+        if capability.state == state && !detail_changed {
+            return;
+        }
+
+        capability.state = state.clone();
+        capability.last_updated_millis = now;
+        if let Some(detail) = detail_override {
+            capability.detail = detail;
+        }
+        let capabilities = guard.capabilities.values().cloned().collect();
+        Arc::make_mut(&mut guard.latest_snapshot).capabilities = capabilities;
+        guard.publish_mutation();
+        drop(guard);
+
         self.diagnostics.emit(
             DiagnosticsEvent::builder(
                 DiagnosticsLevel::Info,
@@ -1880,18 +1902,6 @@ impl Engine {
             .field("state", format!("{state:?}"))
             .build(),
         );
-        let mut guard = self.state.lock();
-        let now = aet_time::now_millis();
-        if let Some(capability) = guard.capabilities.get_mut(&kind) {
-            capability.state = state;
-            capability.last_updated_millis = now;
-            if let Some(detail) = detail_override {
-                capability.detail = detail;
-            }
-        }
-        let capabilities = guard.capabilities.values().cloned().collect();
-        Arc::make_mut(&mut guard.latest_snapshot).capabilities = capabilities;
-        guard.publish_mutation();
     }
 
     pub fn update_frontmost_app_state(&self, state: FrontmostAppState) {
@@ -3443,6 +3453,90 @@ mod tests {
             runtime_config: RuntimeCollectionConfig::default(),
             last_runtime_heartbeat_millis: 0,
         }))
+    }
+
+    fn engine_with_test_capability() -> Engine {
+        let diagnostics = DiagnosticsStore::new(64);
+        let adapters = AdapterManager::default();
+        adapters.set_diagnostics(diagnostics.clone());
+        let mut telemetry_exporter = TelemetryExporter::new(OtlpConfig::default());
+        telemetry_exporter.set_diagnostics(diagnostics.clone());
+        let mut capabilities = std::collections::BTreeMap::new();
+        capabilities.insert(
+            CapabilityKind::ChromiumDebug,
+            CapabilitySnapshot {
+                kind: CapabilityKind::ChromiumDebug,
+                state: CapabilityState::Unknown,
+                detail: "not checked".to_owned(),
+                ..CapabilitySnapshot::default()
+            },
+        );
+        let snapshot = SystemSnapshot {
+            capabilities: capabilities.values().cloned().collect(),
+            ..SystemSnapshot::default()
+        };
+
+        Engine {
+            state: Arc::new(Mutex::new(EngineState {
+                sequence: 0,
+                latest_snapshot: Arc::new(snapshot),
+                capabilities,
+                frontmost_app_state: None,
+                runtime_lag_metrics: RuntimeLagMetrics::default(),
+                runtime_config: RuntimeCollectionConfig::default(),
+                last_runtime_heartbeat_millis: 0,
+            })),
+            history: Arc::new(Mutex::new(History::new())),
+            adapters,
+            persistence: Arc::new(Mutex::new(None)),
+            telemetry: Arc::new(Mutex::new(telemetry_exporter)),
+            history_maintenance_cancel: Arc::new(AtomicBool::new(false)),
+            system_marker_generation: Arc::new(AtomicU64::new(0)),
+            diagnostics,
+            running: Arc::new(AtomicBool::new(false)),
+            worker: None,
+            adapter_worker: None,
+            telemetry_worker: None,
+            history_maintenance_worker: None,
+            system_marker_worker: None,
+            regression_worker: None,
+        }
+    }
+
+    #[test]
+    fn set_capability_state_emits_only_when_capability_changes() {
+        let engine = engine_with_test_capability();
+
+        engine.set_capability_state(
+            CapabilityKind::ChromiumDebug,
+            CapabilityState::Unavailable,
+            Some("Chrome remote debugging is not reachable.".to_owned()),
+        );
+        engine.set_capability_state(
+            CapabilityKind::ChromiumDebug,
+            CapabilityState::Unavailable,
+            Some("Chrome remote debugging is not reachable.".to_owned()),
+        );
+
+        let emitted = engine
+            .latest_diagnostics(16)
+            .into_iter()
+            .filter(|event| event.event_type == "capability-state-changed")
+            .collect::<Vec<_>>();
+        assert_eq!(emitted.len(), 1);
+
+        engine.set_capability_state(
+            CapabilityKind::ChromiumDebug,
+            CapabilityState::Unavailable,
+            Some("Chrome remote debugging is reachable again.".to_owned()),
+        );
+
+        let emitted = engine
+            .latest_diagnostics(16)
+            .into_iter()
+            .filter(|event| event.event_type == "capability-state-changed")
+            .collect::<Vec<_>>();
+        assert_eq!(emitted.len(), 2);
     }
 
     #[test]
