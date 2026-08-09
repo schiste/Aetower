@@ -227,6 +227,11 @@ private final class StorageHygieneMainActorPublisher: @unchecked Sendable {
     }
 
     @MainActor
+    func publishStorageSituation(_ situation: StorageSituationModel, updateEstimate: Bool) {
+        state?.publishStorageSituation(situation, updateEstimate: updateEstimate)
+    }
+
+    @MainActor
     func publishVerificationFinished(message: String?) {
         state?.publishStorageHygieneVerificationFinished(message: message)
     }
@@ -541,6 +546,8 @@ public final class AppState {
     @ObservationIgnored private var storageHygieneLoadWatchdogMode = "fast_changed_only"
     @ObservationIgnored private var storageHygieneLoadWatchdogBudgetSeconds: TimeInterval = 30
     private(set) var storageHygieneIsVerifyingCache = false
+    @ObservationIgnored private var storageSituationBacklogDrainTask: Task<Void, Never>?
+    @ObservationIgnored private var storageSituationPublishSignature: String?
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
     private(set) var repositoryInventoryRefreshState: RepositoryInventoryRefreshState?
@@ -957,6 +964,7 @@ public final class AppState {
         publishFrontmostState(force: true)
         refresh(force: true)
         updateLagMonitoringState()
+        startStorageSituationBacklogDrain()
         baseRefreshIntervalNanos = UInt64(max(1.0, refreshInterval) * 1_000_000_000)
         refreshTask = Task { [weak self] in
             guard let self else { return }
@@ -1013,6 +1021,8 @@ public final class AppState {
         diagnosticsLoadTask = nil
         storageHygieneTask?.cancel()
         storageHygieneTask = nil
+        storageSituationBacklogDrainTask?.cancel()
+        storageSituationBacklogDrainTask = nil
         storageHygieneIsVerifyingCache = false
         storageScheduledScanTask?.cancel()
         storageScheduledScanTask = nil
@@ -2128,6 +2138,8 @@ public final class AppState {
     private static let storageEstimateQuietMillis: UInt64 = 45_000
     private static let storageEstimateRefreshCooldownMillis: UInt64 = 120_000
     private static let storageCacheReverifyIntervalMillis: UInt64 = 6 * 60 * 60 * 1000
+    private static let storageSituationBacklogDrainIntervalNanos: UInt64 = 15_000_000_000
+    private static let storageSituationBacklogCleanPasses = 2
 
     @discardableResult
     private func startStorageRefreshForDirtyDisplayedReportIfNeeded(
@@ -2346,13 +2358,89 @@ public final class AppState {
         return true
     }
 
-    private func publishStorageSituation(
+    fileprivate func publishStorageSituation(
         _ situation: StorageSituationModel,
         updateEstimate: Bool
     ) {
+        let signature = Self.storageSituationPublishSignature(situation)
+        if storageSituationPublishSignature == signature, storageSituation != nil {
+            return
+        }
+        storageSituationPublishSignature = signature
         storageSituation = situation
         guard updateEstimate, storageHygieneReport == nil else { return }
         updateStorageEstimateStatus(situation: situation)
+    }
+
+    nonisolated private static func storageSituationPublishSignature(
+        _ situation: StorageSituationModel
+    ) -> String {
+        let summary = situation.summary
+        let dirty = situation.dirtyPaths
+        let topOffenders = situation.topOffenders.prefix(8)
+            .map { "\($0.path)|\($0.physicalBytes)|\($0.stale ? 1 : 0)" }
+            .joined(separator: ",")
+        let volumes = situation.volumeStates
+            .map { "\($0.path)|\($0.freeNowBytes)|\($0.availableBytes)|\($0.purgeableBytesEstimate)" }
+            .joined(separator: ",")
+        return [
+            situation.storageIndexStatus,
+            situation.cacheStatus.source,
+            situation.cacheStatus.stale ? "stale" : "fresh",
+            situation.cacheStatus.partial ? "partial" : "complete",
+            situation.cacheStatus.confidence,
+            String(situation.cacheStatus.confidenceScore),
+            String(situation.cacheStatus.latestScanMillis ?? 0),
+            String(summary.sourceRootCount),
+            String(summary.itemCount),
+            String(summary.inventorySizeBytes),
+            String(summary.safelyReclaimableNowBytes),
+            String(summary.maybeReclaimableBytes),
+            String(summary.reviewRequiredBytes),
+            String(summary.dangerousUserDataBytes),
+            String(dirty.dirtyPathCount),
+            String(dirty.latestEventId ?? 0),
+            dirty.unknownGap ? "gap" : "no-gap",
+            dirty.unknownGapRoots.joined(separator: ","),
+            topOffenders,
+            volumes,
+        ].joined(separator: "|")
+    }
+
+    private func startStorageSituationBacklogDrain() {
+        storageSituationBacklogDrainTask?.cancel()
+        let bridge = self.bridge
+        let publisher = StorageHygieneMainActorPublisher(self)
+        let drainIntervalNanos = Self.storageSituationBacklogDrainIntervalNanos
+        let cleanPassLimit = Self.storageSituationBacklogCleanPasses
+        storageSituationBacklogDrainTask = Task.detached(priority: .utility) { [bridge, publisher] in
+            var cleanPasses = 0
+            while !Task.isCancelled && cleanPasses < cleanPassLimit {
+                let result = bridge.storageSituationJSON(roots: [])
+                guard let situation = Self.decodeStorageSituationForBackground(result) else {
+                    try? await Task.sleep(nanoseconds: drainIntervalNanos)
+                    continue
+                }
+
+                await publisher.publishStorageSituation(situation, updateEstimate: true)
+
+                let queueIsClean = situation.dirtyPaths.dirtyPathCount == 0
+                    && !situation.cacheStatus.stale
+                    && !situation.cacheStatus.partial
+                    && !situation.dirtyPaths.unknownGap
+                cleanPasses = queueIsClean ? cleanPasses + 1 : 0
+                try? await Task.sleep(nanoseconds: drainIntervalNanos)
+            }
+        }
+    }
+
+    nonisolated private static func decodeStorageSituationForBackground(
+        _ result: JsonQueryResult
+    ) -> StorageSituationModel? {
+        guard let payload = result.json?.data(using: .utf8) else {
+            return nil
+        }
+        return try? AetowerJSON.snakeCaseDecoder().decode(StorageSituationModel.self, from: payload)
     }
 
     private func updateStorageEstimateStatus(situation: StorageSituationModel) {
