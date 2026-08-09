@@ -659,10 +659,8 @@ fn build_storage_hygiene_projection_report(
     limit: usize,
     mode: &str,
 ) -> StorageHygieneReport {
-    if StorageScanMode::parse(mode) == StorageScanMode::InstantCached
-        && let Ok(report) = build_storage_hygiene_report_from_index(roots.clone(), max_depth, limit)
-    {
-        return report;
+    if StorageScanMode::parse(mode) == StorageScanMode::InstantCached {
+        return build_storage_hygiene_report_from_index(roots, max_depth, limit);
     }
     build_storage_hygiene_report_with_mode(roots, max_depth, limit, mode)
 }

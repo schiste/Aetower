@@ -325,6 +325,7 @@ fn complete_scan_retains_all_normal_candidates_beyond_fast_cap() {
 
 #[test]
 fn storage_hygiene_projection_apis_return_compact_shapes() {
+    let _index_guard = storage_index_test_guard();
     let root = test_root("projection-apis");
     let target = root.join("project").join("target").join("debug");
     if let Err(error) = fs::create_dir_all(&target) {
@@ -336,6 +337,12 @@ fn storage_hygiene_projection_apis_return_compact_shapes() {
     ) {
         panic!("write build artifact: {error}");
     }
+    let _ = build_storage_hygiene_report_for_roots_mode(
+        vec![root.display().to_string()],
+        5,
+        80,
+        "fast_changed_only",
+    );
 
     let overview = must_ok(
         storage_hygiene_overview_json(vec![root.display().to_string()], 5, "fast_changed_only"),
@@ -392,7 +399,7 @@ fn storage_hygiene_projection_apis_return_compact_shapes() {
         "situation serializes",
     );
     let situation = parse_json_value(&situation, "situation JSON parses");
-    assert_eq!(situation["cache_status"]["source"], "persistent_index");
+    assert_eq!(situation["cache_status"]["source"], "situation_snapshot");
     assert!(
         situation["summary"]["inventory_size_bytes"]
             .as_u64()
@@ -486,6 +493,83 @@ fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
         indexed["diagnostics"]["storage_index_hits"]
             .as_u64()
             .is_some_and(|hits| hits >= 1)
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_hygiene_mode_json_projects_from_index_unless_forensic() {
+    let _index_guard = storage_index_test_guard();
+    let root = test_root("mode-json-projects-from-index");
+    let target = root.join("project").join("target").join("debug");
+    write_allocated_fixture(&target.join("artifact"), MIN_ITEM_BYTES + 512);
+    mark_tree_old(&root);
+
+    let empty_projection = must_ok(
+        storage_hygiene_mode_json(vec![root.display().to_string()], 5, 80, "deep_native"),
+        "deep compatibility projection serializes before index baseline",
+    );
+    let empty_projection = parse_json_value(&empty_projection, "empty projection parses");
+    assert_eq!(empty_projection["scan_mode"], "instant_cached");
+    assert_eq!(empty_projection["diagnostics"]["root_walk_millis"], 0);
+    assert_eq!(
+        empty_projection["diagnostics"]["scanned_directory_count"],
+        0
+    );
+    assert_eq!(empty_projection["diagnostics"]["git_millis"], 0);
+    assert_eq!(empty_projection["summary"]["item_count"], 0);
+    assert!(
+        empty_projection["items"]
+            .as_array()
+            .is_some_and(|items| items.is_empty()),
+        "deep compatibility report must not discover live artifacts without an index baseline"
+    );
+
+    let forensic = must_ok(
+        storage_hygiene_mode_json(vec![root.display().to_string()], 5, 80, "forensic_verified"),
+        "forensic verification serializes",
+    );
+    let forensic = parse_json_value(&forensic, "forensic report parses");
+    assert_eq!(forensic["scan_mode"], "forensic_verified");
+    assert!(
+        forensic["diagnostics"]["scanned_directory_count"]
+            .as_u64()
+            .is_some_and(|count| count > 0),
+        "forensic verification should still walk the filesystem"
+    );
+    assert!(
+        forensic["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["kind"] == "rust-build")),
+        "forensic verification should materialize the artifact into the index"
+    );
+
+    let cached_projection = must_ok(
+        storage_hygiene_mode_json(vec![root.display().to_string()], 5, 80, "deep_native"),
+        "deep compatibility projection serializes after index baseline",
+    );
+    let cached_projection = parse_json_value(&cached_projection, "cached projection parses");
+    assert_eq!(cached_projection["scan_mode"], "instant_cached");
+    assert_eq!(cached_projection["diagnostics"]["root_walk_millis"], 0);
+    assert_eq!(
+        cached_projection["diagnostics"]["scanned_directory_count"],
+        0
+    );
+    assert_eq!(cached_projection["diagnostics"]["git_millis"], 0);
+    assert!(
+        cached_projection["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["kind"] == "rust-build")),
+        "compatibility report should project already indexed artifacts"
+    );
+    assert!(
+        cached_projection["caveats"]
+            .as_array()
+            .is_some_and(|caveats| caveats.iter().any(|caveat| caveat
+                .as_str()
+                .is_some_and(|text| text.contains("Compatibility report projected")))),
+        "projection caveat should explain why the requested deep mode did not scan"
     );
 
     let _ = fs::remove_dir_all(root);
@@ -2731,7 +2815,7 @@ fn storage_hygiene_similar_bucket_confirms_only_full_hash_matches() {
             vec![root.display().to_string()],
             4,
             120,
-            "fast_changed_only",
+            "forensic_verified",
         ),
         "actions endpoint serializes duplicate groups",
     );
@@ -4008,7 +4092,7 @@ fn storage_hygiene_runtime_reports_inventory_before_finalizing() {
             reason: None,
         },
     );
-    let report = build_storage_hygiene_report_with_options(
+    let report = build_storage_hygiene_verification_report_with_options(
         vec![root.display().to_string()],
         StorageHygieneOptions {
             max_depth: 5,
@@ -4050,7 +4134,7 @@ fn storage_hygiene_marks_cancelled_repository_inventory_partial() {
             reason: None,
         },
     );
-    let report = build_storage_hygiene_report_with_options(
+    let report = build_storage_hygiene_verification_report_with_options(
         vec![root.display().to_string()],
         StorageHygieneOptions {
             max_depth: 5,
@@ -6138,10 +6222,7 @@ fn indexed_report_build_is_fast_on_large_synthetic_index() {
 
     let build_budget = Duration::from_secs(5);
     let started = Instant::now();
-    let report = must_ok(
-        build_storage_hygiene_report_from_index(vec![root.display().to_string()], 5, 80),
-        "index report builds on the 100k-row index",
-    );
+    let report = build_storage_hygiene_report_from_index(vec![root.display().to_string()], 5, 80);
     let first_build = started.elapsed();
     assert!(
         !report.items.is_empty(),
@@ -6153,10 +6234,7 @@ fn indexed_report_build_is_fast_on_large_synthetic_index() {
     );
 
     let started = Instant::now();
-    let _ = must_ok(
-        build_storage_hygiene_report_from_index(vec![root.display().to_string()], 5, 80),
-        "index report rebuilds on the 100k-row index",
-    );
+    let _ = build_storage_hygiene_report_from_index(vec![root.display().to_string()], 5, 80);
     let second_build = started.elapsed();
     assert!(
         second_build < build_budget,
@@ -7460,7 +7538,7 @@ fn forensic_scan_result_stays_verified_only_when_complete() {
         panic!("create forensic fixture root: {error}");
     }
 
-    let report = build_storage_hygiene_report_with_options(
+    let report = build_storage_hygiene_verification_report_with_options(
         vec![root.display().to_string()],
         StorageHygieneOptions {
             max_depth: 5,
@@ -7505,7 +7583,7 @@ fn forensic_scan_result_is_labeled_partial_when_budget_stops_verification() {
             reason: None,
         },
     );
-    let report = build_storage_hygiene_report_with_options(
+    let report = build_storage_hygiene_verification_report_with_options(
         vec![root.display().to_string()],
         StorageHygieneOptions {
             max_depth: 5,

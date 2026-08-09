@@ -567,9 +567,10 @@ use report::{
 };
 use report::{
     StorageCandidateCollector, StorageReclaimBucket, apply_dirty_summary_to_cache_status,
-    build_storage_hygiene_report_from_index, build_storage_hygiene_report_with_options,
-    finalize_storage_report_json, highest_cleanup_tier, normalize_dirty_paths, normalize_roots,
-    path_matches_dirty_prefix, refresh_storage_performance_budget, skipped_root_permission_state,
+    build_storage_hygiene_report_from_index,
+    build_storage_hygiene_verification_report_with_options, finalize_storage_report_json,
+    highest_cleanup_tier, normalize_dirty_paths, normalize_roots, path_matches_dirty_prefix,
+    refresh_storage_performance_budget, skipped_root_permission_state,
     storage_byte_accounting_label, storage_index_cache_status, storage_item_evidence,
     storage_item_next_step, storage_local_reclaimable_bytes,
     storage_performance_budget_diagnostics, storage_reclaim_bucket, storage_source_kind,

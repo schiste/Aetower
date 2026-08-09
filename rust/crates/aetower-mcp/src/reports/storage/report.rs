@@ -111,7 +111,7 @@ pub fn storage_hygiene_indexed_json(
 ) -> Result<String, String> {
     finalize_storage_report_json(build_storage_hygiene_report_from_index(
         roots, max_depth, limit,
-    )?)
+    ))
 }
 
 pub(super) fn finalize_storage_report_json(
@@ -329,12 +329,12 @@ pub fn storage_hygiene_deep_scan_json(
     max_depth: usize,
     limit: usize,
 ) -> Result<String, String> {
-    storage_hygiene_mode_json(
+    finalize_storage_report_json(build_storage_hygiene_verification_report_with_mode(
         roots,
         max_depth,
         limit,
         StorageScanMode::DeepNative.as_str(),
-    )
+    ))
 }
 
 pub(crate) fn build_storage_hygiene_report_with_mode(
@@ -343,7 +343,34 @@ pub(crate) fn build_storage_hygiene_report_with_mode(
     limit: usize,
     mode: &str,
 ) -> StorageHygieneReport {
-    build_storage_hygiene_report_with_options(
+    let mode = StorageScanMode::parse(mode);
+    if mode == StorageScanMode::ForensicVerified {
+        return build_storage_hygiene_verification_report_with_mode(
+            roots,
+            max_depth,
+            limit,
+            mode.as_str(),
+        );
+    }
+
+    let mut report = build_storage_hygiene_report_from_index(roots, max_depth, limit);
+    report.caveats.insert(
+        0,
+        format!(
+            "Compatibility report projected from the materialized storage index/situation; requested mode `{}` requires an explicit scan job or forensic verification.",
+            mode.as_str()
+        ),
+    );
+    report
+}
+
+pub(crate) fn build_storage_hygiene_verification_report_with_mode(
+    roots: Vec<String>,
+    max_depth: usize,
+    limit: usize,
+    mode: &str,
+) -> StorageHygieneReport {
+    build_storage_hygiene_verification_report_with_options(
         roots,
         StorageHygieneOptions {
             max_depth: max_depth.clamp(1, 12),
@@ -355,7 +382,7 @@ pub(crate) fn build_storage_hygiene_report_with_mode(
     )
 }
 
-pub(super) fn build_storage_hygiene_report_with_options(
+pub(super) fn build_storage_hygiene_verification_report_with_options(
     roots: Vec<String>,
     mut options: StorageHygieneOptions,
 ) -> StorageHygieneReport {
@@ -882,7 +909,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
     roots: Vec<String>,
     _max_depth: usize,
     limit: usize,
-) -> Result<StorageHygieneReport, String> {
+) -> StorageHygieneReport {
     let started = Instant::now();
     let now_millis = crate::current_unix_millis().unwrap_or_default();
     let roots = normalize_roots(roots);
@@ -929,15 +956,9 @@ pub(super) fn build_storage_hygiene_report_from_index(
             .cmp(&left.size_bytes)
             .then_with(|| left.path.cmp(&right.path))
     });
-    let git_started = Instant::now();
-    annotate_items_source_control(&mut items);
-    metrics.git_millis = metrics
-        .git_millis
-        .saturating_add(git_started.elapsed().as_millis() as u64);
     let writer_ledger = load_storage_writer_ledger_records();
     apply_measured_rebuild_costs(&mut items, &writer_ledger);
     apply_cleanup_guardrails(&mut items, now_millis);
-    annotate_cleanup_items_active_holders(&mut items);
     for item in &mut items {
         item.evidence = storage_item_evidence(item);
         item.next_step = storage_item_next_step(item);
@@ -1037,7 +1058,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         top_k_retained: true,
         performance_budget: StoragePerformanceBudgetDiagnostics::default(),
     };
-    Ok(StorageHygieneReport {
+    StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
         scan_mode: StorageScanMode::InstantCached.as_str().to_owned(),
@@ -1073,7 +1094,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         cold_data,
         truncated: false,
         caveats: indexed_report_caveats_with_domains(&dirty_summary, typed_domain_count),
-    })
+    }
 }
 
 pub(super) fn mark_storage_fact_safety(
@@ -1171,6 +1192,8 @@ fn indexed_report_caveats_with_domains(
         "Growth attribution is based on indexed size deltas and optional Aetower/Chau7 writer ledger records."
             .to_owned(),
         "Typed storage detectors run during refresh scans; cache-first reads do not probe detector paths."
+            .to_owned(),
+        "Cache-first projection does not run live git status or active file-handle checks; verification scans and cleanup actions provide live safety checks."
             .to_owned(),
     ];
     if typed_domain_count > 0 {
@@ -4815,7 +4838,7 @@ pub(crate) fn build_storage_hygiene_report_for_roots_mode(
     limit: usize,
     mode: &str,
 ) -> String {
-    match finalize_storage_report_json(build_storage_hygiene_report_with_options(
+    match finalize_storage_report_json(build_storage_hygiene_verification_report_with_options(
         roots,
         StorageHygieneOptions {
             max_depth,

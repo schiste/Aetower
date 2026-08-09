@@ -914,7 +914,7 @@ fn run_storage_scan_job(manager: &'static StorageScanJobManager, job: Arc<Storag
                 Arc::clone(&job.progress),
                 throttle,
             );
-            let report = build_storage_hygiene_report_with_options(
+            let report = build_storage_hygiene_verification_report_with_options(
                 job.request.roots.clone(),
                 StorageHygieneOptions {
                     max_depth: job.request.max_depth,
