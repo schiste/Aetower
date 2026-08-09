@@ -97,6 +97,20 @@ pub(super) struct StorageSituationDomain {
     pub(super) source: String,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct StorageSituationBacklogDrain {
+    pub(super) state: String,
+    pub(super) reason: String,
+    pub(super) updated_at_millis: u64,
+    pub(super) retry_after_millis: Option<u64>,
+    pub(super) dirty_path_count: u64,
+    pub(super) latest_event_id: Option<u64>,
+    pub(super) latest_measurement_millis: Option<u64>,
+    pub(super) latest_measurement_status: Option<String>,
+    pub(super) last_error: Option<String>,
+    pub(super) source: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct StorageSituationResponse {
     pub(super) captured_at_millis: u64,
@@ -104,6 +118,8 @@ pub(super) struct StorageSituationResponse {
     pub(super) storage_index_status: String,
     pub(super) roots: Vec<String>,
     pub(super) dirty_paths: StorageDirtyPathSummary,
+    #[serde(default)]
+    pub(super) backlog_drain: StorageSituationBacklogDrain,
     pub(super) summary: StorageSituationSummary,
     pub(super) top_offenders: Vec<StorageSituationTopOffender>,
     #[serde(default)]

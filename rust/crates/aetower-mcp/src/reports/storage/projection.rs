@@ -326,6 +326,8 @@ fn build_storage_situation_response(
     let dirty_paths = storage_index.load_dirty_path_strings(roots, 512);
     let summaries = storage_index.load_index_summaries(roots);
     let domains = storage_index.load_storage_domains(roots, 80);
+    let backlog_drain =
+        storage_situation_backlog_drain(storage_index, roots, &dirty_summary, now_millis);
     let situation_summary = summarize_storage_situation_with_domains(&summaries, &domains);
     let top_offenders = storage_index
         .load_situation_top_offenders(roots, limit.clamp(1, 40))
@@ -380,11 +382,91 @@ fn build_storage_situation_response(
             .map(|root| root.display().to_string())
             .collect(),
         dirty_paths: dirty_summary,
+        backlog_drain,
         summary: situation_summary,
         top_offenders,
         domains,
         volume_states: summarize_volume_states(roots),
         caveats,
+    }
+}
+
+fn storage_situation_backlog_drain(
+    storage_index: &StorageSizeIndex,
+    roots: &[PathBuf],
+    dirty_summary: &StorageDirtyPathSummary,
+    now_millis: u64,
+) -> StorageSituationBacklogDrain {
+    let measurement = storage_index.latest_measurement_job_debug(roots);
+    storage_situation_backlog_drain_from_dirty_summary(dirty_summary, now_millis, Some(measurement))
+}
+
+fn storage_situation_backlog_drain_from_dirty_summary(
+    dirty_summary: &StorageDirtyPathSummary,
+    now_millis: u64,
+    measurement: Option<StoragePipelineMeasurementDebug>,
+) -> StorageSituationBacklogDrain {
+    let measurement_status = measurement
+        .as_ref()
+        .and_then(|measurement| measurement.latest_status.clone());
+    let latest_measurement_millis = measurement
+        .as_ref()
+        .and_then(|measurement| measurement.latest_updated_millis);
+    let last_error = measurement
+        .as_ref()
+        .and_then(|measurement| measurement.latest_error.clone());
+    let updated_at_millis = latest_measurement_millis
+        .or(dirty_summary.latest_dirty_millis)
+        .unwrap_or(now_millis);
+
+    let (state, reason) = if dirty_summary.unknown_gap {
+        ("blocked", "unknown-fsevents-gap".to_owned())
+    } else if dirty_summary.dirty_path_count == 0 {
+        ("idle", "queue-clean".to_owned())
+    } else {
+        match measurement_status.as_deref() {
+            Some("pending") | Some("partial") => {
+                let continuation_pending = last_error
+                    .as_deref()
+                    .map(|error| error.contains("budget") || error.contains("continuation"))
+                    .unwrap_or(false);
+                if continuation_pending {
+                    (
+                        "continuation-pending",
+                        last_error
+                            .clone()
+                            .unwrap_or_else(|| "incremental-continuation-pending".to_owned()),
+                    )
+                } else {
+                    ("pending", "incremental-measurement-pending".to_owned())
+                }
+            }
+            Some("complete") => (
+                "pending",
+                "additional-dirty-paths-after-last-measurement".to_owned(),
+            ),
+            Some("failed") => (
+                "failed",
+                last_error
+                    .clone()
+                    .unwrap_or_else(|| "latest-measurement-failed".to_owned()),
+            ),
+            Some(status) => ("pending", format!("latest-measurement-{status}")),
+            None => ("pending", "dirty-paths-queued".to_owned()),
+        }
+    };
+
+    StorageSituationBacklogDrain {
+        state: state.to_owned(),
+        reason,
+        updated_at_millis,
+        retry_after_millis: None,
+        dirty_path_count: dirty_summary.dirty_path_count,
+        latest_event_id: dirty_summary.latest_event_id,
+        latest_measurement_millis,
+        latest_measurement_status: measurement_status,
+        last_error,
+        source: "storage_index".to_owned(),
     }
 }
 
@@ -443,6 +525,8 @@ fn overlay_storage_situation_snapshot(
     }
     apply_dirty_summary_to_cache_status(&mut snapshot.cache_status, &dirty_summary);
     snapshot.storage_index_status = storage_index.status.clone();
+    snapshot.backlog_drain =
+        storage_situation_backlog_drain(storage_index, roots, &dirty_summary, storage_now_millis());
     snapshot.dirty_paths = dirty_summary;
     if snapshot.dirty_paths.unknown_gap
         && !snapshot
@@ -517,6 +601,11 @@ fn build_storage_situation_response_from_report(
     let report_roots = report.roots.iter().map(PathBuf::from).collect::<Vec<_>>();
     let domains =
         typed_storage_domains_for_items(&report_roots, &report.items, report.captured_at_millis);
+    let backlog_drain = storage_situation_backlog_drain_from_dirty_summary(
+        &dirty_summary,
+        report.captured_at_millis,
+        None,
+    );
 
     StorageSituationResponse {
         captured_at_millis: report.captured_at_millis,
@@ -524,6 +613,7 @@ fn build_storage_situation_response_from_report(
         storage_index_status,
         roots: report.roots.clone(),
         dirty_paths: dirty_summary,
+        backlog_drain,
         summary: StorageSituationSummary {
             source_root_count: report.roots.len(),
             item_count: report.summary.item_count.min(u64::MAX as usize) as u64,

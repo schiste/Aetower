@@ -6556,6 +6556,11 @@ fn storage_situation_ingests_fsevents_ledger_before_returning_snapshot() {
                 .iter()
                 .any(|path| path.as_str() == Some(changed_path.as_str())))
     );
+    assert_eq!(situation["backlog_drain"]["state"], "pending");
+    assert_eq!(situation["backlog_drain"]["reason"], "dirty-paths-queued");
+    assert_eq!(situation["backlog_drain"]["dirty_path_count"], 1);
+    assert!(situation["backlog_drain"]["latest_event_id"].is_u64());
+    assert_eq!(situation["backlog_drain"]["source"], "storage_index");
 
     let debug = must_ok(
         storage_pipeline_debug_json(vec![watched.display().to_string()]),
