@@ -34,6 +34,12 @@ struct PreparedStorageHygieneResult: Sendable {
     let cacheSaveMillis: UInt64
 }
 
+private struct StorageBacklogDrainDecision: Sendable {
+    let shouldDrain: Bool
+    let reason: String
+    let retryDelayNanos: UInt64
+}
+
 enum StorageEstimateConfidence: String, Sendable {
     case verified
     case partial
@@ -229,6 +235,16 @@ private final class StorageHygieneMainActorPublisher: @unchecked Sendable {
     @MainActor
     func publishStorageSituation(_ situation: StorageSituationModel, updateEstimate: Bool) {
         state?.publishStorageSituation(situation, updateEstimate: updateEstimate)
+    }
+
+    @MainActor
+    func storageBacklogDrainDecision() -> StorageBacklogDrainDecision {
+        state?.storageBacklogDrainDecision()
+            ?? StorageBacklogDrainDecision(
+                shouldDrain: false,
+                reason: "app-state-unavailable",
+                retryDelayNanos: 120_000_000_000
+            )
     }
 
     @MainActor
@@ -548,6 +564,7 @@ public final class AppState {
     private(set) var storageHygieneIsVerifyingCache = false
     @ObservationIgnored private var storageSituationBacklogDrainTask: Task<Void, Never>?
     @ObservationIgnored private var storageSituationPublishSignature: String?
+    @ObservationIgnored private var lastStorageBacklogPressurePauseDiagnosticMillis: UInt64 = 0
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
     private(set) var repositoryInventoryRefreshState: RepositoryInventoryRefreshState?
@@ -2138,8 +2155,12 @@ public final class AppState {
     private static let storageEstimateQuietMillis: UInt64 = 45_000
     private static let storageEstimateRefreshCooldownMillis: UInt64 = 120_000
     private static let storageCacheReverifyIntervalMillis: UInt64 = 6 * 60 * 60 * 1000
-    private static let storageSituationBacklogDrainIntervalNanos: UInt64 = 15_000_000_000
+    private static let storageSituationBacklogInitialDelayNanos: UInt64 = 20_000_000_000
+    private static let storageSituationBacklogNormalRetryNanos: UInt64 = 30_000_000_000
+    private static let storageSituationBacklogSlowRetryNanos: UInt64 = 75_000_000_000
+    private static let storageSituationBacklogPressureRetryNanos: UInt64 = 120_000_000_000
     private static let storageSituationBacklogCleanPasses = 2
+    private static let storageBacklogPressureDiagnosticCooldownMillis: UInt64 = 120_000
 
     @discardableResult
     private func startStorageRefreshForDirtyDisplayedReportIfNeeded(
@@ -2407,18 +2428,125 @@ public final class AppState {
         ].joined(separator: "|")
     }
 
+    fileprivate func storageBacklogDrainDecision() -> StorageBacklogDrainDecision {
+        let normalDelay = Self.storageSituationBacklogNormalRetryNanos
+        let slowDelay = Self.storageSituationBacklogSlowRetryNanos
+        let pressureDelay = Self.storageSituationBacklogPressureRetryNanos
+
+        if snapshot.sequence == 0 || snapshot.capturedAtMillis == 0 {
+            return StorageBacklogDrainDecision(
+                shouldDrain: false,
+                reason: "snapshot-warming-up",
+                retryDelayNanos: normalDelay
+            )
+        }
+        if storageScanJob?.isActive == true || storageHygieneIsLoading || storageHygieneIsVerifyingCache {
+            return StorageBacklogDrainDecision(
+                shouldDrain: false,
+                reason: "storage-scan-active",
+                retryDelayNanos: slowDelay
+            )
+        }
+        if runtimeLagMetrics.selfCpuPercent >= 35 {
+            recordStorageBacklogDrainPaused(reason: "self-cpu", retryDelayNanos: pressureDelay)
+            return StorageBacklogDrainDecision(
+                shouldDrain: false,
+                reason: "self-cpu",
+                retryDelayNanos: pressureDelay
+            )
+        }
+
+        let host = snapshot.host
+        let totalBytes = max(Double(host.memoryTotalBytes), 1)
+        let swapRatio = Double(host.swapUsedBytes) / totalBytes
+        let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
+
+        if host.thermalState == .serious || host.thermalState == .critical {
+            recordStorageBacklogDrainPaused(reason: "thermal-pressure", retryDelayNanos: pressureDelay)
+            return StorageBacklogDrainDecision(
+                shouldDrain: false,
+                reason: "thermal-pressure",
+                retryDelayNanos: pressureDelay
+            )
+        }
+        if host.swapUsedBytes >= 2 * 1_073_741_824 || swapRatio >= 0.10 {
+            recordStorageBacklogDrainPaused(reason: "swap-pressure", retryDelayNanos: pressureDelay)
+            return StorageBacklogDrainDecision(
+                shouldDrain: false,
+                reason: "swap-pressure",
+                retryDelayNanos: pressureDelay
+            )
+        }
+        if host.cpuPercent >= 85 {
+            recordStorageBacklogDrainPaused(reason: "host-cpu", retryDelayNanos: slowDelay)
+            return StorageBacklogDrainDecision(
+                shouldDrain: false,
+                reason: "host-cpu",
+                retryDelayNanos: slowDelay
+            )
+        }
+
+        let shouldSlowDown = host.thermalState == .fair
+            || host.onBattery
+            || host.lowPowerMode
+            || compressedRatio >= 0.08
+            || hostPressureBand(host) != .nominal
+
+        return StorageBacklogDrainDecision(
+            shouldDrain: true,
+            reason: shouldSlowDown ? "host-elevated" : "normal",
+            retryDelayNanos: shouldSlowDown ? slowDelay : normalDelay
+        )
+    }
+
+    private func recordStorageBacklogDrainPaused(reason: String, retryDelayNanos: UInt64) {
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        guard nowMillis >= lastStorageBacklogPressurePauseDiagnosticMillis
+            + Self.storageBacklogPressureDiagnosticCooldownMillis
+        else {
+            return
+        }
+        lastStorageBacklogPressurePauseDiagnosticMillis = nowMillis
+        recordLocalDiagnosticsEvent(
+            level: .info,
+            subsystem: .ui,
+            eventType: "storage-backlog-drain-paused",
+            message: "Paused storage backlog drain while host or Aetower pressure is elevated.",
+            fields: [
+                DiagnosticsField(key: "reason", value: reason),
+                DiagnosticsField(key: "retry_millis", value: String(retryDelayNanos / 1_000_000)),
+                DiagnosticsField(key: "self_cpu_percent", value: String(format: "%.1f", runtimeLagMetrics.selfCpuPercent)),
+                DiagnosticsField(key: "host_cpu_percent", value: String(format: "%.1f", snapshot.host.cpuPercent)),
+                DiagnosticsField(key: "swap_bytes", value: String(snapshot.host.swapUsedBytes)),
+                DiagnosticsField(key: "compressed_memory_bytes", value: String(snapshot.host.compressedMemoryBytes)),
+                DiagnosticsField(key: "thermal_state", value: thermalStateLabel(snapshot.host.thermalState)),
+                DiagnosticsField(
+                    key: "dirty_path_count",
+                    value: String(storageSituation?.dirtyPaths.dirtyPathCount ?? 0)
+                ),
+            ]
+        )
+    }
+
     private func startStorageSituationBacklogDrain() {
         storageSituationBacklogDrainTask?.cancel()
         let bridge = self.bridge
         let publisher = StorageHygieneMainActorPublisher(self)
-        let drainIntervalNanos = Self.storageSituationBacklogDrainIntervalNanos
+        let initialDelayNanos = Self.storageSituationBacklogInitialDelayNanos
         let cleanPassLimit = Self.storageSituationBacklogCleanPasses
         storageSituationBacklogDrainTask = Task.detached(priority: .utility) { [bridge, publisher] in
             var cleanPasses = 0
+            try? await Task.sleep(nanoseconds: initialDelayNanos)
             while !Task.isCancelled && cleanPasses < cleanPassLimit {
-                let result = bridge.storageSituationJSON(roots: [])
+                let decision = await publisher.storageBacklogDrainDecision()
+                if !decision.shouldDrain {
+                    try? await Task.sleep(nanoseconds: decision.retryDelayNanos)
+                    continue
+                }
+
+                let result = bridge.storageBacklogDrainJSON(roots: [])
                 guard let situation = Self.decodeStorageSituationForBackground(result) else {
-                    try? await Task.sleep(nanoseconds: drainIntervalNanos)
+                    try? await Task.sleep(nanoseconds: decision.retryDelayNanos)
                     continue
                 }
 
@@ -2429,7 +2557,7 @@ public final class AppState {
                     && !situation.cacheStatus.partial
                     && !situation.dirtyPaths.unknownGap
                 cleanPasses = queueIsClean ? cleanPasses + 1 : 0
-                try? await Task.sleep(nanoseconds: drainIntervalNanos)
+                try? await Task.sleep(nanoseconds: decision.retryDelayNanos)
             }
         }
     }

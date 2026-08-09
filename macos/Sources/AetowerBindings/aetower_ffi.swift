@@ -719,6 +719,13 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
      */
     func stopLocalMcpServer()
 
+    /**
+     * Trigger one pressure-gated incremental storage backlog pass and return
+     * the current cache-first situation. The call itself does not wait for the
+     * worker to finish.
+     */
+    func storageBacklogDrainJson(roots: [String], limit: UInt32)  -> JsonQueryResult
+
     func storageHygieneActionsJson(roots: [String], maxDepth: UInt32, limit: UInt32, mode: String)  -> JsonQueryResult
 
     func storageHygieneIndexedJson(roots: [String], maxDepth: UInt32, limit: UInt32)  -> JsonQueryResult
@@ -1327,6 +1334,20 @@ open func stopLocalMcpServer()  {try! rustCall() {
     uniffi_aetower_ffi_fn_method_monitorengine_stop_local_mcp_server(self.uniffiClonePointer(),$0
     )
 }
+}
+
+    /**
+     * Trigger one pressure-gated incremental storage backlog pass and return
+     * the current cache-first situation. The call itself does not wait for the
+     * worker to finish.
+     */
+open func storageBacklogDrainJson(roots: [String], limit: UInt32) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_backlog_drain_json(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(roots),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
 }
 
 open func storageHygieneActionsJson(roots: [String], maxDepth: UInt32, limit: UInt32, mode: String) -> JsonQueryResult  {
@@ -12708,6 +12729,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_stop_local_mcp_server() != 53847) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_backlog_drain_json() != 12781) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_hygiene_actions_json() != 10285) {
