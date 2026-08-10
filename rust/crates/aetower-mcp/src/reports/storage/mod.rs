@@ -550,9 +550,9 @@ use models::{
     StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryInventoryItem,
     StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry, StorageScanMetrics,
     StorageSimilarityActionProjection, StorageSituationBacklogDrain, StorageSituationDomain,
-    StorageSituationResponse, StorageSituationSummary, StorageSituationTopOffender,
-    StorageSkippedRoot, StorageSourceCoverage, StorageSystemDataBucket, StorageTreemapNode,
-    StorageVolumeState, StorageWriterLedgerRecord,
+    StorageSituationRecoveryPlan, StorageSituationResponse, StorageSituationSummary,
+    StorageSituationTopOffender, StorageSkippedRoot, StorageSourceCoverage,
+    StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
 };
 pub use projection::{
     storage_backlog_drain_json, storage_growth_insights_json, storage_hygiene_actions_json,

@@ -373,8 +373,10 @@ fn build_storage_situation_response(
                 .to_owned(),
         );
     }
+    let recovery_plan = storage_situation_recovery_plan(&dirty_summary);
     StorageSituationResponse {
         captured_at_millis: now_millis,
+        snapshot_updated_at_millis: Some(now_millis),
         cache_status,
         storage_index_status: storage_index.status.clone(),
         roots: roots
@@ -383,6 +385,7 @@ fn build_storage_situation_response(
             .collect(),
         dirty_paths: dirty_summary,
         backlog_drain,
+        recovery_plan,
         summary: situation_summary,
         top_offenders,
         domains,
@@ -470,6 +473,45 @@ fn storage_situation_backlog_drain_from_dirty_summary(
     }
 }
 
+fn storage_situation_recovery_plan(
+    dirty_summary: &StorageDirtyPathSummary,
+) -> StorageSituationRecoveryPlan {
+    if dirty_summary.unknown_gap {
+        return StorageSituationRecoveryPlan {
+            state: "verification-required".to_owned(),
+            reason: "unknown-fsevents-gap".to_owned(),
+            roots: dirty_summary.unknown_gap_roots.clone(),
+            next_step: "Run a resumable verifying refresh for the affected roots when host pressure allows it; cached facts remain displayable, but cleanup stays blocked until verification clears the gap."
+                .to_owned(),
+            cleanup_blocked: true,
+            automatic: true,
+            source: "storage_index".to_owned(),
+        };
+    }
+    if dirty_summary.dirty_path_count > 0 {
+        return StorageSituationRecoveryPlan {
+            state: "incremental-refresh-pending".to_owned(),
+            reason: "dirty-paths-queued".to_owned(),
+            roots: Vec::new(),
+            next_step:
+                "Continue changed-path measurement when the app scheduler allows storage work."
+                    .to_owned(),
+            cleanup_blocked: true,
+            automatic: true,
+            source: "storage_index".to_owned(),
+        };
+    }
+    StorageSituationRecoveryPlan {
+        state: "none".to_owned(),
+        reason: "clean".to_owned(),
+        roots: Vec::new(),
+        next_step: "No storage recovery is required for the current snapshot.".to_owned(),
+        cleanup_blocked: false,
+        automatic: false,
+        source: "storage_index".to_owned(),
+    }
+}
+
 fn overlay_storage_situation_snapshot(
     mut snapshot: StorageSituationResponse,
     storage_index: &StorageSizeIndex,
@@ -525,8 +567,10 @@ fn overlay_storage_situation_snapshot(
     }
     apply_dirty_summary_to_cache_status(&mut snapshot.cache_status, &dirty_summary);
     snapshot.storage_index_status = storage_index.status.clone();
+    snapshot.snapshot_updated_at_millis = Some(storage_now_millis());
     snapshot.backlog_drain =
         storage_situation_backlog_drain(storage_index, roots, &dirty_summary, storage_now_millis());
+    snapshot.recovery_plan = storage_situation_recovery_plan(&dirty_summary);
     snapshot.dirty_paths = dirty_summary;
     if snapshot.dirty_paths.unknown_gap
         && !snapshot
@@ -607,13 +651,16 @@ fn build_storage_situation_response_from_report(
         None,
     );
 
+    let recovery_plan = storage_situation_recovery_plan(&dirty_summary);
     StorageSituationResponse {
         captured_at_millis: report.captured_at_millis,
+        snapshot_updated_at_millis: Some(report.captured_at_millis),
         cache_status,
         storage_index_status,
         roots: report.roots.clone(),
         dirty_paths: dirty_summary,
         backlog_drain,
+        recovery_plan,
         summary: StorageSituationSummary {
             source_root_count: report.roots.len(),
             item_count: report.summary.item_count.min(u64::MAX as usize) as u64,

@@ -6561,6 +6561,15 @@ fn storage_situation_ingests_fsevents_ledger_before_returning_snapshot() {
     assert_eq!(situation["backlog_drain"]["dirty_path_count"], 1);
     assert!(situation["backlog_drain"]["latest_event_id"].is_u64());
     assert_eq!(situation["backlog_drain"]["source"], "storage_index");
+    assert!(situation["snapshot_updated_at_millis"].is_u64());
+    assert_eq!(
+        situation["recovery_plan"]["state"],
+        "incremental-refresh-pending"
+    );
+    assert_eq!(situation["recovery_plan"]["reason"], "dirty-paths-queued");
+    assert_eq!(situation["recovery_plan"]["cleanup_blocked"], true);
+    assert_eq!(situation["recovery_plan"]["automatic"], true);
+    assert_eq!(situation["recovery_plan"]["source"], "storage_index");
 
     let debug = must_ok(
         storage_pipeline_debug_json(vec![watched.display().to_string()]),
@@ -6581,6 +6590,64 @@ fn storage_situation_ingests_fsevents_ledger_before_returning_snapshot() {
             .is_some_and(|diagnosis| diagnosis.iter().any(|line| line
                 .as_str()
                 .is_some_and(|line| line.contains("dirty path"))))
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_situation_exposes_unknown_gap_recovery_plan() {
+    let _guard = storage_index_test_guard();
+    let root = test_root("situation-unknown-gap-recovery");
+    let watched = root.join("watched");
+    let changed = watched.join("project").join("target").join("changed.bin");
+    let changed_path = changed.display().to_string();
+    fs::create_dir_all(changed.parent().unwrap()).expect("create changed parent");
+    fs::write(&changed, vec![1u8; 4096]).expect("write changed fixture");
+
+    let ledger = root.join("storage-fsevents.ndjson");
+    let now_millis = storage_now_millis();
+    fs::write(
+        &ledger,
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "timestamp_millis": now_millis,
+                "path": changed_path,
+                "event_id": 9002,
+                "flags": 0x0000_0002u64,
+                "source": "test-ledger",
+                "event_count": 3
+            })
+        ),
+    )
+    .expect("write event ledger");
+    let _env_guard = EnvVarTestGuard::set("AETOWER_STORAGE_FILESYSTEM_EVENT_LEDGER", &ledger);
+
+    let situation = must_ok(
+        storage_situation_json(vec![watched.display().to_string()], 4),
+        "storage situation serializes after unknown-gap ledger ingestion",
+    );
+    let situation = parse_json_value(&situation, "storage situation JSON parses");
+    assert!(situation["snapshot_updated_at_millis"].is_u64());
+    assert_eq!(situation["dirty_paths"]["unknown_gap"], true);
+    assert_eq!(
+        situation["dirty_paths"]["unknown_gap_roots"],
+        serde_json::json!([watched.display().to_string()])
+    );
+    assert_eq!(situation["recovery_plan"]["state"], "verification-required");
+    assert_eq!(situation["recovery_plan"]["reason"], "unknown-fsevents-gap");
+    assert_eq!(
+        situation["recovery_plan"]["roots"],
+        serde_json::json!([watched.display().to_string()])
+    );
+    assert_eq!(situation["recovery_plan"]["cleanup_blocked"], true);
+    assert_eq!(situation["recovery_plan"]["automatic"], true);
+    assert_eq!(situation["recovery_plan"]["source"], "storage_index");
+    assert!(
+        situation["recovery_plan"]["next_step"]
+            .as_str()
+            .is_some_and(|step| step.contains("verifying refresh"))
     );
 
     let _ = fs::remove_dir_all(root);

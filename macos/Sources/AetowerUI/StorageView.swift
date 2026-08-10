@@ -371,6 +371,9 @@ public struct StorageView: View {
                         }
 
                         if let report = state.storageHygieneReport {
+                            if let situation = state.storageSituation {
+                                cachedStorageReportStaleNotice(situation: situation, report: report)
+                            }
                             storageSectionContent(report)
                         } else if state.storageSituation == nil && state.storageHygieneIsLoading {
                             loadingSection
@@ -9066,7 +9069,11 @@ public struct StorageView: View {
             }
 
             storageSituationVolumeHeader(situation)
+            storageSituationSnapshotStatusRow(situation)
             storageBacklogDrainRow(situation)
+            if situation.recoveryPlan?.isActive == true {
+                storageSituationRecoveryRow(situation)
+            }
 
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: 168), spacing: AetowerDesign.Spacing.sm)],
@@ -9186,6 +9193,122 @@ public struct StorageView: View {
         }
     }
 
+    private func storageSituationSnapshotStatusRow(_ situation: StorageSituationModel) -> some View {
+        let tone = situation.dirtyPaths.unknownGap || situation.cacheStatus.stale
+            ? AetowerDesign.Status.warning
+            : AetowerDesign.Status.ready
+        return AetowerOperationalListRow(tone: tone, minHeight: 72) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                Label("Live snapshot", systemImage: "clock.arrow.circlepath")
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                AetowerBadge(
+                    storageSituationStatusLabel(situation),
+                    tone: tone
+                )
+                if state.storageHygieneReport != nil {
+                    AetowerBadge(
+                        "report cached",
+                        systemImage: "doc.text",
+                        tone: AetowerDesign.Status.neutral
+                    )
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(storageSnapshotLiveDetail(situation))
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(storageSnapshotLiveMetadata(situation))
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func storageSituationRecoveryRow(_ situation: StorageSituationModel) -> some View {
+        let recovery = situation.recoveryPlan
+        let roots = recovery?.roots.prefix(3).map(storageCompactPath).joined(separator: ", ") ?? ""
+        return AetowerOperationalListRow(tone: AetowerDesign.Status.warning, minHeight: 78) {
+            HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                Label("Recovery required", systemImage: "wrench.and.screwdriver")
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                AetowerBadge(
+                    storageBacklogReasonLabel(recovery?.state ?? "blocked"),
+                    tone: AetowerDesign.Status.warning
+                )
+                if recovery?.automatic == true {
+                    AetowerBadge("automatic", tone: AetowerDesign.Status.neutral)
+                }
+
+                Spacer(minLength: AetowerDesign.Spacing.md)
+
+                VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                    Text(recovery?.nextStep ?? "Verification is required before cleanup can be trusted.")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                    Text(roots.isEmpty ? "Affected roots pending verification" : "Affected: \(roots)")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func cachedStorageReportStaleNotice(
+        situation: StorageSituationModel,
+        report: StorageHygieneReportModel
+    ) -> some View {
+        let shouldWarn = situation.cacheStatus.stale
+            || situation.cacheStatus.partial
+            || situation.dirtyPaths.dirtyPathCount > 0
+            || situation.recoveryPlan?.cleanupBlocked == true
+        return Group {
+            if shouldWarn {
+                AetowerOperationalListRow(tone: AetowerDesign.Status.warning, minHeight: 76) {
+                    HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+                        Label("Cached report", systemImage: "doc.text.magnifyingglass")
+                            .font(AetowerDesign.Typography.controlLabel)
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                        AetowerBadge("stale sections", tone: AetowerDesign.Status.warning)
+                        if situation.recoveryPlan?.cleanupBlocked == true {
+                            AetowerBadge("cleanup blocked", tone: AetowerDesign.Status.warning)
+                        }
+
+                        Spacer(minLength: AetowerDesign.Spacing.md)
+
+                        VStack(alignment: .trailing, spacing: AetowerDesign.Spacing.xs) {
+                            Text(storageCachedReportDetail(situation))
+                                .font(AetowerDesign.Typography.caption)
+                                .foregroundStyle(AetowerDesign.Ink.primary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.trailing)
+                            Text("Report \(storageTimestampLabel(report.capturedAtMillis)) · snapshot \(storageTimestampLabel(situation.snapshotUpdatedAtMillis ?? situation.capturedAtMillis))")
+                                .font(AetowerDesign.Typography.metadata)
+                                .foregroundStyle(AetowerDesign.Ink.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
     private func storageBacklogDrainStateLabel(
         appStatus: StorageBacklogDrainStatus?,
         pipelineStatus: StorageSituationBacklogDrainModel?
@@ -9289,6 +9412,63 @@ public struct StorageView: View {
             return "\(minutes)m"
         }
         return "\(minutes / 60)h"
+    }
+
+    private func storageSnapshotLiveDetail(_ situation: StorageSituationModel) -> String {
+        if let appStatus = state.storageBacklogDrainStatus, appStatus.isPaused {
+            return "Snapshot is live, but exact verification is paused: \(storageBacklogReasonLabel(appStatus.reason))."
+        }
+        if situation.recoveryPlan?.cleanupBlocked == true {
+            return "Snapshot is live; cleanup waits for verified recovery."
+        }
+        if situation.dirtyPaths.dirtyPathCount > 0 {
+            return "Snapshot is live with \(situation.dirtyPaths.dirtyPathCount) pending changed path\(situation.dirtyPaths.dirtyPathCount == 1 ? "" : "s")."
+        }
+        return "Snapshot is live and no changed paths are pending."
+    }
+
+    private func storageSnapshotLiveMetadata(_ situation: StorageSituationModel) -> String {
+        let snapshotUpdated = situation.snapshotUpdatedAtMillis ?? situation.capturedAtMillis
+        var parts = [
+            "snapshot \(storageTimestampLabel(snapshotUpdated))",
+            "facts \(storageTimestampLabel(situation.cacheStatus.latestScanMillis ?? situation.capturedAtMillis))",
+            "dirty \(situation.dirtyPaths.dirtyPathCount)",
+        ]
+        if situation.dirtyPaths.unknownGap {
+            parts.append("event gap")
+        }
+        if let appStatus = state.storageBacklogDrainStatus {
+            parts.append("decision \(appStatus.decisionCount)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func storageCachedReportDetail(_ situation: StorageSituationModel) -> String {
+        if situation.recoveryPlan?.cleanupBlocked == true {
+            return "Report sections below are last-known facts; safe cleanup is disabled until verification clears the recovery state."
+        }
+        if let appStatus = state.storageBacklogDrainStatus, appStatus.isPaused {
+            return "Report sections below are last-known facts while backlog refresh is paused for \(storageBacklogReasonLabel(appStatus.reason))."
+        }
+        if situation.dirtyPaths.dirtyPathCount > 0 {
+            return "Report sections below are last-known facts while \(situation.dirtyPaths.dirtyPathCount) changed paths are pending."
+        }
+        return "Report sections below are cached; the live snapshot above is newer."
+    }
+
+    private func storageTimestampLabel(_ millis: UInt64?) -> String {
+        guard let millis, millis > 0 else { return "not yet" }
+        let date = Date(timeIntervalSince1970: Double(millis) / 1000.0)
+        return storageRelativeTimeLabel(date)
+    }
+
+    private func storageCompactPath(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path == home { return "~" }
+        if path.hasPrefix(home + "/") {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
     }
 
     private func storageSituationVolumeHeader(_ situation: StorageSituationModel) -> some View {

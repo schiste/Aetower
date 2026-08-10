@@ -111,15 +111,30 @@ pub(super) struct StorageSituationBacklogDrain {
     pub(super) source: String,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct StorageSituationRecoveryPlan {
+    pub(super) state: String,
+    pub(super) reason: String,
+    pub(super) roots: Vec<String>,
+    pub(super) next_step: String,
+    pub(super) cleanup_blocked: bool,
+    pub(super) automatic: bool,
+    pub(super) source: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct StorageSituationResponse {
     pub(super) captured_at_millis: u64,
+    #[serde(default)]
+    pub(super) snapshot_updated_at_millis: Option<u64>,
     pub(super) cache_status: StorageCacheStatus,
     pub(super) storage_index_status: String,
     pub(super) roots: Vec<String>,
     pub(super) dirty_paths: StorageDirtyPathSummary,
     #[serde(default)]
     pub(super) backlog_drain: StorageSituationBacklogDrain,
+    #[serde(default)]
+    pub(super) recovery_plan: StorageSituationRecoveryPlan,
     pub(super) summary: StorageSituationSummary,
     pub(super) top_offenders: Vec<StorageSituationTopOffender>,
     #[serde(default)]

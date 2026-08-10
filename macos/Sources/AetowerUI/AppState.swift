@@ -2476,8 +2476,10 @@ public final class AppState {
             .map { "\($0.path)|\($0.freeNowBytes)|\($0.availableBytes)|\($0.purgeableBytesEstimate)" }
             .joined(separator: ",")
         let backlogDrain = Self.storageSituationBacklogDrainSignature(situation.backlogDrain)
-        return [
+        let recoveryPlan = Self.storageSituationRecoveryPlanSignature(situation.recoveryPlan)
+        var fields: [String] = [
             situation.storageIndexStatus,
+            String(situation.snapshotUpdatedAtMillis ?? 0),
             situation.cacheStatus.source,
             situation.cacheStatus.stale ? "stale" : "fresh",
             situation.cacheStatus.partial ? "partial" : "complete",
@@ -2496,9 +2498,11 @@ public final class AppState {
             dirty.unknownGap ? "gap" : "no-gap",
             dirty.unknownGapRoots.joined(separator: ","),
             backlogDrain,
-            topOffenders,
-            volumes,
-        ].joined(separator: "|")
+            recoveryPlan,
+        ]
+        fields.append(topOffenders)
+        fields.append(volumes)
+        return fields.joined(separator: "|")
     }
 
     nonisolated private static func storageSituationBacklogDrainSignature(
@@ -2513,6 +2517,18 @@ public final class AppState {
         fields.append(String(backlogDrain.latestMeasurementMillis ?? 0))
         fields.append(backlogDrain.latestMeasurementStatus ?? "")
         fields.append(backlogDrain.lastError ?? "")
+        return fields.joined(separator: ":")
+    }
+
+    nonisolated private static func storageSituationRecoveryPlanSignature(
+        _ recoveryPlan: StorageSituationRecoveryPlanModel?
+    ) -> String {
+        guard let recoveryPlan else { return "" }
+        var fields: [String] = []
+        fields.append(recoveryPlan.state)
+        fields.append(recoveryPlan.reason)
+        fields.append(recoveryPlan.cleanupBlocked ? "blocked" : "open")
+        fields.append(recoveryPlan.roots.joined(separator: ","))
         return fields.joined(separator: ":")
     }
 

@@ -2,11 +2,13 @@ import Foundation
 
 struct StorageSituationModel: Decodable, Sendable {
     let capturedAtMillis: UInt64
+    let snapshotUpdatedAtMillis: UInt64?
     let cacheStatus: StorageCacheStatusModel
     let storageIndexStatus: String
     let roots: [String]
     let dirtyPaths: StorageDirtyPathSummaryModel
     let backlogDrain: StorageSituationBacklogDrainModel?
+    let recoveryPlan: StorageSituationRecoveryPlanModel?
     let summary: StorageSituationSummaryModel
     let topOffenders: [StorageSituationTopOffenderModel]
     let volumeStates: [StorageVolumeStateModel]
@@ -14,6 +16,20 @@ struct StorageSituationModel: Decodable, Sendable {
 
     var hasCachedFacts: Bool {
         summary.itemCount > 0 || summary.inventorySizeBytes > 0 || !topOffenders.isEmpty
+    }
+}
+
+struct StorageSituationRecoveryPlanModel: Decodable, Sendable {
+    let state: String
+    let reason: String
+    let roots: [String]
+    let nextStep: String
+    let cleanupBlocked: Bool
+    let automatic: Bool
+    let source: String
+
+    var isActive: Bool {
+        cleanupBlocked || state != "none"
     }
 }
 

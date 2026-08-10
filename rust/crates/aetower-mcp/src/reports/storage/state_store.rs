@@ -4256,9 +4256,11 @@ impl StorageSizeIndex {
                 .collect::<Vec<_>>(),
         )
         .map_err(|error| format!("encode_roots:{error}"))?;
-        let snapshot_json =
-            serde_json::to_string(situation).map_err(|error| format!("encode_snapshot:{error}"))?;
         let now_millis = storage_now_millis();
+        let mut persisted_situation = situation.clone();
+        persisted_situation.snapshot_updated_at_millis = Some(now_millis);
+        let snapshot_json = serde_json::to_string(&persisted_situation)
+            .map_err(|error| format!("encode_snapshot:{error}"))?;
         connection
             .execute(
                 "INSERT INTO storage_situation_snapshot (
