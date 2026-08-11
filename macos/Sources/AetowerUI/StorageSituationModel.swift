@@ -27,10 +27,19 @@ struct StorageOwnershipBreakdownModel: Decodable, Sendable {
     let reclaimableBytes: UInt64
     let measuredAtMillis: UInt64
     let confidence: String
+    let generationId: Int64?
+    let classifierVersion: UInt32?
+    let generationStatus: String?
     let buckets: [StorageOwnershipBucketModel]
 
     var isUsable: Bool {
         usedBytes > 0 && !buckets.isEmpty
+    }
+
+    var stableBuckets: [StorageOwnershipBucketModel] {
+        buckets.sorted { left, right in
+            (left.effectiveRank, left.id) < (right.effectiveRank, right.id)
+        }
     }
 }
 
@@ -42,8 +51,23 @@ struct StorageOwnershipBucketModel: Decodable, Identifiable, Sendable {
     let source: String
     let confidence: String
     let detail: String
+    let rank: UInt16?
+    let state: String?
     let measuredAtMillis: UInt64?
     let subBuckets: [StorageOwnershipSubBucketModel]?
+
+    var effectiveRank: UInt16 {
+        if let rank, rank > 0 { return rank }
+        switch id {
+        case "system": return 10
+        case "repositories": return 20
+        case "applications": return 30
+        case "developer": return 40
+        case "personal": return 50
+        case "other": return 90
+        default: return .max
+        }
+    }
 }
 
 struct StorageOwnershipSubBucketModel: Decodable, Identifiable, Sendable {

@@ -11,7 +11,21 @@ final class StorageHygieneModelsTests: XCTestCase {
           "reclaimable_bytes": 100,
           "measured_at_millis": 42,
           "confidence": "partial",
+          "generation_id": 7,
+          "classifier_version": 1,
+          "generation_status": "complete",
           "buckets": [
+            {
+              "id": "other",
+              "label": "Other",
+              "bytes": 500,
+              "reclaimable_bytes": 0,
+              "source": "volume_residual",
+              "confidence": "unattributed",
+              "detail": "Protected or unclassified capacity.",
+              "rank": 90,
+              "state": "protected_or_unclassified"
+            },
             {
               "id": "repositories",
               "label": "Repositories",
@@ -20,6 +34,8 @@ final class StorageHygieneModelsTests: XCTestCase {
               "source": "repository_workspace_rollup+storage_index",
               "confidence": "measured",
               "detail": "Source trees and repository-local artifacts.",
+              "rank": 20,
+              "state": "classified",
               "measured_at_millis": 41,
               "sub_buckets": [
                 { "id": "builds", "label": "Build & test", "bytes": 300 },
@@ -39,11 +55,14 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertEqual(breakdown.usedBytes, 1_500)
         XCTAssertEqual(breakdown.attributedBytes, 1_000)
         XCTAssertEqual(breakdown.unattributedBytes, 500)
-        XCTAssertEqual(breakdown.buckets.first?.id, "repositories")
-        XCTAssertEqual(breakdown.buckets.first?.reclaimableBytes, 40)
-        XCTAssertEqual(breakdown.buckets.first?.measuredAtMillis, 41)
-        XCTAssertEqual(breakdown.buckets.first?.subBuckets?.count, 2)
-        XCTAssertEqual(breakdown.buckets.first?.subBuckets?.first?.bytes, 300)
+        XCTAssertEqual(breakdown.generationId, 7)
+        XCTAssertEqual(breakdown.classifierVersion, 1)
+        XCTAssertEqual(breakdown.generationStatus, "complete")
+        XCTAssertEqual(breakdown.stableBuckets.map(\.id), ["repositories", "other"])
+        XCTAssertEqual(breakdown.stableBuckets.first?.reclaimableBytes, 40)
+        XCTAssertEqual(breakdown.stableBuckets.first?.measuredAtMillis, 41)
+        XCTAssertEqual(breakdown.stableBuckets.first?.subBuckets?.count, 2)
+        XCTAssertEqual(breakdown.stableBuckets.first?.subBuckets?.first?.bytes, 300)
     }
 
     @MainActor

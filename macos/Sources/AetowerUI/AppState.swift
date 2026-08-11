@@ -2537,7 +2537,7 @@ public final class AppState {
         _ breakdown: StorageOwnershipBreakdownModel?
     ) -> String {
         guard let breakdown else { return "" }
-        let buckets = breakdown.buckets
+        let buckets = breakdown.stableBuckets
             .map { bucket in
                 let subBuckets = (bucket.subBuckets ?? [])
                     .map { "\($0.id):\($0.bytes)" }
@@ -2545,7 +2545,7 @@ public final class AppState {
                 return "\(bucket.id)|\(bucket.bytes)|\(bucket.reclaimableBytes)|\(bucket.confidence)|\(bucket.measuredAtMillis ?? 0)|\(subBuckets)"
             }
             .joined(separator: ",")
-        return "\(breakdown.usedBytes)|\(breakdown.attributedBytes)|\(breakdown.unattributedBytes)|\(breakdown.reclaimableBytes)|\(breakdown.confidence)|\(buckets)"
+        return "\(breakdown.usedBytes)|\(breakdown.attributedBytes)|\(breakdown.unattributedBytes)|\(breakdown.reclaimableBytes)|\(breakdown.confidence)|\(breakdown.generationId ?? 0)|\(breakdown.classifierVersion ?? 0)|\(breakdown.generationStatus ?? "")|\(buckets)"
     }
 
     nonisolated private static func storageVolumePublishSignature(

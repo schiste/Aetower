@@ -5358,7 +5358,7 @@ public struct StorageView: View {
         free: UInt64,
         breakdown: StorageOwnershipBreakdownModel
     ) -> some View {
-        let buckets = breakdown.buckets.filter { $0.bytes > 0 }
+        let buckets = breakdown.stableBuckets.filter { $0.bytes > 0 }
         let segmentCount = buckets.count + (free > 0 ? 1 : 0)
         let spacing = AetowerDesign.Spacing.storageSegmentGap
 
@@ -5398,7 +5398,7 @@ public struct StorageView: View {
     }
 
     private func storageOwnershipLegend(_ breakdown: StorageOwnershipBreakdownModel) -> some View {
-        let buckets = breakdown.buckets.filter { $0.bytes > 0 }
+        let buckets = breakdown.stableBuckets.filter { $0.bytes > 0 }
 
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
             LazyVGrid(
@@ -5442,6 +5442,11 @@ public struct StorageView: View {
                 if breakdown.unattributedBytes > 0 {
                     Text("\(formatBytes(breakdown.attributedBytes)) attributed · remainder stays Other")
                 }
+                if let generationId = breakdown.generationId {
+                    Text(
+                        "ownership generation \(generationId) · rules v\(breakdown.classifierVersion ?? 0) · \(breakdown.generationStatus ?? "unknown")"
+                    )
+                }
             }
             .font(AetowerDesign.Typography.metadata)
             .foregroundStyle(AetowerDesign.Ink.tertiary)
@@ -5450,7 +5455,7 @@ public struct StorageView: View {
 
     @ViewBuilder
     private func storageRepositoryStrata(_ breakdown: StorageOwnershipBreakdownModel) -> some View {
-        if let repository = breakdown.buckets.first(where: { $0.id == "repositories" }),
+        if let repository = breakdown.stableBuckets.first(where: { $0.id == "repositories" }),
            let unorderedBuckets = repository.subBuckets,
            !unorderedBuckets.isEmpty,
            repository.bytes > 0 {
@@ -5580,6 +5585,9 @@ public struct StorageView: View {
         if bucket.confidence != "live" && bucket.confidence != "indexed" {
             parts.append("Coverage: \(bucket.confidence)")
         }
+        if bucket.state == "protected_or_unclassified" {
+            parts.append("State: protected or not yet classified")
+        }
         if let subBuckets = bucket.subBuckets, !subBuckets.isEmpty {
             parts.append(
                 subBuckets
@@ -5594,7 +5602,7 @@ public struct StorageView: View {
         _ breakdown: StorageOwnershipBreakdownModel,
         free: UInt64
     ) -> String {
-        let owners = breakdown.buckets
+        let owners = breakdown.stableBuckets
             .filter { $0.bytes > 0 }
             .map { "\($0.label) \(formatBytes($0.bytes))" }
             .joined(separator: ", ")
