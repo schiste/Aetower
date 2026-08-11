@@ -1,5 +1,80 @@
 import SwiftUI
 
+public extension View {
+    func aetowerStorageBarClip() -> some View {
+        clipShape(Capsule())
+    }
+}
+
+public struct AetowerStorageOwnershipSegment: View {
+    let color: Color
+    let reclaimFraction: CGFloat
+
+    public init(color: Color, reclaimFraction: CGFloat = 0) {
+        self.color = color
+        self.reclaimFraction = min(1, max(0, reclaimFraction))
+    }
+
+    public var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .bottomTrailing) {
+                Rectangle()
+                    .fill(color)
+                if reclaimFraction > 0 {
+                    Rectangle()
+                        .fill(AetowerDesign.StorageOwnership.reclaimable)
+                        .frame(
+                            width: min(
+                                geometry.size.width,
+                                max(
+                                    AetowerDesign.Size.storageReclaimMinimumWidth,
+                                    geometry.size.width * reclaimFraction
+                                )
+                            ),
+                            height: AetowerDesign.Size.storageReclaimSeamHeight
+                        )
+                }
+            }
+        }
+    }
+}
+
+public struct AetowerStorageOwnerMark: View {
+    let color: Color
+
+    public init(color: Color) {
+        self.color = color
+    }
+
+    public var body: some View {
+        Circle()
+            .fill(color)
+            .frame(
+                width: AetowerDesign.Size.storageOwnerMark,
+                height: AetowerDesign.Size.storageOwnerMark
+            )
+    }
+}
+
+public struct AetowerStorageReclaimMark: View {
+    let isEmphasized: Bool
+
+    public init(isEmphasized: Bool = false) {
+        self.isEmphasized = isEmphasized
+    }
+
+    public var body: some View {
+        Capsule()
+            .fill(AetowerDesign.StorageOwnership.reclaimable)
+            .frame(
+                width: isEmphasized
+                    ? AetowerDesign.Size.storageReclaimMarkRegularWidth
+                    : AetowerDesign.Size.storageReclaimMarkCompactWidth,
+                height: AetowerDesign.Size.storageReclaimSeamHeight
+            )
+    }
+}
+
 public enum AetowerComponentSize {
     case compact
     case regular

@@ -2485,6 +2485,7 @@ public final class AppState {
             .map { "\($0.path)|\($0.physicalBytes)|\($0.stale ? 1 : 0)" }
             .joined(separator: ",")
         let volumes = storageVolumePublishSignature(situation.volumeStates)
+        let ownership = storageOwnershipPublishSignature(situation.ownershipBreakdown)
         let backlogDrain = Self.storageSituationBacklogDrainSignature(situation.backlogDrain)
         let recoveryPlan = Self.storageSituationRecoveryPlanSignature(situation.recoveryPlan)
         var fields: [String] = [
@@ -2512,7 +2513,18 @@ public final class AppState {
         ]
         fields.append(topOffenders)
         fields.append(volumes)
+        fields.append(ownership)
         return fields.joined(separator: "|")
+    }
+
+    nonisolated private static func storageOwnershipPublishSignature(
+        _ breakdown: StorageOwnershipBreakdownModel?
+    ) -> String {
+        guard let breakdown else { return "" }
+        let buckets = breakdown.buckets
+            .map { "\($0.id)|\($0.bytes)|\($0.reclaimableBytes)|\($0.confidence)" }
+            .joined(separator: ",")
+        return "\(breakdown.usedBytes)|\(breakdown.attributedBytes)|\(breakdown.unattributedBytes)|\(breakdown.reclaimableBytes)|\(breakdown.confidence)|\(buckets)"
     }
 
     nonisolated private static func storageVolumePublishSignature(

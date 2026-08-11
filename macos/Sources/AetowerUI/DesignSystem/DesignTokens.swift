@@ -9,6 +9,9 @@ public enum AetowerDesign {
         public static let xxs: CGFloat = 2
         public static let xs: CGFloat = 4
         public static let sm: CGFloat = 8
+        public static let storageLegendLabel: CGFloat = 5
+        public static let storageLegendItem: CGFloat = 6
+        public static let storageSegmentGap: CGFloat = 1.5
         public static let md: CGFloat = 12
         public static let lg: CGFloat = 16
         public static let xl: CGFloat = 20
@@ -40,6 +43,13 @@ public enum AetowerDesign {
         public static let iconSlot: CGFloat = 24
         public static let sidebarWidth: CGFloat = 188
         public static let actionTileMinWidth: CGFloat = 116
+        public static let storageBarHeight: CGFloat = 14
+        public static let storageLegendMinWidth: CGFloat = 148
+        public static let storageOwnerMark: CGFloat = 7
+        public static let storageReclaimSeamHeight: CGFloat = 3
+        public static let storageReclaimMinimumWidth: CGFloat = 2
+        public static let storageReclaimMarkCompactWidth: CGFloat = 9
+        public static let storageReclaimMarkRegularWidth: CGFloat = 12
     }
 
     // MARK: - Typography
@@ -103,6 +113,18 @@ public enum AetowerDesign {
         public static let energy: Color = .yellow
         public static let wakeups: Color = .purple
         public static let gpu: Color = .indigo
+    }
+
+    /// Muted, ownership-first colors for the Storage volume map. Reclaimable
+    /// bytes deliberately use a separate red seam rather than changing owner.
+    public enum StorageOwnership {
+        public static let system = Color(red: 0.53, green: 0.57, blue: 0.64)
+        public static let repositories = Color(red: 0.40, green: 0.46, blue: 0.66)
+        public static let applications = Color(red: 0.64, green: 0.56, blue: 0.45)
+        public static let developer = Color(red: 0.33, green: 0.55, blue: 0.54)
+        public static let personal = Color(red: 0.38, green: 0.56, blue: 0.70)
+        public static let other = Color(red: 0.43, green: 0.45, blue: 0.50)
+        public static let reclaimable = Color(red: 0.85, green: 0.36, blue: 0.36)
     }
 
     public enum Status {

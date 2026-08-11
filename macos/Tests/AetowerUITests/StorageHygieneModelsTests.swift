@@ -2,6 +2,42 @@
 import XCTest
 
 final class StorageHygieneModelsTests: XCTestCase {
+    func testStorageOwnershipBreakdownDecodesSnakeCaseJSON() throws {
+        let rawJSON = """
+        {
+          "used_bytes": 1500,
+          "attributed_bytes": 1000,
+          "unattributed_bytes": 500,
+          "reclaimable_bytes": 100,
+          "measured_at_millis": 42,
+          "confidence": "partial",
+          "buckets": [
+            {
+              "id": "repositories",
+              "label": "Repositories",
+              "bytes": 400,
+              "reclaimable_bytes": 40,
+              "source": "storage_index",
+              "confidence": "partial",
+              "detail": "Source trees and repository-local artifacts."
+            }
+          ]
+        }
+        """
+
+        let breakdown = try AetowerJSON.snakeCaseDecoder().decode(
+            StorageOwnershipBreakdownModel.self,
+            from: Data(rawJSON.utf8)
+        )
+
+        XCTAssertTrue(breakdown.isUsable)
+        XCTAssertEqual(breakdown.usedBytes, 1_500)
+        XCTAssertEqual(breakdown.attributedBytes, 1_000)
+        XCTAssertEqual(breakdown.unattributedBytes, 500)
+        XCTAssertEqual(breakdown.buckets.first?.id, "repositories")
+        XCTAssertEqual(breakdown.buckets.first?.reclaimableBytes, 40)
+    }
+
     @MainActor
     func testStorageOpenWithMissingCacheDoesNotStartImplicitLoad() throws {
         let temporarySupportURL = FileManager.default

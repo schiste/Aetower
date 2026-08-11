@@ -5343,9 +5343,143 @@ public struct StorageView: View {
                 Rectangle()
                     .fill(AetowerDesign.Surface.badgeStrong)
             }
-            .clipShape(Capsule())
+            .aetowerStorageBarClip()
         }
         .frame(height: 12)
+    }
+
+    /// Ownership map for used capacity. The red seam stays nested inside each
+    /// owner so reclaimability never becomes a competing, double-counted bucket.
+    private func storageOwnershipCapacityBar(
+        total: UInt64,
+        free: UInt64,
+        breakdown: StorageOwnershipBreakdownModel
+    ) -> some View {
+        let buckets = breakdown.buckets.filter { $0.bytes > 0 }
+        let segmentCount = buckets.count + (free > 0 ? 1 : 0)
+        let spacing = AetowerDesign.Spacing.storageSegmentGap
+
+        return GeometryReader { geometry in
+            let gapWidth = CGFloat(max(0, segmentCount - 1)) * spacing
+            let drawableWidth = max(0, geometry.size.width - gapWidth)
+            HStack(spacing: spacing) {
+                ForEach(buckets) { bucket in
+                    let segmentWidth = drawableWidth
+                        * CGFloat(Double(bucket.bytes) / Double(total))
+                    let reclaimFraction = bucket.bytes > 0
+                        ? CGFloat(Double(bucket.reclaimableBytes) / Double(bucket.bytes))
+                        : 0
+                    AetowerStorageOwnershipSegment(
+                        color: storageOwnershipColor(bucket.id),
+                        reclaimFraction: reclaimFraction
+                    )
+                    .frame(width: max(0, segmentWidth))
+                    .help(storageOwnershipBucketHelp(bucket))
+                }
+                if free > 0 {
+                    AetowerStorageOwnershipSegment(color: AetowerDesign.Surface.badgeStrong)
+                        .frame(
+                            width: max(
+                                0,
+                                drawableWidth * CGFloat(Double(free) / Double(total))
+                            )
+                        )
+                        .help("Free · \(formatBytes(free))")
+                }
+            }
+            .aetowerStorageBarClip()
+        }
+        .frame(height: AetowerDesign.Size.storageBarHeight)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(storageOwnershipAccessibilityLabel(breakdown, free: free))
+    }
+
+    private func storageOwnershipLegend(_ breakdown: StorageOwnershipBreakdownModel) -> some View {
+        let buckets = breakdown.buckets.filter { $0.bytes > 0 }
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+            LazyVGrid(
+                columns: [
+                    GridItem(
+                        .adaptive(minimum: AetowerDesign.Size.storageLegendMinWidth),
+                        spacing: AetowerDesign.Spacing.md
+                    ),
+                ],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.xs
+            ) {
+                ForEach(buckets) { bucket in
+                    HStack(spacing: AetowerDesign.Spacing.storageLegendItem) {
+                        AetowerStorageOwnerMark(color: storageOwnershipColor(bucket.id))
+                        Text(storageOwnershipDisplayLabel(bucket))
+                            .font(AetowerDesign.Typography.caption)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: AetowerDesign.Spacing.xxs)
+                        if bucket.reclaimableBytes > 0 {
+                            AetowerStorageReclaimMark()
+                                .help("\(formatBytes(bucket.reclaimableBytes)) safely reclaimable")
+                        }
+                        Text(formatBytes(bucket.bytes))
+                            .font(AetowerDesign.Typography.dataSmall)
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                            .monospacedDigit()
+                    }
+                    .help(storageOwnershipBucketHelp(bucket))
+                }
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.md) {
+                if breakdown.reclaimableBytes > 0 {
+                    HStack(spacing: AetowerDesign.Spacing.storageLegendLabel) {
+                        AetowerStorageReclaimMark(isEmphasized: true)
+                        Text("red seam · \(formatBytes(breakdown.reclaimableBytes)) reclaimable")
+                    }
+                }
+                if breakdown.unattributedBytes > 0 {
+                    Text("\(formatBytes(breakdown.attributedBytes)) attributed · remainder stays Other")
+                }
+            }
+            .font(AetowerDesign.Typography.metadata)
+            .foregroundStyle(AetowerDesign.Ink.tertiary)
+        }
+    }
+
+    private func storageOwnershipColor(_ id: String) -> Color {
+        switch id {
+        case "system": AetowerDesign.StorageOwnership.system
+        case "repositories": AetowerDesign.StorageOwnership.repositories
+        case "applications": AetowerDesign.StorageOwnership.applications
+        case "developer": AetowerDesign.StorageOwnership.developer
+        case "personal": AetowerDesign.StorageOwnership.personal
+        default: AetowerDesign.StorageOwnership.other
+        }
+    }
+
+    private func storageOwnershipDisplayLabel(_ bucket: StorageOwnershipBucketModel) -> String {
+        bucket.id == "developer" ? "Developer" : bucket.label
+    }
+
+    private func storageOwnershipBucketHelp(_ bucket: StorageOwnershipBucketModel) -> String {
+        var parts = ["\(bucket.label) · \(formatBytes(bucket.bytes))", bucket.detail]
+        if bucket.reclaimableBytes > 0 {
+            parts.append("\(formatBytes(bucket.reclaimableBytes)) safely reclaimable")
+        }
+        if bucket.confidence != "live" && bucket.confidence != "indexed" {
+            parts.append("Coverage: \(bucket.confidence)")
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    private func storageOwnershipAccessibilityLabel(
+        _ breakdown: StorageOwnershipBreakdownModel,
+        free: UInt64
+    ) -> String {
+        let owners = breakdown.buckets
+            .filter { $0.bytes > 0 }
+            .map { "\($0.label) \(formatBytes($0.bytes))" }
+            .joined(separator: ", ")
+        return "Storage ownership. \(owners), free \(formatBytes(free)). \(formatBytes(breakdown.reclaimableBytes)) safely reclaimable."
     }
 
     private func storageActionPanel(_ report: StorageHygieneReportModel) -> some View {
@@ -9491,12 +9625,21 @@ public struct StorageView: View {
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.secondary)
                 }
-                diskCapacityBar(
-                    total: volume.totalBytes,
-                    free: free,
-                    reclaimable: reclaimable,
-                    tone: tone
-                )
+                if let breakdown = situation.ownershipBreakdown, breakdown.isUsable {
+                    storageOwnershipCapacityBar(
+                        total: volume.totalBytes,
+                        free: free,
+                        breakdown: breakdown
+                    )
+                    storageOwnershipLegend(breakdown)
+                } else {
+                    diskCapacityBar(
+                        total: volume.totalBytes,
+                        free: free,
+                        reclaimable: reclaimable,
+                        tone: tone
+                    )
+                }
                 HStack(spacing: AetowerDesign.Spacing.md) {
                     Text("\(formatBytes(volume.totalBytes - free)) used")
                     Text(storageSituationVerificationDetail(situation))

@@ -11,12 +11,37 @@ struct StorageSituationModel: Decodable, Sendable {
     let recoveryPlan: StorageSituationRecoveryPlanModel?
     let summary: StorageSituationSummaryModel
     let topOffenders: [StorageSituationTopOffenderModel]
+    let ownershipBreakdown: StorageOwnershipBreakdownModel?
     var volumeStates: [StorageVolumeStateModel]
     let caveats: [String]
 
     var hasCachedFacts: Bool {
         summary.itemCount > 0 || summary.inventorySizeBytes > 0 || !topOffenders.isEmpty
     }
+}
+
+struct StorageOwnershipBreakdownModel: Decodable, Sendable {
+    let usedBytes: UInt64
+    let attributedBytes: UInt64
+    let unattributedBytes: UInt64
+    let reclaimableBytes: UInt64
+    let measuredAtMillis: UInt64
+    let confidence: String
+    let buckets: [StorageOwnershipBucketModel]
+
+    var isUsable: Bool {
+        usedBytes > 0 && !buckets.isEmpty
+    }
+}
+
+struct StorageOwnershipBucketModel: Decodable, Identifiable, Sendable {
+    let id: String
+    let label: String
+    let bytes: UInt64
+    let reclaimableBytes: UInt64
+    let source: String
+    let confidence: String
+    let detail: String
 }
 
 struct StorageSituationRecoveryPlanModel: Decodable, Sendable {
