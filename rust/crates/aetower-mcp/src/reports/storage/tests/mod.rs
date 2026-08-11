@@ -898,6 +898,154 @@ fn repository_workspace_rollup_classifies_full_physical_tree_once() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn storage_ownership_categories_have_stable_unique_ranks() {
+    let ids = STORAGE_OWNERSHIP_CATEGORIES
+        .iter()
+        .map(|category| category.id)
+        .collect::<BTreeSet<_>>();
+    let ranks = STORAGE_OWNERSHIP_CATEGORIES
+        .iter()
+        .map(|category| category.rank)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(ids.len(), STORAGE_OWNERSHIP_CATEGORIES.len());
+    assert_eq!(ranks.len(), STORAGE_OWNERSHIP_CATEGORIES.len());
+    assert_eq!(
+        ids.into_iter().collect::<Vec<_>>(),
+        vec![
+            "applications",
+            "developer",
+            "other",
+            "personal",
+            "repositories",
+            "system",
+        ]
+    );
+}
+
+#[test]
+fn storage_ownership_uses_the_most_specific_boundary() {
+    let temporary = test_root("ownership-specificity");
+    let downloads = temporary.join("Downloads");
+    let repositories = downloads.join("Repositories");
+    let project = repositories.join("project");
+    fs::create_dir_all(&project).expect("nested ownership fixture");
+    let boundaries = normalize_storage_ownership_boundaries(vec![
+        StorageOwnershipBoundarySpec::fixed("personal", "personal.user-data", downloads.clone()),
+        StorageOwnershipBoundarySpec::repository(repositories.clone(), "configured"),
+    ]);
+
+    let owner = storage_ownership_boundary_for_path(&project, &boundaries)
+        .expect("project ownership boundary");
+    assert_eq!(owner.category_id, "repositories");
+    assert_eq!(owner.root_path, repositories);
+    let _ = fs::remove_dir_all(temporary);
+}
+
+#[test]
+fn storage_ownership_parent_excludes_only_outermost_nested_boundaries() {
+    let temporary = test_root("ownership-descendants");
+    let library = temporary.join("Library");
+    let developer = library.join("Developer");
+    let derived_data = developer.join("DerivedData");
+    fs::create_dir_all(&derived_data).expect("nested ownership fixture");
+    let boundaries = normalize_storage_ownership_boundaries(vec![
+        StorageOwnershipBoundarySpec::fixed("system", "system.library", library.clone()),
+        StorageOwnershipBoundarySpec::fixed(
+            "developer",
+            "developer.user-library",
+            developer.clone(),
+        ),
+        StorageOwnershipBoundarySpec::fixed("developer", "developer.derived-data", derived_data),
+    ]);
+
+    assert_eq!(
+        storage_ownership_excluded_descendants(&boundaries[2], &boundaries),
+        vec![developer]
+    );
+    let _ = fs::remove_dir_all(temporary);
+}
+
+#[test]
+fn storage_ownership_measurement_subtracts_nested_boundaries() {
+    let temporary = test_root("ownership-measurement");
+    let downloads = temporary.join("Downloads");
+    let repositories = downloads.join("Repositories");
+    fs::create_dir_all(repositories.join("project/.git")).expect("repository fixture");
+    fs::write(downloads.join("personal.bin"), vec![1u8; 8_192]).expect("personal fixture");
+    fs::write(repositories.join("project/source.rs"), vec![2u8; 8_192])
+        .expect("repository fixture");
+    let boundaries = normalize_storage_ownership_boundaries(vec![
+        StorageOwnershipBoundarySpec::fixed("personal", "personal.user-data", downloads),
+        StorageOwnershipBoundarySpec::repository(repositories, "configured"),
+    ]);
+    let repository_roots = BTreeSet::new();
+    let personal = boundaries
+        .iter()
+        .find(|boundary| boundary.category_id == "personal")
+        .expect("personal boundary");
+    let repository = boundaries
+        .iter()
+        .find(|boundary| boundary.category_id == "repositories")
+        .expect("repository boundary");
+
+    let personal_rollup =
+        measure_storage_ownership_boundary(personal, &boundaries, &repository_roots);
+    let repository_rollup =
+        measure_storage_ownership_boundary(repository, &boundaries, &repository_roots);
+
+    assert!(personal_rollup.physical_bytes > 0);
+    assert!(repository_rollup.physical_bytes > 0);
+    assert_eq!(
+        repository_rollup
+            .sub_buckets
+            .iter()
+            .map(|bucket| bucket.bytes)
+            .sum::<u64>(),
+        repository_rollup.physical_bytes
+    );
+    let _ = fs::remove_dir_all(temporary);
+}
+
+#[test]
+fn storage_ownership_generation_activation_is_atomic_and_durable() {
+    let guard = storage_index_test_guard();
+    let index = StorageSizeIndex::open();
+    let rollup = StorageOwnershipBoundaryRollup {
+        boundary_id: "developer:test".to_owned(),
+        category_id: "developer".to_owned(),
+        rule_id: "developer.test".to_owned(),
+        rank: 40,
+        root_path: guard.directory.display().to_string(),
+        filesystem_device: 1,
+        filesystem_inode: 2,
+        logical_bytes: 100,
+        physical_bytes: 128,
+        entry_count: 1,
+        measured_at_millis: 10,
+        duration_millis: 2,
+        complete: true,
+        confidence: "measured".to_owned(),
+        source: "test".to_owned(),
+        sub_buckets: Vec::new(),
+    };
+    let first = index
+        .activate_ownership_generation(1, 10, "complete", std::slice::from_ref(&rollup))
+        .expect("activate first ownership generation");
+    let second = index
+        .activate_ownership_generation(1, 20, "complete", std::slice::from_ref(&rollup))
+        .expect("activate second ownership generation");
+
+    assert!(second.generation_id > first.generation_id);
+    let active = index
+        .load_active_ownership_generation()
+        .expect("active ownership generation");
+    assert_eq!(active.generation_id, second.generation_id);
+    assert_eq!(active.rollups.len(), 1);
+    assert_eq!(active.rollups[0].boundary_id, rollup.boundary_id);
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn system_volume_usage_uses_native_apfs_accounting() {

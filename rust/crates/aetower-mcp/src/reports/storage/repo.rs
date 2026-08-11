@@ -138,7 +138,7 @@ pub fn repository_workspace_refresh_json(
     .map_err(|error| error.to_string())
 }
 
-fn normalize_repository_workspace_roots(roots: Vec<String>) -> Vec<PathBuf> {
+pub(super) fn normalize_repository_workspace_roots(roots: Vec<String>) -> Vec<PathBuf> {
     let selected = if roots.is_empty() {
         let Some(home) = dirs::home_dir() else {
             return Vec::new();
@@ -283,7 +283,10 @@ pub(super) fn measure_repository_workspace(
     }
 }
 
-fn repository_workspace_bucket(path: &Path, belongs_to_repository: bool) -> &'static str {
+pub(super) fn repository_workspace_bucket(
+    path: &Path,
+    belongs_to_repository: bool,
+) -> &'static str {
     if !belongs_to_repository {
         return "workspace";
     }

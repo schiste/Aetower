@@ -179,6 +179,48 @@ pub(super) struct StorageOwnershipSubBucket {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct StorageOwnershipBoundaryRollup {
+    pub(super) boundary_id: String,
+    pub(super) category_id: String,
+    pub(super) rule_id: String,
+    pub(super) rank: u16,
+    pub(super) root_path: String,
+    pub(super) filesystem_device: u64,
+    pub(super) filesystem_inode: u64,
+    pub(super) logical_bytes: u64,
+    pub(super) physical_bytes: u64,
+    pub(super) entry_count: u64,
+    pub(super) measured_at_millis: u64,
+    pub(super) duration_millis: u64,
+    pub(super) complete: bool,
+    pub(super) confidence: String,
+    pub(super) source: String,
+    #[serde(default)]
+    pub(super) sub_buckets: Vec<StorageOwnershipSubBucket>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct StorageOwnershipGeneration {
+    pub(super) generation_id: i64,
+    pub(super) classifier_version: u32,
+    pub(super) measured_at_millis: u64,
+    pub(super) activated_at_millis: u64,
+    pub(super) status: String,
+    pub(super) rollups: Vec<StorageOwnershipBoundaryRollup>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub(super) struct StorageOwnershipRefreshResponse {
+    pub(super) captured_at_millis: u64,
+    pub(super) generation_id: i64,
+    pub(super) classifier_version: u32,
+    pub(super) status: String,
+    pub(super) measured_boundary_count: u64,
+    pub(super) reused_boundary_count: u64,
+    pub(super) rollups: Vec<StorageOwnershipBoundaryRollup>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(super) struct StorageRepositoryWorkspaceRollup {
     pub(super) root_path: String,
     pub(super) logical_bytes: u64,

@@ -468,6 +468,7 @@ mod fingerprint;
 mod incremental;
 mod jobs;
 mod models;
+mod ownership;
 mod projection;
 mod repo;
 mod report;
@@ -543,7 +544,8 @@ use models::{
     StorageHygieneItem, StorageHygieneItemsPageResponse, StorageHygieneOptions,
     StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse, StorageHygieneSummary,
     StorageInvestigationFinding, StorageInvestigationSummary, StorageItemSortKey,
-    StorageOwnershipBreakdown, StorageOwnershipBucket, StorageOwnershipSubBucket,
+    StorageOwnershipBoundaryRollup, StorageOwnershipBreakdown, StorageOwnershipBucket,
+    StorageOwnershipGeneration, StorageOwnershipRefreshResponse, StorageOwnershipSubBucket,
     StoragePerformanceBudgetDiagnostics, StoragePipelineDebugResponse,
     StoragePipelineEventLedgerDebug, StoragePipelineMeasurementDebug,
     StoragePipelineSituationSnapshotDebug, StoragePreventionPolicy, StoragePreventionSuggestion,
@@ -555,6 +557,13 @@ use models::{
     StorageSituationRecoveryPlan, StorageSituationResponse, StorageSituationSummary,
     StorageSituationTopOffender, StorageSkippedRoot, StorageSourceCoverage,
     StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
+};
+pub use ownership::storage_ownership_refresh_json;
+#[cfg(test)]
+use ownership::{
+    STORAGE_OWNERSHIP_CATEGORIES, StorageOwnershipBoundarySpec, measure_storage_ownership_boundary,
+    normalize_storage_ownership_boundaries, storage_ownership_boundary_for_path,
+    storage_ownership_excluded_descendants,
 };
 #[cfg(test)]
 use projection::summarize_storage_ownership;

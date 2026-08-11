@@ -1071,6 +1071,39 @@ impl StorageSizeIndex {
              );
              CREATE INDEX IF NOT EXISTS idx_storage_repository_workspace_measured
                 ON storage_repository_workspace_rollup(measured_at_millis DESC);
+             CREATE TABLE IF NOT EXISTS storage_ownership_generation (
+                generation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                classifier_version INTEGER NOT NULL,
+                measured_at_millis INTEGER NOT NULL,
+                activated_at_millis INTEGER NOT NULL,
+                status TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS storage_ownership_boundary_rollup (
+                generation_id INTEGER NOT NULL,
+                boundary_id TEXT NOT NULL,
+                category_id TEXT NOT NULL,
+                rule_id TEXT NOT NULL,
+                rank INTEGER NOT NULL,
+                root_path TEXT NOT NULL,
+                filesystem_device INTEGER NOT NULL,
+                filesystem_inode INTEGER NOT NULL,
+                logical_bytes INTEGER NOT NULL,
+                physical_bytes INTEGER NOT NULL,
+                entry_count INTEGER NOT NULL,
+                measured_at_millis INTEGER NOT NULL,
+                duration_millis INTEGER NOT NULL,
+                complete INTEGER NOT NULL,
+                confidence TEXT NOT NULL,
+                source TEXT NOT NULL,
+                sub_buckets_json TEXT NOT NULL DEFAULT '[]',
+                PRIMARY KEY (generation_id, boundary_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_ownership_rollup_category
+                ON storage_ownership_boundary_rollup(generation_id, rank, category_id, root_path);
+             CREATE TABLE IF NOT EXISTS storage_ownership_state (
+                singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+                active_generation_id INTEGER NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS storage_domain (
                 domain_id TEXT PRIMARY KEY,
                 label TEXT NOT NULL,
@@ -3228,6 +3261,193 @@ impl StorageSizeIndex {
             )
             .map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    pub(super) fn load_active_ownership_generation(&self) -> Option<StorageOwnershipGeneration> {
+        let connection = self.connection.as_ref()?;
+        let (generation_id, classifier_version, measured_at_millis, activated_at_millis, status) =
+            connection
+                .query_row(
+                    "SELECT generation.generation_id, generation.classifier_version,
+                            generation.measured_at_millis, generation.activated_at_millis,
+                            generation.status
+                     FROM storage_ownership_state AS state
+                     JOIN storage_ownership_generation AS generation
+                       ON generation.generation_id = state.active_generation_id
+                     WHERE state.singleton_id = 1",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?.max(0) as u32,
+                            row.get::<_, i64>(2)?.max(0) as u64,
+                            row.get::<_, i64>(3)?.max(0) as u64,
+                            row.get::<_, String>(4)?,
+                        ))
+                    },
+                )
+                .ok()?;
+        let rollups = Self::load_ownership_rollups(connection, generation_id);
+        Some(StorageOwnershipGeneration {
+            generation_id,
+            classifier_version,
+            measured_at_millis,
+            activated_at_millis,
+            status,
+            rollups,
+        })
+    }
+
+    pub(super) fn activate_ownership_generation(
+        &self,
+        classifier_version: u32,
+        measured_at_millis: u64,
+        status: &str,
+        rollups: &[StorageOwnershipBoundaryRollup],
+    ) -> Result<StorageOwnershipGeneration, String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("ownership_generation_begin:{error}"))?;
+        transaction
+            .execute(
+                "INSERT INTO storage_ownership_generation (
+                    classifier_version, measured_at_millis, activated_at_millis, status
+                 ) VALUES (?1, ?2, ?2, ?3)",
+                params![
+                    i64::from(classifier_version),
+                    measured_at_millis.min(i64::MAX as u64) as i64,
+                    status,
+                ],
+            )
+            .map_err(|error| format!("ownership_generation_insert:{error}"))?;
+        let generation_id = transaction.last_insert_rowid();
+        for rollup in rollups {
+            let sub_buckets_json = serde_json::to_string(&rollup.sub_buckets)
+                .map_err(|error| format!("ownership_rollup_encode:{error}"))?;
+            transaction
+                .execute(
+                    "INSERT INTO storage_ownership_boundary_rollup (
+                        generation_id, boundary_id, category_id, rule_id, rank, root_path,
+                        filesystem_device, filesystem_inode, logical_bytes, physical_bytes,
+                        entry_count, measured_at_millis, duration_millis, complete, confidence,
+                        source, sub_buckets_json
+                     ) VALUES (
+                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                        ?15, ?16, ?17
+                     )",
+                    params![
+                        generation_id,
+                        &rollup.boundary_id,
+                        &rollup.category_id,
+                        &rollup.rule_id,
+                        i64::from(rollup.rank),
+                        &rollup.root_path,
+                        rollup.filesystem_device.min(i64::MAX as u64) as i64,
+                        rollup.filesystem_inode.min(i64::MAX as u64) as i64,
+                        rollup.logical_bytes.min(i64::MAX as u64) as i64,
+                        rollup.physical_bytes.min(i64::MAX as u64) as i64,
+                        rollup.entry_count.min(i64::MAX as u64) as i64,
+                        rollup.measured_at_millis.min(i64::MAX as u64) as i64,
+                        rollup.duration_millis.min(i64::MAX as u64) as i64,
+                        i64::from(rollup.complete),
+                        &rollup.confidence,
+                        &rollup.source,
+                        sub_buckets_json,
+                    ],
+                )
+                .map_err(|error| format!("ownership_rollup_insert:{error}"))?;
+        }
+        transaction
+            .execute(
+                "INSERT INTO storage_ownership_state (singleton_id, active_generation_id)
+                 VALUES (1, ?1)
+                 ON CONFLICT(singleton_id) DO UPDATE SET
+                    active_generation_id = excluded.active_generation_id",
+                params![generation_id],
+            )
+            .map_err(|error| format!("ownership_generation_activate:{error}"))?;
+        transaction
+            .execute(
+                "DELETE FROM storage_ownership_boundary_rollup
+                 WHERE generation_id IN (
+                    SELECT generation_id
+                    FROM storage_ownership_generation
+                    WHERE generation_id != ?1
+                    ORDER BY generation_id DESC
+                    LIMIT -1 OFFSET 3
+                 )",
+                params![generation_id],
+            )
+            .map_err(|error| format!("ownership_rollup_prune:{error}"))?;
+        transaction
+            .execute(
+                "DELETE FROM storage_ownership_generation
+                 WHERE generation_id != ?1
+                   AND generation_id NOT IN (
+                    SELECT generation_id
+                    FROM storage_ownership_generation
+                    WHERE generation_id != ?1
+                    ORDER BY generation_id DESC
+                    LIMIT 3
+                 )",
+                params![generation_id],
+            )
+            .map_err(|error| format!("ownership_generation_prune:{error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("ownership_generation_commit:{error}"))?;
+        Ok(StorageOwnershipGeneration {
+            generation_id,
+            classifier_version,
+            measured_at_millis,
+            activated_at_millis: measured_at_millis,
+            status: status.to_owned(),
+            rollups: rollups.to_vec(),
+        })
+    }
+
+    fn load_ownership_rollups(
+        connection: &Connection,
+        generation_id: i64,
+    ) -> Vec<StorageOwnershipBoundaryRollup> {
+        let Ok(mut statement) = connection.prepare(
+            "SELECT boundary_id, category_id, rule_id, rank, root_path,
+                    filesystem_device, filesystem_inode, logical_bytes, physical_bytes,
+                    entry_count, measured_at_millis, duration_millis, complete, confidence,
+                    source, sub_buckets_json
+             FROM storage_ownership_boundary_rollup
+             WHERE generation_id = ?1
+             ORDER BY rank ASC, category_id ASC, root_path ASC",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(params![generation_id], |row| {
+            let sub_buckets_json: String = row.get(15)?;
+            Ok(StorageOwnershipBoundaryRollup {
+                boundary_id: row.get(0)?,
+                category_id: row.get(1)?,
+                rule_id: row.get(2)?,
+                rank: row.get::<_, i64>(3)?.clamp(0, i64::from(u16::MAX)) as u16,
+                root_path: row.get(4)?,
+                filesystem_device: row.get::<_, i64>(5)?.max(0) as u64,
+                filesystem_inode: row.get::<_, i64>(6)?.max(0) as u64,
+                logical_bytes: row.get::<_, i64>(7)?.max(0) as u64,
+                physical_bytes: row.get::<_, i64>(8)?.max(0) as u64,
+                entry_count: row.get::<_, i64>(9)?.max(0) as u64,
+                measured_at_millis: row.get::<_, i64>(10)?.max(0) as u64,
+                duration_millis: row.get::<_, i64>(11)?.max(0) as u64,
+                complete: row.get::<_, i64>(12)? != 0,
+                confidence: row.get(13)?,
+                source: row.get(14)?,
+                sub_buckets: serde_json::from_str(&sub_buckets_json).unwrap_or_default(),
+            })
+        }) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
     }
 
     pub(super) fn latest_dirty_millis_for_root(&self, root: &Path) -> Option<u64> {
