@@ -666,6 +666,12 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     func repositoryInventoryJson(roots: [String], maxDepth: UInt32)  -> JsonQueryResult
 
     /**
+     * Refresh persisted physical-byte rollups for configured repository
+     * workspaces. This is intentionally separate from cheap Git discovery.
+     */
+    func repositoryWorkspaceRefreshJson(roots: [String], force: Bool)  -> JsonQueryResult
+
+    /**
      * Restore a fan to automatic (OS-controlled) mode.
      */
     func resetFanAuto(fanId: UInt8)  -> String
@@ -1207,6 +1213,19 @@ open func repositoryInventoryJson(roots: [String], maxDepth: UInt32) -> JsonQuer
     uniffi_aetower_ffi_fn_method_monitorengine_repository_inventory_json(self.uniffiClonePointer(),
         FfiConverterSequenceString.lower(roots),
         FfiConverterUInt32.lower(maxDepth),$0
+    )
+})
+}
+
+    /**
+     * Refresh persisted physical-byte rollups for configured repository
+     * workspaces. This is intentionally separate from cheap Git discovery.
+     */
+open func repositoryWorkspaceRefreshJson(roots: [String], force: Bool) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_repository_workspace_refresh_json(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(roots),
+        FfiConverterBool.lower(force),$0
     )
 })
 }
@@ -12696,6 +12715,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_repository_inventory_json() != 59172) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_repository_workspace_refresh_json() != 25296) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_reset_fan_auto() != 1522) {

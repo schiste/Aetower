@@ -11,14 +11,14 @@ use aetower_mcp::{
     is_socket_listener_reachable, memory_breakdown_json, persistence_deep_scan_json,
     persistence_scan_json, process_action_history_json, process_action_json, process_inspect_json,
     process_open_resources_json, process_sample_json, profile_entity_json,
-    repository_inventory_json, repository_scorecard_json_cached, resource_holders_by_file_json,
-    resource_holders_by_port_json, self_memory_attribution_json, start_local_socket_server,
-    storage_backlog_drain_json, storage_hygiene_actions_json, storage_hygiene_indexed_json,
-    storage_hygiene_items_page_json, storage_hygiene_json, storage_hygiene_mode_json,
-    storage_hygiene_overview_json, storage_hygiene_repo_detail_json, storage_scan_cancel_json,
-    storage_scan_pause_json, storage_scan_result_json, storage_scan_resume_json,
-    storage_scan_start_json, storage_scan_status_json, storage_situation_json,
-    wakeup_attribution_json,
+    repository_inventory_json, repository_scorecard_json_cached, repository_workspace_refresh_json,
+    resource_holders_by_file_json, resource_holders_by_port_json, self_memory_attribution_json,
+    start_local_socket_server, storage_backlog_drain_json, storage_hygiene_actions_json,
+    storage_hygiene_indexed_json, storage_hygiene_items_page_json, storage_hygiene_json,
+    storage_hygiene_mode_json, storage_hygiene_overview_json, storage_hygiene_repo_detail_json,
+    storage_scan_cancel_json, storage_scan_pause_json, storage_scan_result_json,
+    storage_scan_resume_json, storage_scan_start_json, storage_scan_status_json,
+    storage_situation_json, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1775,6 +1775,16 @@ impl MonitorEngine {
     /// walk the filesystem; callers can start richer refresh scans separately.
     pub fn storage_situation_json(&self, roots: Vec<String>, limit: u32) -> JsonQueryResult {
         json_query_result(storage_situation_json(roots, limit as usize))
+    }
+
+    /// Refresh persisted physical-byte rollups for configured repository
+    /// workspaces. This is intentionally separate from cheap Git discovery.
+    pub fn repository_workspace_refresh_json(
+        &self,
+        roots: Vec<String>,
+        force: bool,
+    ) -> JsonQueryResult {
+        json_query_result(repository_workspace_refresh_json(roots, force))
     }
 
     /// Trigger one pressure-gated incremental storage backlog pass and return

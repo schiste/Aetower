@@ -165,6 +165,39 @@ pub(super) struct StorageOwnershipBucket {
     pub(super) source: String,
     pub(super) confidence: String,
     pub(super) detail: String,
+    #[serde(default)]
+    pub(super) measured_at_millis: Option<u64>,
+    #[serde(default)]
+    pub(super) sub_buckets: Vec<StorageOwnershipSubBucket>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct StorageOwnershipSubBucket {
+    pub(super) id: String,
+    pub(super) label: String,
+    pub(super) bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct StorageRepositoryWorkspaceRollup {
+    pub(super) root_path: String,
+    pub(super) logical_bytes: u64,
+    pub(super) physical_bytes: u64,
+    pub(super) entry_count: u64,
+    pub(super) repository_count: u64,
+    pub(super) measured_at_millis: u64,
+    pub(super) duration_millis: u64,
+    pub(super) complete: bool,
+    pub(super) sub_buckets: Vec<StorageOwnershipSubBucket>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub(super) struct StorageRepositoryWorkspaceRefreshResponse {
+    pub(super) captured_at_millis: u64,
+    pub(super) complete: bool,
+    pub(super) measured_root_count: u64,
+    pub(super) reused_root_count: u64,
+    pub(super) rollups: Vec<StorageRepositoryWorkspaceRollup>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

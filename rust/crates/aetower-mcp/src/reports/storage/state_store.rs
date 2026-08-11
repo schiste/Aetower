@@ -1058,6 +1058,19 @@ impl StorageSizeIndex {
                 ON storage_directory_rollup(source_root, physical_bytes DESC);
              CREATE INDEX IF NOT EXISTS idx_storage_directory_rollup_repo
                 ON storage_directory_rollup(repo_root, physical_bytes DESC);
+             CREATE TABLE IF NOT EXISTS storage_repository_workspace_rollup (
+                root_path TEXT PRIMARY KEY,
+                logical_bytes INTEGER NOT NULL,
+                physical_bytes INTEGER NOT NULL,
+                entry_count INTEGER NOT NULL,
+                repository_count INTEGER NOT NULL,
+                measured_at_millis INTEGER NOT NULL,
+                duration_millis INTEGER NOT NULL,
+                complete INTEGER NOT NULL DEFAULT 0,
+                sub_buckets_json TEXT NOT NULL DEFAULT '[]'
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_repository_workspace_measured
+                ON storage_repository_workspace_rollup(measured_at_millis DESC);
              CREATE TABLE IF NOT EXISTS storage_domain (
                 domain_id TEXT PRIMARY KEY,
                 label TEXT NOT NULL,
@@ -3141,6 +3154,97 @@ impl StorageSizeIndex {
             // so drop memoized report sections explicitly.
             super::report::invalidate_index_report_sections_memo();
         }
+    }
+
+    pub(super) fn load_repository_workspace_rollups(
+        &self,
+        roots: &[PathBuf],
+    ) -> Vec<StorageRepositoryWorkspaceRollup> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut statement) = connection.prepare(
+            "SELECT root_path, logical_bytes, physical_bytes, entry_count,
+                    repository_count, measured_at_millis, duration_millis,
+                    complete, sub_buckets_json
+             FROM storage_repository_workspace_rollup
+             ORDER BY root_path ASC",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map([], |row| {
+            let sub_buckets_json: String = row.get(8)?;
+            Ok(StorageRepositoryWorkspaceRollup {
+                root_path: row.get(0)?,
+                logical_bytes: row.get::<_, i64>(1)?.max(0) as u64,
+                physical_bytes: row.get::<_, i64>(2)?.max(0) as u64,
+                entry_count: row.get::<_, i64>(3)?.max(0) as u64,
+                repository_count: row.get::<_, i64>(4)?.max(0) as u64,
+                measured_at_millis: row.get::<_, i64>(5)?.max(0) as u64,
+                duration_millis: row.get::<_, i64>(6)?.max(0) as u64,
+                complete: row.get::<_, i64>(7)? != 0,
+                sub_buckets: serde_json::from_str(&sub_buckets_json).unwrap_or_default(),
+            })
+        }) else {
+            return Vec::new();
+        };
+        rows.flatten()
+            .filter(|rollup| {
+                roots.is_empty()
+                    || roots
+                        .iter()
+                        .any(|root| path_is_under_root(&rollup.root_path, root))
+            })
+            .collect()
+    }
+
+    pub(super) fn store_repository_workspace_rollup(
+        &self,
+        rollup: &StorageRepositoryWorkspaceRollup,
+    ) -> Result<(), String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let sub_buckets_json =
+            serde_json::to_string(&rollup.sub_buckets).map_err(|error| error.to_string())?;
+        connection
+            .execute(
+                "INSERT OR REPLACE INTO storage_repository_workspace_rollup (
+                    root_path, logical_bytes, physical_bytes, entry_count,
+                    repository_count, measured_at_millis, duration_millis,
+                    complete, sub_buckets_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    &rollup.root_path,
+                    rollup.logical_bytes.min(i64::MAX as u64) as i64,
+                    rollup.physical_bytes.min(i64::MAX as u64) as i64,
+                    rollup.entry_count.min(i64::MAX as u64) as i64,
+                    rollup.repository_count.min(i64::MAX as u64) as i64,
+                    rollup.measured_at_millis.min(i64::MAX as u64) as i64,
+                    rollup.duration_millis.min(i64::MAX as u64) as i64,
+                    if rollup.complete { 1i64 } else { 0i64 },
+                    sub_buckets_json,
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub(super) fn latest_dirty_millis_for_root(&self, root: &Path) -> Option<u64> {
+        let connection = self.connection.as_ref()?;
+        let root = root.display().to_string();
+        let descendant_prefix = format!("{root}/%");
+        connection
+            .query_row(
+                "SELECT MAX(last_seen_millis)
+                 FROM storage_dirty_path
+                 WHERE status = 'dirty' AND (path = ?1 OR path LIKE ?2)",
+                params![root, descendant_prefix],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten()
+            .map(|millis| millis.max(0) as u64)
     }
 
     pub(super) fn load_growth_deltas(&self, limit: usize) -> Vec<StorageGrowthDelta> {

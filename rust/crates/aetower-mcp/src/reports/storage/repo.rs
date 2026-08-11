@@ -79,6 +79,260 @@ pub fn repository_inventory_json(roots: Vec<String>, max_depth: usize) -> Result
     serde_json::to_string(&report).map_err(|error| error.to_string())
 }
 
+const REPOSITORY_WORKSPACE_FRESH_MILLIS: u64 = 6 * 60 * 60 * 1000;
+
+/// Measure configured repository workspaces independently from the artifact
+/// index. Repository discovery remains cheap; this heavier rollup runs only
+/// from an explicit background request and persists its last complete answer.
+pub fn repository_workspace_refresh_json(
+    roots: Vec<String>,
+    force: bool,
+) -> Result<String, String> {
+    let captured_at_millis = storage_now_millis();
+    let requested_roots = normalize_repository_workspace_roots(roots);
+    let storage_index = StorageSizeIndex::open();
+    let repository_cache = storage_index.load_repository_inventory_cache(&requested_roots);
+    let repository_roots = repository_cache.keys().cloned().collect::<BTreeSet<_>>();
+    let cached_rollups = storage_index
+        .load_repository_workspace_rollups(&requested_roots)
+        .into_iter()
+        .map(|rollup| (rollup.root_path.clone(), rollup))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut rollups = Vec::new();
+    let mut measured_root_count = 0u64;
+    let mut reused_root_count = 0u64;
+    for root in requested_roots {
+        let root_key = root.display().to_string();
+        let cached = cached_rollups.get(&root_key);
+        let latest_dirty_millis = storage_index.latest_dirty_millis_for_root(&root);
+        let cache_is_fresh = cached.is_some_and(|rollup| {
+            rollup.complete
+                && captured_at_millis.saturating_sub(rollup.measured_at_millis)
+                    < REPOSITORY_WORKSPACE_FRESH_MILLIS
+                && latest_dirty_millis
+                    .is_none_or(|dirty_millis| dirty_millis <= rollup.measured_at_millis)
+        });
+        if !force && cache_is_fresh {
+            if let Some(cached) = cached {
+                rollups.push(cached.clone());
+                reused_root_count = reused_root_count.saturating_add(1);
+            }
+            continue;
+        }
+
+        let rollup = measure_repository_workspace(&root, &repository_roots);
+        storage_index.store_repository_workspace_rollup(&rollup)?;
+        rollups.push(rollup);
+        measured_root_count = measured_root_count.saturating_add(1);
+    }
+
+    let complete = !rollups.is_empty() && rollups.iter().all(|rollup| rollup.complete);
+    serde_json::to_string(&StorageRepositoryWorkspaceRefreshResponse {
+        captured_at_millis,
+        complete,
+        measured_root_count,
+        reused_root_count,
+        rollups,
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn normalize_repository_workspace_roots(roots: Vec<String>) -> Vec<PathBuf> {
+    let selected = if roots.is_empty() {
+        let Some(home) = dirs::home_dir() else {
+            return Vec::new();
+        };
+        [
+            "Repositories",
+            "Downloads/Repositories",
+            "Developer",
+            "Projects",
+        ]
+        .into_iter()
+        .map(|relative| home.join(relative).display().to_string())
+        .collect()
+    } else {
+        roots
+    };
+    let mut candidates = selected
+        .into_iter()
+        .map(|root| expand_home(root.trim()))
+        .filter(|root| root.is_dir())
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.components()
+            .count()
+            .cmp(&right.components().count())
+            .then_with(|| left.cmp(right))
+    });
+    let mut normalized = Vec::<PathBuf>::new();
+    for candidate in candidates {
+        if normalized
+            .iter()
+            .any(|root| path_is_under_root(&candidate.display().to_string(), root))
+        {
+            continue;
+        }
+        normalized.push(candidate);
+    }
+    normalized
+}
+
+pub(super) fn measure_repository_workspace(
+    root: &Path,
+    repository_roots: &BTreeSet<String>,
+) -> StorageRepositoryWorkspaceRollup {
+    let started = Instant::now();
+    let measured_at_millis = storage_now_millis();
+    let workspace_repository_roots = repository_roots
+        .iter()
+        .filter(|repo_root| path_is_under_root(repo_root, root))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let root_is_repository = workspace_repository_roots.contains(&root.display().to_string());
+    let mut stack = vec![(root.to_path_buf(), root_is_repository)];
+    let mut seen_hardlinks = BTreeSet::<(u64, u64)>::new();
+    let mut logical_bytes = 0u64;
+    let mut physical_bytes = 0u64;
+    let mut entry_count = 0u64;
+    let mut complete = true;
+    let mut bucket_bytes = BTreeMap::<&'static str, u64>::new();
+
+    while let Some((directory, directory_is_repository)) = stack.pop() {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(_) => {
+                complete = false;
+                continue;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => {
+                    complete = false;
+                    continue;
+                }
+            };
+            let path = entry.path();
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => {
+                    complete = false;
+                    continue;
+                }
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            entry_count = entry_count.saturating_add(1);
+            let path_key = path.display().to_string();
+            let path_is_repository =
+                directory_is_repository || workspace_repository_roots.contains(&path_key);
+            if metadata.is_dir() {
+                stack.push((path, path_is_repository));
+                continue;
+            }
+            if !metadata.is_file() {
+                continue;
+            }
+            let hardlink_identity = (metadata.dev(), metadata.ino());
+            if metadata.nlink() > 1 && !seen_hardlinks.insert(hardlink_identity) {
+                continue;
+            }
+            let logical = metadata.len();
+            let physical = metadata.blocks().saturating_mul(512);
+            logical_bytes = logical_bytes.saturating_add(logical);
+            physical_bytes = physical_bytes.saturating_add(physical);
+            let bucket = repository_workspace_bucket(&path, path_is_repository);
+            let bucket_total = bucket_bytes.entry(bucket).or_default();
+            *bucket_total = bucket_total.saturating_add(physical);
+        }
+    }
+
+    let definitions = [
+        ("source", "Source & other"),
+        ("dependencies", "Dependencies"),
+        ("builds", "Build & test"),
+        ("git", "Git data"),
+        ("media", "Media & assets"),
+        ("workspace", "Workspace files"),
+    ];
+    let sub_buckets = definitions
+        .into_iter()
+        .filter_map(|(id, label)| {
+            let bytes = bucket_bytes.get(id).copied().unwrap_or_default();
+            (bytes > 0).then(|| StorageOwnershipSubBucket {
+                id: id.to_owned(),
+                label: label.to_owned(),
+                bytes,
+            })
+        })
+        .collect();
+    StorageRepositoryWorkspaceRollup {
+        root_path: root.display().to_string(),
+        logical_bytes,
+        physical_bytes,
+        entry_count,
+        repository_count: workspace_repository_roots.len().min(u64::MAX as usize) as u64,
+        measured_at_millis,
+        duration_millis: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        complete,
+        sub_buckets,
+    }
+}
+
+fn repository_workspace_bucket(path: &Path, belongs_to_repository: bool) -> &'static str {
+    if !belongs_to_repository {
+        return "workspace";
+    }
+    let components = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>();
+    let has_component = |candidate: &str| components.iter().any(|value| value == candidate);
+    if has_component(".git") {
+        return "git";
+    }
+    if ["node_modules", ".venv", "venv", "vendor", "pods", ".bundle"]
+        .iter()
+        .any(|candidate| has_component(candidate))
+    {
+        return "dependencies";
+    }
+    if [
+        "target",
+        ".build",
+        "build",
+        "dist",
+        ".next",
+        "coverage",
+        "test-results",
+        "out",
+    ]
+    .iter()
+    .any(|candidate| has_component(candidate))
+    {
+        return "builds";
+    }
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if [
+        "7z", "avi", "gif", "gz", "heic", "jpeg", "jpg", "m4v", "mov", "mp4", "png", "tar", "tgz",
+        "webm", "webp", "xz", "zip",
+    ]
+    .contains(&extension.as_str())
+    {
+        return "media";
+    }
+    "source"
+}
+
 pub(super) fn summarize_repo_footprints(items: &[StorageHygieneItem]) -> Vec<StorageRepoFootprint> {
     let mut grouped = BTreeMap::<String, Vec<&StorageHygieneItem>>::new();
     for item in items {

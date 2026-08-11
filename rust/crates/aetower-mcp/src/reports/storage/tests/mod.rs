@@ -735,6 +735,7 @@ fn storage_ownership_breakdown_partitions_used_bytes_without_nested_root_overlap
 
     let breakdown = summarize_storage_ownership(
         &summaries,
+        &[],
         &[volume],
         &situation_summary,
         &cache_status,
@@ -769,6 +770,132 @@ fn storage_ownership_breakdown_partitions_used_bytes_without_nested_root_overlap
     );
     assert_eq!(breakdown.reclaimable_bytes, 100);
     assert_eq!(breakdown.confidence, "partial");
+}
+
+#[test]
+fn repository_workspace_rollup_replaces_stale_repository_summary() {
+    let summaries = vec![StorageIndexSummaryRow {
+        source_root: "/Users/test/Repositories".to_owned(),
+        item_count: 1,
+        inventory_size_bytes: 100,
+        safe_reclaimable_bytes: 20,
+        ..StorageIndexSummaryRow::default()
+    }];
+    let rollup = StorageRepositoryWorkspaceRollup {
+        root_path: "/Users/test/Repositories".to_owned(),
+        physical_bytes: 700,
+        logical_bytes: 710,
+        entry_count: 12,
+        repository_count: 3,
+        measured_at_millis: 2,
+        duration_millis: 10,
+        complete: true,
+        sub_buckets: vec![StorageOwnershipSubBucket {
+            id: "builds".to_owned(),
+            label: "Build & test".to_owned(),
+            bytes: 500,
+        }],
+    };
+    let volume = StorageVolumeState {
+        path: "/System/Volumes/Data".to_owned(),
+        device_id: 1,
+        filesystem_type: "apfs".to_owned(),
+        total_bytes: 2_000,
+        free_now_bytes: 500,
+        available_bytes: 500,
+        purgeable_bytes_estimate: 0,
+        important_usage_available_bytes: None,
+        opportunistic_usage_available_bytes: None,
+        detail: String::new(),
+    };
+    let breakdown = summarize_storage_ownership(
+        &summaries,
+        &[rollup],
+        &[volume],
+        &StorageSituationSummary::default(),
+        &StorageCacheStatus {
+            source: "test".to_owned(),
+            stale: false,
+            partial: false,
+            confidence: "high".to_owned(),
+            confidence_score: 100,
+            latest_scan_millis: Some(2),
+            age_millis: Some(1),
+            message: String::new(),
+        },
+        100,
+        3,
+    );
+    let repositories = breakdown
+        .buckets
+        .iter()
+        .find(|bucket| bucket.id == "repositories")
+        .expect("repository ownership bucket");
+    assert_eq!(repositories.bytes, 700);
+    assert_eq!(repositories.reclaimable_bytes, 20);
+    assert_eq!(repositories.confidence, "measured");
+    assert_eq!(repositories.measured_at_millis, Some(2));
+    assert_eq!(repositories.sub_buckets[0].bytes, 500);
+    assert_eq!(
+        breakdown
+            .buckets
+            .iter()
+            .map(|bucket| bucket.bytes)
+            .sum::<u64>(),
+        1_500
+    );
+}
+
+#[test]
+fn repository_workspace_rollup_classifies_full_physical_tree_once() {
+    let root = test_root("repository-workspace-rollup");
+    let repo = root.join("project");
+    for directory in [
+        repo.join(".git"),
+        repo.join("node_modules/pkg"),
+        repo.join("target/debug"),
+        repo.join("assets"),
+        repo.join("src"),
+    ] {
+        fs::create_dir_all(directory).expect("create repository rollup fixture");
+    }
+    for (path, byte) in [
+        (repo.join(".git/index"), 1u8),
+        (repo.join("node_modules/pkg/index.js"), 2u8),
+        (repo.join("target/debug/app"), 3u8),
+        (repo.join("assets/demo.webm"), 4u8),
+        (repo.join("src/main.rs"), 5u8),
+        (root.join("README.txt"), 6u8),
+    ] {
+        fs::write(path, vec![byte; 8 * 1024]).expect("write repository rollup fixture");
+    }
+    let rollup = measure_repository_workspace(&root, &BTreeSet::from([repo.display().to_string()]));
+    let ids = rollup
+        .sub_buckets
+        .iter()
+        .map(|bucket| bucket.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(rollup.complete);
+    assert_eq!(rollup.repository_count, 1);
+    assert_eq!(
+        rollup
+            .sub_buckets
+            .iter()
+            .map(|bucket| bucket.bytes)
+            .sum::<u64>(),
+        rollup.physical_bytes
+    );
+    for id in [
+        "source",
+        "dependencies",
+        "builds",
+        "git",
+        "media",
+        "workspace",
+    ] {
+        assert!(ids.contains(id), "missing repository sub-bucket: {id}");
+    }
+    let _ = fs::remove_dir_all(root);
 }
 
 #[cfg(target_os = "macos")]

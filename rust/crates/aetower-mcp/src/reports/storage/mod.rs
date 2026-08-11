@@ -543,11 +543,13 @@ use models::{
     StorageHygieneItem, StorageHygieneItemsPageResponse, StorageHygieneOptions,
     StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse, StorageHygieneSummary,
     StorageInvestigationFinding, StorageInvestigationSummary, StorageItemSortKey,
-    StorageOwnershipBreakdown, StorageOwnershipBucket, StoragePerformanceBudgetDiagnostics,
-    StoragePipelineDebugResponse, StoragePipelineEventLedgerDebug, StoragePipelineMeasurementDebug,
+    StorageOwnershipBreakdown, StorageOwnershipBucket, StorageOwnershipSubBucket,
+    StoragePerformanceBudgetDiagnostics, StoragePipelineDebugResponse,
+    StoragePipelineEventLedgerDebug, StoragePipelineMeasurementDebug,
     StoragePipelineSituationSnapshotDebug, StoragePreventionPolicy, StoragePreventionSuggestion,
     StorageRedundancyGroup, StorageRedundancyItem, StorageRepoArtifactFolder,
     StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryInventoryItem,
+    StorageRepositoryWorkspaceRefreshResponse, StorageRepositoryWorkspaceRollup,
     StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry, StorageScanMetrics,
     StorageSimilarityActionProjection, StorageSituationBacklogDrain, StorageSituationDomain,
     StorageSituationRecoveryPlan, StorageSituationResponse, StorageSituationSummary,
@@ -561,7 +563,8 @@ pub use projection::{
     storage_hygiene_items_page_json, storage_hygiene_overview_json,
     storage_hygiene_repo_detail_json, storage_pipeline_debug_json, storage_situation_json,
 };
-pub use repo::repository_inventory_json;
+#[cfg(test)]
+use repo::measure_repository_workspace;
 use repo::{
     RepositoryQuality, apply_clone_groups_to_repo_footprints,
     apply_growth_deltas_to_repo_footprints, cached_repository_inventory_coverage, find_git_root,
@@ -572,6 +575,7 @@ use repo::{
     repository_inventory_fingerprint, scan_repository_inventory_roots_with_budget,
     summarize_repo_footprints, summarize_repository_inventory,
 };
+pub use repo::{repository_inventory_json, repository_workspace_refresh_json};
 pub(crate) use report::build_storage_hygiene_report_with_mode;
 #[cfg(test)]
 use report::{

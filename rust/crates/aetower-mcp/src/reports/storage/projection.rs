@@ -376,8 +376,10 @@ fn build_storage_situation_response(
     }
     let recovery_plan = storage_situation_recovery_plan(&dirty_summary);
     let volume_states = summarize_volume_states(roots);
+    let repository_rollups = storage_index.load_repository_workspace_rollups(roots);
     let ownership_breakdown = summarize_storage_ownership(
         &summaries,
+        &repository_rollups,
         &volume_states,
         &situation_summary,
         &cache_status,
@@ -582,8 +584,10 @@ fn overlay_storage_situation_snapshot(
     // the lifetime of the persisted directory-inventory snapshot: free space
     // can change by tens of GiB without a storage scan completing.
     snapshot.volume_states = summarize_volume_states(roots);
+    let repository_rollups = storage_index.load_repository_workspace_rollups(roots);
     snapshot.ownership_breakdown = summarize_storage_ownership(
         &summaries,
+        &repository_rollups,
         &snapshot.volume_states,
         &snapshot.summary,
         &snapshot.cache_status,
@@ -677,8 +681,10 @@ fn build_storage_situation_response_from_report(
 
     let recovery_plan = storage_situation_recovery_plan(&dirty_summary);
     let summaries = storage_index.load_index_summaries(&report_roots);
+    let repository_rollups = storage_index.load_repository_workspace_rollups(&report_roots);
     let ownership_breakdown = summarize_storage_ownership(
         &summaries,
+        &repository_rollups,
         &report.volume_states,
         &StorageSituationSummary {
             source_root_count: report.roots.len(),
@@ -721,6 +727,7 @@ fn build_storage_situation_response_from_report(
 
 pub(super) fn summarize_storage_ownership(
     summaries: &[StorageIndexSummaryRow],
+    repository_rollups: &[StorageRepositoryWorkspaceRollup],
     volume_states: &[StorageVolumeState],
     situation_summary: &StorageSituationSummary,
     cache_status: &StorageCacheStatus,
@@ -758,12 +765,52 @@ pub(super) fn summarize_storage_ownership(
         .collect::<Vec<_>>();
 
     let mut raw = BTreeMap::<&'static str, (u64, u64)>::new();
+    let workspace_roots = repository_rollups
+        .iter()
+        .map(|rollup| PathBuf::from(&rollup.root_path))
+        .collect::<Vec<_>>();
+    let mut skipped_repository_reclaimable = 0u64;
     raw.insert("system", (system_volume_bytes, 0));
     for row in leaf_summaries {
         let id = storage_ownership_id(Path::new(&row.source_root));
+        let overlaps_workspace = workspace_roots.iter().any(|workspace_root| {
+            path_is_under_root(&row.source_root, workspace_root)
+                || path_is_under_root(
+                    &workspace_root.display().to_string(),
+                    Path::new(&row.source_root),
+                )
+        });
+        if overlaps_workspace {
+            if id == "repositories" {
+                skipped_repository_reclaimable =
+                    skipped_repository_reclaimable.saturating_add(row.safe_reclaimable_bytes);
+            }
+            continue;
+        }
         let entry = raw.entry(id).or_default();
         entry.0 = entry.0.saturating_add(row.inventory_size_bytes);
         entry.1 = entry.1.saturating_add(row.safe_reclaimable_bytes);
+    }
+
+    let mut repository_sub_buckets = BTreeMap::<String, (String, u64)>::new();
+    if !repository_rollups.is_empty() {
+        let repository_bytes = repository_rollups.iter().fold(0u64, |total, rollup| {
+            total.saturating_add(rollup.physical_bytes)
+        });
+        let entry = raw.entry("repositories").or_default();
+        entry.0 = entry.0.saturating_add(repository_bytes);
+        entry.1 = entry
+            .1
+            .saturating_add(skipped_repository_reclaimable)
+            .min(entry.0);
+        for rollup in repository_rollups {
+            for bucket in &rollup.sub_buckets {
+                let aggregate = repository_sub_buckets
+                    .entry(bucket.id.clone())
+                    .or_insert_with(|| (bucket.label.clone(), 0));
+                aggregate.1 = aggregate.1.saturating_add(bucket.bytes);
+            }
+        }
     }
 
     let known_total = raw
@@ -821,6 +868,36 @@ pub(super) fn summarize_storage_ownership(
             raw_bytes
         };
         let reclaimable_bytes = raw_reclaimable.min(bytes);
+        let measured_at = (id == "repositories")
+            .then(|| {
+                repository_rollups
+                    .iter()
+                    .map(|rollup| rollup.measured_at_millis)
+                    .min()
+            })
+            .flatten();
+        let repository_rollup_is_fresh = measured_at.is_some_and(|measured| {
+            repository_rollups.iter().all(|rollup| rollup.complete)
+                && measured_at_millis.saturating_sub(measured) < 6 * 60 * 60 * 1000
+        });
+        let sub_buckets = if id == "repositories" && raw_bytes > 0 {
+            repository_sub_buckets
+                .iter()
+                .map(
+                    |(sub_id, (sub_label, sub_bytes))| StorageOwnershipSubBucket {
+                        id: sub_id.clone(),
+                        label: sub_label.clone(),
+                        bytes: if raw_bytes == bytes {
+                            *sub_bytes
+                        } else {
+                            ((*sub_bytes as u128 * bytes as u128) / raw_bytes as u128) as u64
+                        },
+                    },
+                )
+                .collect()
+        } else {
+            Vec::new()
+        };
         assigned_bytes = assigned_bytes.saturating_add(bytes);
         assigned_reclaimable = assigned_reclaimable.saturating_add(reclaimable_bytes);
         buckets.push(StorageOwnershipBucket {
@@ -830,15 +907,23 @@ pub(super) fn summarize_storage_ownership(
             reclaimable_bytes,
             source: if id == "system" {
                 "native_volume+storage_index".to_owned()
+            } else if id == "repositories" && !repository_rollups.is_empty() {
+                "repository_workspace_rollup+storage_index".to_owned()
             } else {
                 "storage_index".to_owned()
             },
             confidence: if id == "system" && raw_bytes == system_volume_bytes {
                 "live".to_owned()
+            } else if id == "repositories" && repository_rollup_is_fresh {
+                "measured".to_owned()
+            } else if id == "repositories" && !repository_rollups.is_empty() {
+                "partial".to_owned()
             } else {
                 confidence.clone()
             },
             detail: detail.to_owned(),
+            measured_at_millis: measured_at,
+            sub_buckets,
         });
     }
 
@@ -872,6 +957,8 @@ pub(super) fn summarize_storage_ownership(
                 confidence: "unattributed".to_owned(),
                 detail: "Used volume capacity not yet assigned to a scanned ownership root."
                     .to_owned(),
+                measured_at_millis: None,
+                sub_buckets: Vec::new(),
             });
         }
     }
