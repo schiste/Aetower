@@ -252,6 +252,16 @@ pub(super) struct StorageRepositoryWorkspaceRefreshResponse {
     pub(super) rollups: Vec<StorageRepositoryWorkspaceRollup>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub(super) struct StorageRepositoryWorkspaceRoot {
+    pub(super) root_path: String,
+    pub(super) filesystem_device: u64,
+    pub(super) filesystem_inode: u64,
+    pub(super) source: String,
+    pub(super) first_seen_millis: u64,
+    pub(super) last_seen_millis: u64,
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub(super) struct StorageHygieneSummary {
     pub(super) item_count: usize,

@@ -1111,6 +1111,98 @@ fn storage_ownership_measurement_subtracts_nested_boundaries() {
 }
 
 #[test]
+fn storage_repository_workspace_discovery_is_selective() {
+    let home = test_root("ownership-workspace-discovery");
+    let configured = home.join("Repositories");
+    let discovered = home.join("Wikimedia");
+    let personal = home.join("Documents");
+    let generated = home.join("Scratch/node_modules");
+    for repository in [
+        configured.join("a/.git"),
+        discovered.join("services/a/.git"),
+        personal.join("notes/.git"),
+        generated.join("dependency/.git"),
+    ] {
+        fs::create_dir_all(repository).expect("repository discovery fixture");
+    }
+
+    let roots = discover_repository_workspace_roots(&home, &[configured], 4, 128);
+
+    assert_eq!(roots, vec![discovered]);
+    let _ = fs::remove_dir_all(home);
+}
+
+#[test]
+fn storage_repository_workspace_identity_survives_rename() {
+    let guard = storage_index_test_guard();
+    let index = StorageSizeIndex::open();
+    let original = guard.directory.join("Workspace");
+    let renamed = guard.directory.join("RenamedWorkspace");
+    fs::create_dir_all(&original).expect("workspace root fixture");
+    let metadata = fs::symlink_metadata(&original).expect("workspace root metadata");
+    index
+        .store_repository_workspace_roots(&[StorageRepositoryWorkspaceRoot {
+            root_path: original.display().to_string(),
+            filesystem_device: metadata.dev(),
+            filesystem_inode: metadata.ino(),
+            source: "configured".to_owned(),
+            first_seen_millis: 10,
+            last_seen_millis: 20,
+        }])
+        .expect("persist original workspace root");
+    fs::rename(&original, &renamed).expect("rename workspace root");
+    index
+        .store_repository_workspace_roots(&[StorageRepositoryWorkspaceRoot {
+            root_path: renamed.display().to_string(),
+            filesystem_device: metadata.dev(),
+            filesystem_inode: metadata.ino(),
+            source: "configured".to_owned(),
+            first_seen_millis: 10,
+            last_seen_millis: 30,
+        }])
+        .expect("persist renamed workspace root");
+
+    let roots = index.load_repository_workspace_roots();
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].root_path, renamed.display().to_string());
+    assert_eq!(roots[0].first_seen_millis, 10);
+}
+
+#[test]
+fn storage_ownership_dirty_events_invalidate_smallest_boundary() {
+    let guard = storage_index_test_guard();
+    let index = StorageSizeIndex::open();
+    let outer = guard.directory.join("Downloads");
+    let repository = outer.join("Repositories/project");
+    let changed = repository.join("src/lib.rs");
+    fs::create_dir_all(changed.parent().expect("changed path parent"))
+        .expect("dirty boundary fixture");
+    fs::write(&changed, b"changed").expect("dirty boundary file");
+    let now_millis = storage_now_millis();
+    index.record_filesystem_events(
+        &[StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis),
+            path: Some(changed.display().to_string()),
+            event_id: Some(1),
+            flags: Some(1),
+            source: Some("test-fsevents".to_owned()),
+            event_count: None,
+        }],
+        std::slice::from_ref(&outer),
+        now_millis,
+    );
+
+    assert_eq!(
+        index.latest_dirty_millis_for_boundary(&outer, std::slice::from_ref(&repository)),
+        None
+    );
+    assert_eq!(
+        index.latest_dirty_millis_for_boundary(&repository, &[]),
+        Some(now_millis)
+    );
+}
+
+#[test]
 fn storage_ownership_generation_activation_is_atomic_and_durable() {
     let guard = storage_index_test_guard();
     let index = StorageSizeIndex::open();

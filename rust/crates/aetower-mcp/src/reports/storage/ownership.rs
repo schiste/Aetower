@@ -281,14 +281,22 @@ pub(super) fn storage_ownership_excluded_descendants(
 }
 
 const STORAGE_OWNERSHIP_FRESH_MILLIS: u64 = 6 * 60 * 60 * 1000;
+const REPOSITORY_WORKSPACE_DISCOVERY_MAX_DEPTH: usize = 4;
+const REPOSITORY_WORKSPACE_DISCOVERY_DIRECTORY_BUDGET: usize = 12_000;
 
 pub fn storage_ownership_refresh_json(
     repository_roots: Vec<String>,
     force: bool,
 ) -> Result<String, String> {
     let captured_at_millis = storage_now_millis();
-    let repository_roots = super::repo::normalize_repository_workspace_roots(repository_roots);
+    let configured_repository_roots =
+        super::repo::normalize_repository_workspace_roots(repository_roots);
     let storage_index = StorageSizeIndex::open();
+    let repository_roots = durable_repository_workspace_roots(
+        &storage_index,
+        configured_repository_roots,
+        captured_at_millis,
+    )?;
     let cached_repository_roots = storage_index
         .load_repository_inventory_cache(&repository_roots)
         .into_keys()
@@ -317,7 +325,9 @@ pub fn storage_ownership_refresh_json(
         let current_identity = fs::symlink_metadata(&boundary.root_path)
             .ok()
             .map(|metadata| (metadata.dev(), metadata.ino()));
-        let latest_dirty_millis = storage_index.latest_dirty_millis_for_root(&boundary.root_path);
+        let excluded_roots = storage_ownership_excluded_descendants(boundary, &boundaries);
+        let latest_dirty_millis =
+            storage_index.latest_dirty_millis_for_boundary(&boundary.root_path, &excluded_roots);
         let cache_is_fresh = cached.is_some_and(|rollup| {
             current_identity == Some((rollup.filesystem_device, rollup.filesystem_inode))
                 && captured_at_millis.saturating_sub(rollup.measured_at_millis)
@@ -361,6 +371,186 @@ pub fn storage_ownership_refresh_json(
         rollups: generation.rollups,
     })
     .map_err(|error| error.to_string())
+}
+
+fn durable_repository_workspace_roots(
+    storage_index: &StorageSizeIndex,
+    configured_roots: Vec<PathBuf>,
+    captured_at_millis: u64,
+) -> Result<Vec<PathBuf>, String> {
+    let persisted_roots = storage_index.load_repository_workspace_roots();
+    let mut candidates = configured_roots
+        .iter()
+        .cloned()
+        .map(|path| (path, "configured".to_owned()))
+        .collect::<BTreeMap<_, _>>();
+    for root in &persisted_roots {
+        let path = PathBuf::from(&root.root_path);
+        if path.is_dir() {
+            candidates
+                .entry(path)
+                .or_insert_with(|| root.source.clone());
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        for path in discover_repository_workspace_roots(
+            &home,
+            &candidates.keys().cloned().collect::<Vec<_>>(),
+            REPOSITORY_WORKSPACE_DISCOVERY_MAX_DEPTH,
+            REPOSITORY_WORKSPACE_DISCOVERY_DIRECTORY_BUDGET,
+        ) {
+            candidates
+                .entry(path)
+                .or_insert_with(|| "discovered".to_owned());
+        }
+    }
+
+    let records = candidates
+        .iter()
+        .filter_map(|(path, source)| {
+            repository_workspace_root_record(path, source, captured_at_millis, &persisted_roots)
+        })
+        .collect::<Vec<_>>();
+    storage_index.store_repository_workspace_roots(&records)?;
+    Ok(super::repo::normalize_repository_workspace_roots(
+        candidates
+            .into_keys()
+            .map(|path| path.display().to_string())
+            .collect(),
+    ))
+}
+
+fn repository_workspace_root_record(
+    path: &Path,
+    source: &str,
+    captured_at_millis: u64,
+    persisted_roots: &[StorageRepositoryWorkspaceRoot],
+) -> Option<StorageRepositoryWorkspaceRoot> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    let previous = persisted_roots.iter().find(|root| {
+        root.root_path == path.display().to_string()
+            || (root.filesystem_device == metadata.dev() && root.filesystem_inode == metadata.ino())
+    });
+    metadata.is_dir().then(|| StorageRepositoryWorkspaceRoot {
+        root_path: path.display().to_string(),
+        filesystem_device: metadata.dev(),
+        filesystem_inode: metadata.ino(),
+        source: previous
+            .filter(|root| root.source == "configured")
+            .map_or_else(|| source.to_owned(), |root| root.source.clone()),
+        first_seen_millis: previous.map_or(captured_at_millis, |root| root.first_seen_millis),
+        last_seen_millis: captured_at_millis,
+    })
+}
+
+pub(super) fn discover_repository_workspace_roots(
+    home: &Path,
+    known_roots: &[PathBuf],
+    max_depth: usize,
+    directory_budget: usize,
+) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(home) else {
+        return Vec::new();
+    };
+    let mut candidates = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| repository_workspace_discovery_candidate(path, known_roots))
+        .collect::<Vec<_>>();
+    candidates.sort();
+    let per_candidate_budget = directory_budget
+        .checked_div(candidates.len().max(1))
+        .unwrap_or_default()
+        .max(1);
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            let mut remaining_budget = per_candidate_budget;
+            contains_git_repository(candidate, max_depth, &mut remaining_budget)
+        })
+        .collect()
+}
+
+fn repository_workspace_discovery_candidate(path: &Path, known_roots: &[PathBuf]) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return false;
+    }
+    if known_roots
+        .iter()
+        .any(|root| path_is_under_root(&path.display().to_string(), root))
+    {
+        return false;
+    }
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    !name.starts_with('.')
+        && !matches!(
+            name,
+            "Applications"
+                | "Backups"
+                | "Desktop"
+                | "Documents"
+                | "Downloads"
+                | "Library"
+                | "Movies"
+                | "Music"
+                | "Pictures"
+                | "Public"
+        )
+}
+
+fn contains_git_repository(
+    candidate: &Path,
+    max_depth: usize,
+    remaining_budget: &mut usize,
+) -> bool {
+    let mut pending = VecDeque::from([(candidate.to_path_buf(), 0usize)]);
+    while let Some((directory, depth)) = pending.pop_front() {
+        if *remaining_budget == 0 {
+            return false;
+        }
+        *remaining_budget -= 1;
+        if directory.join(".git").exists() {
+            return true;
+        }
+        if depth >= max_depth {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        let mut children = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| repository_discovery_descends_into(path))
+            .collect::<Vec<_>>();
+        children.sort();
+        pending.extend(children.into_iter().map(|path| (path, depth + 1)));
+    }
+    false
+}
+
+fn repository_discovery_descends_into(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return false;
+    }
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    !name.starts_with('.')
+        && !matches!(
+            name,
+            "Pods" | "build" | "Build" | "dist" | "node_modules" | "target" | "vendor"
+        )
 }
 
 pub(super) fn measure_storage_ownership_boundary(

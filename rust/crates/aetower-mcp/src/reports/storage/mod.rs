@@ -552,19 +552,20 @@ use models::{
     StorageRedundancyGroup, StorageRedundancyItem, StorageRepoArtifactFolder,
     StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryInventoryItem,
     StorageRepositoryWorkspaceRefreshResponse, StorageRepositoryWorkspaceRollup,
-    StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry, StorageScanMetrics,
-    StorageSimilarityActionProjection, StorageSituationBacklogDrain, StorageSituationDomain,
-    StorageSituationRecoveryPlan, StorageSituationResponse, StorageSituationSummary,
-    StorageSituationTopOffender, StorageSkippedRoot, StorageSourceCoverage,
-    StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
+    StorageRepositoryWorkspaceRoot, StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry,
+    StorageScanMetrics, StorageSimilarityActionProjection, StorageSituationBacklogDrain,
+    StorageSituationDomain, StorageSituationRecoveryPlan, StorageSituationResponse,
+    StorageSituationSummary, StorageSituationTopOffender, StorageSkippedRoot,
+    StorageSourceCoverage, StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState,
+    StorageWriterLedgerRecord,
 };
 pub use ownership::storage_ownership_refresh_json;
 use ownership::{STORAGE_OWNERSHIP_CATEGORIES, STORAGE_OWNERSHIP_CLASSIFIER_VERSION};
 #[cfg(test)]
 use ownership::{
-    StorageOwnershipBoundarySpec, measure_storage_ownership_boundary,
-    normalize_storage_ownership_boundaries, storage_ownership_boundary_for_path,
-    storage_ownership_excluded_descendants,
+    StorageOwnershipBoundarySpec, discover_repository_workspace_roots,
+    measure_storage_ownership_boundary, normalize_storage_ownership_boundaries,
+    storage_ownership_boundary_for_path, storage_ownership_excluded_descendants,
 };
 #[cfg(test)]
 use projection::{StorageOwnershipProjectionInput, summarize_storage_ownership};

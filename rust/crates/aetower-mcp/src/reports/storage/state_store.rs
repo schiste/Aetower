@@ -1071,6 +1071,16 @@ impl StorageSizeIndex {
              );
              CREATE INDEX IF NOT EXISTS idx_storage_repository_workspace_measured
                 ON storage_repository_workspace_rollup(measured_at_millis DESC);
+             CREATE TABLE IF NOT EXISTS storage_repository_workspace_root (
+                root_path TEXT PRIMARY KEY,
+                filesystem_device INTEGER NOT NULL,
+                filesystem_inode INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                first_seen_millis INTEGER NOT NULL,
+                last_seen_millis INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_repository_workspace_identity
+                ON storage_repository_workspace_root(filesystem_device, filesystem_inode);
              CREATE TABLE IF NOT EXISTS storage_ownership_generation (
                 generation_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 classifier_version INTEGER NOT NULL,
@@ -3231,6 +3241,89 @@ impl StorageSizeIndex {
             .collect()
     }
 
+    pub(super) fn load_repository_workspace_roots(&self) -> Vec<StorageRepositoryWorkspaceRoot> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut statement) = connection.prepare(
+            "SELECT root_path, filesystem_device, filesystem_inode, source,
+                    first_seen_millis, last_seen_millis
+             FROM storage_repository_workspace_root
+             ORDER BY root_path ASC",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map([], |row| {
+            Ok(StorageRepositoryWorkspaceRoot {
+                root_path: row.get(0)?,
+                filesystem_device: row.get::<_, i64>(1)?.max(0) as u64,
+                filesystem_inode: row.get::<_, i64>(2)?.max(0) as u64,
+                source: row.get(3)?,
+                first_seen_millis: row.get::<_, i64>(4)?.max(0) as u64,
+                last_seen_millis: row.get::<_, i64>(5)?.max(0) as u64,
+            })
+        }) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
+
+    pub(super) fn store_repository_workspace_roots(
+        &self,
+        roots: &[StorageRepositoryWorkspaceRoot],
+    ) -> Result<(), String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("repository_workspace_roots_begin:{error}"))?;
+        for root in roots {
+            if root.filesystem_device > 0 && root.filesystem_inode > 0 {
+                transaction
+                    .execute(
+                        "DELETE FROM storage_repository_workspace_root
+                         WHERE filesystem_device = ?1 AND filesystem_inode = ?2
+                           AND root_path != ?3",
+                        params![
+                            root.filesystem_device.min(i64::MAX as u64) as i64,
+                            root.filesystem_inode.min(i64::MAX as u64) as i64,
+                            &root.root_path,
+                        ],
+                    )
+                    .map_err(|error| format!("repository_workspace_root_rename:{error}"))?;
+            }
+            transaction
+                .execute(
+                    "INSERT INTO storage_repository_workspace_root (
+                        root_path, filesystem_device, filesystem_inode, source,
+                        first_seen_millis, last_seen_millis
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(root_path) DO UPDATE SET
+                        filesystem_device = excluded.filesystem_device,
+                        filesystem_inode = excluded.filesystem_inode,
+                        source = CASE
+                            WHEN storage_repository_workspace_root.source = 'configured'
+                            THEN storage_repository_workspace_root.source
+                            ELSE excluded.source
+                        END,
+                        last_seen_millis = excluded.last_seen_millis",
+                    params![
+                        &root.root_path,
+                        root.filesystem_device.min(i64::MAX as u64) as i64,
+                        root.filesystem_inode.min(i64::MAX as u64) as i64,
+                        &root.source,
+                        root.first_seen_millis.min(i64::MAX as u64) as i64,
+                        root.last_seen_millis.min(i64::MAX as u64) as i64,
+                    ],
+                )
+                .map_err(|error| format!("repository_workspace_root_store:{error}"))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("repository_workspace_roots_commit:{error}"))
+    }
+
     pub(super) fn store_repository_workspace_rollup(
         &self,
         rollup: &StorageRepositoryWorkspaceRollup,
@@ -3465,6 +3558,36 @@ impl StorageSizeIndex {
             .ok()
             .flatten()
             .map(|millis| millis.max(0) as u64)
+    }
+
+    pub(super) fn latest_dirty_millis_for_boundary(
+        &self,
+        root: &Path,
+        excluded_roots: &[PathBuf],
+    ) -> Option<u64> {
+        let connection = self.connection.as_ref()?;
+        let root = root.display().to_string();
+        let mut statement = connection
+            .prepare(
+                "SELECT path, last_seen_millis
+                 FROM storage_dirty_path
+                 WHERE status = 'dirty'",
+            )
+            .ok()?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .ok()?;
+        rows.flatten()
+            .filter(|(path, _)| {
+                path_is_under_root(path, Path::new(&root))
+                    && excluded_roots
+                        .iter()
+                        .all(|excluded| !path_is_under_root(path, excluded))
+            })
+            .map(|(_, millis)| millis.max(0) as u64)
+            .max()
     }
 
     pub(super) fn load_growth_deltas(&self, limit: usize) -> Vec<StorageGrowthDelta> {
