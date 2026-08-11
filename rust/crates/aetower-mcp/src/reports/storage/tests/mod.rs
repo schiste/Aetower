@@ -733,15 +733,16 @@ fn storage_ownership_breakdown_partitions_used_bytes_without_nested_root_overlap
         message: String::new(),
     };
 
-    let breakdown = summarize_storage_ownership(
-        &summaries,
-        &[],
-        &[volume],
-        &situation_summary,
-        &cache_status,
-        100,
-        2,
-    );
+    let breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
+        summaries: &summaries,
+        repository_rollups: &[],
+        ownership_generation: None,
+        volume_states: &[volume],
+        situation_summary: &situation_summary,
+        cache_status: &cache_status,
+        system_volume_bytes: 100,
+        measured_at_millis: 2,
+    });
     let bytes_for = |id: &str| {
         breakdown
             .buckets
@@ -808,12 +809,13 @@ fn repository_workspace_rollup_replaces_stale_repository_summary() {
         opportunistic_usage_available_bytes: None,
         detail: String::new(),
     };
-    let breakdown = summarize_storage_ownership(
-        &summaries,
-        &[rollup],
-        &[volume],
-        &StorageSituationSummary::default(),
-        &StorageCacheStatus {
+    let breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
+        summaries: &summaries,
+        repository_rollups: &[rollup],
+        ownership_generation: None,
+        volume_states: &[volume],
+        situation_summary: &StorageSituationSummary::default(),
+        cache_status: &StorageCacheStatus {
             source: "test".to_owned(),
             stale: false,
             partial: false,
@@ -823,9 +825,9 @@ fn repository_workspace_rollup_replaces_stale_repository_summary() {
             age_millis: Some(1),
             message: String::new(),
         },
-        100,
-        3,
-    );
+        system_volume_bytes: 100,
+        measured_at_millis: 3,
+    });
     let repositories = breakdown
         .buckets
         .iter()
@@ -843,6 +845,106 @@ fn repository_workspace_rollup_replaces_stale_repository_summary() {
             .map(|bucket| bucket.bytes)
             .sum::<u64>(),
         1_500
+    );
+}
+
+#[test]
+fn active_ownership_generation_replaces_stale_category_sizes() {
+    let generation = StorageOwnershipGeneration {
+        generation_id: 42,
+        classifier_version: STORAGE_OWNERSHIP_CLASSIFIER_VERSION,
+        measured_at_millis: 10,
+        activated_at_millis: 10,
+        status: "complete".to_owned(),
+        rollups: vec![
+            StorageOwnershipBoundaryRollup {
+                boundary_id: "applications:test".to_owned(),
+                category_id: "applications".to_owned(),
+                rule_id: "applications.test".to_owned(),
+                rank: 30,
+                root_path: "/Applications".to_owned(),
+                physical_bytes: 600,
+                complete: true,
+                confidence: "measured".to_owned(),
+                ..StorageOwnershipBoundaryRollup::default()
+            },
+            StorageOwnershipBoundaryRollup {
+                boundary_id: "developer:test".to_owned(),
+                category_id: "developer".to_owned(),
+                rule_id: "developer.test".to_owned(),
+                rank: 40,
+                root_path: "/opt/homebrew".to_owned(),
+                physical_bytes: 500,
+                complete: true,
+                confidence: "measured".to_owned(),
+                ..StorageOwnershipBoundaryRollup::default()
+            },
+        ],
+    };
+    let breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
+        summaries: &[StorageIndexSummaryRow {
+            source_root: "/Applications".to_owned(),
+            inventory_size_bytes: 10,
+            ..StorageIndexSummaryRow::default()
+        }],
+        repository_rollups: &[],
+        ownership_generation: Some(&generation),
+        volume_states: &[StorageVolumeState {
+            path: "/System/Volumes/Data".to_owned(),
+            device_id: 1,
+            filesystem_type: "apfs".to_owned(),
+            total_bytes: 2_000,
+            free_now_bytes: 500,
+            available_bytes: 500,
+            purgeable_bytes_estimate: 0,
+            important_usage_available_bytes: None,
+            opportunistic_usage_available_bytes: None,
+            detail: String::new(),
+        }],
+        situation_summary: &StorageSituationSummary::default(),
+        cache_status: &StorageCacheStatus {
+            source: "test".to_owned(),
+            stale: false,
+            partial: false,
+            confidence: "high".to_owned(),
+            confidence_score: 100,
+            latest_scan_millis: Some(10),
+            age_millis: Some(1),
+            message: String::new(),
+        },
+        system_volume_bytes: 100,
+        measured_at_millis: 11,
+    });
+
+    assert_eq!(breakdown.generation_id, Some(42));
+    assert_eq!(
+        breakdown.classifier_version,
+        STORAGE_OWNERSHIP_CLASSIFIER_VERSION
+    );
+    assert_eq!(breakdown.generation_status, "complete");
+    assert_eq!(
+        breakdown
+            .buckets
+            .iter()
+            .find(|bucket| bucket.id == "applications")
+            .map(|bucket| bucket.bytes),
+        Some(600)
+    );
+    assert_eq!(
+        breakdown
+            .buckets
+            .iter()
+            .find(|bucket| bucket.id == "developer")
+            .map(|bucket| bucket.bytes),
+        Some(500)
+    );
+    assert_eq!(
+        breakdown
+            .buckets
+            .iter()
+            .map(|bucket| bucket.bytes)
+            .sum::<u64>(),
+        breakdown.used_bytes
     );
 }
 

@@ -377,15 +377,17 @@ fn build_storage_situation_response(
     let recovery_plan = storage_situation_recovery_plan(&dirty_summary);
     let volume_states = summarize_volume_states(roots);
     let repository_rollups = storage_index.load_repository_workspace_rollups(roots);
-    let ownership_breakdown = summarize_storage_ownership(
-        &summaries,
-        &repository_rollups,
-        &volume_states,
-        &situation_summary,
-        &cache_status,
-        summarize_system_volume_usage_bytes(),
-        now_millis,
-    );
+    let ownership_generation = storage_index.load_active_ownership_generation();
+    let ownership_breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
+        summaries: &summaries,
+        repository_rollups: &repository_rollups,
+        ownership_generation: ownership_generation.as_ref(),
+        volume_states: &volume_states,
+        situation_summary: &situation_summary,
+        cache_status: &cache_status,
+        system_volume_bytes: summarize_system_volume_usage_bytes(),
+        measured_at_millis: now_millis,
+    });
     StorageSituationResponse {
         captured_at_millis: now_millis,
         snapshot_updated_at_millis: Some(now_millis),
@@ -585,15 +587,17 @@ fn overlay_storage_situation_snapshot(
     // can change by tens of GiB without a storage scan completing.
     snapshot.volume_states = summarize_volume_states(roots);
     let repository_rollups = storage_index.load_repository_workspace_rollups(roots);
-    snapshot.ownership_breakdown = summarize_storage_ownership(
-        &summaries,
-        &repository_rollups,
-        &snapshot.volume_states,
-        &snapshot.summary,
-        &snapshot.cache_status,
-        summarize_system_volume_usage_bytes(),
-        storage_now_millis(),
-    );
+    let ownership_generation = storage_index.load_active_ownership_generation();
+    snapshot.ownership_breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
+        summaries: &summaries,
+        repository_rollups: &repository_rollups,
+        ownership_generation: ownership_generation.as_ref(),
+        volume_states: &snapshot.volume_states,
+        situation_summary: &snapshot.summary,
+        cache_status: &snapshot.cache_status,
+        system_volume_bytes: summarize_system_volume_usage_bytes(),
+        measured_at_millis: storage_now_millis(),
+    });
     snapshot.snapshot_updated_at_millis = Some(storage_now_millis());
     snapshot.backlog_drain =
         storage_situation_backlog_drain(storage_index, roots, &dirty_summary, storage_now_millis());
@@ -682,23 +686,26 @@ fn build_storage_situation_response_from_report(
     let recovery_plan = storage_situation_recovery_plan(&dirty_summary);
     let summaries = storage_index.load_index_summaries(&report_roots);
     let repository_rollups = storage_index.load_repository_workspace_rollups(&report_roots);
-    let ownership_breakdown = summarize_storage_ownership(
-        &summaries,
-        &repository_rollups,
-        &report.volume_states,
-        &StorageSituationSummary {
-            source_root_count: report.roots.len(),
-            item_count: report.summary.item_count.min(u64::MAX as usize) as u64,
-            inventory_size_bytes: report.summary.inventory_size_bytes,
-            safely_reclaimable_now_bytes: report.summary.safely_reclaimable_now_bytes,
-            maybe_reclaimable_bytes: report.summary.maybe_reclaimable_bytes,
-            review_required_bytes: report.summary.review_required_bytes,
-            dangerous_user_data_bytes: report.summary.dangerous_user_data_bytes,
-        },
-        &cache_status,
-        summarize_system_volume_usage_bytes(),
-        report.captured_at_millis,
-    );
+    let ownership_generation = storage_index.load_active_ownership_generation();
+    let situation_summary = StorageSituationSummary {
+        source_root_count: report.roots.len(),
+        item_count: report.summary.item_count.min(u64::MAX as usize) as u64,
+        inventory_size_bytes: report.summary.inventory_size_bytes,
+        safely_reclaimable_now_bytes: report.summary.safely_reclaimable_now_bytes,
+        maybe_reclaimable_bytes: report.summary.maybe_reclaimable_bytes,
+        review_required_bytes: report.summary.review_required_bytes,
+        dangerous_user_data_bytes: report.summary.dangerous_user_data_bytes,
+    };
+    let ownership_breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
+        summaries: &summaries,
+        repository_rollups: &repository_rollups,
+        ownership_generation: ownership_generation.as_ref(),
+        volume_states: &report.volume_states,
+        situation_summary: &situation_summary,
+        cache_status: &cache_status,
+        system_volume_bytes: summarize_system_volume_usage_bytes(),
+        measured_at_millis: report.captured_at_millis,
+    });
     StorageSituationResponse {
         captured_at_millis: report.captured_at_millis,
         snapshot_updated_at_millis: Some(report.captured_at_millis),
@@ -725,15 +732,30 @@ fn build_storage_situation_response_from_report(
     }
 }
 
+pub(super) struct StorageOwnershipProjectionInput<'a> {
+    pub(super) summaries: &'a [StorageIndexSummaryRow],
+    pub(super) repository_rollups: &'a [StorageRepositoryWorkspaceRollup],
+    pub(super) ownership_generation: Option<&'a StorageOwnershipGeneration>,
+    pub(super) volume_states: &'a [StorageVolumeState],
+    pub(super) situation_summary: &'a StorageSituationSummary,
+    pub(super) cache_status: &'a StorageCacheStatus,
+    pub(super) system_volume_bytes: u64,
+    pub(super) measured_at_millis: u64,
+}
+
 pub(super) fn summarize_storage_ownership(
-    summaries: &[StorageIndexSummaryRow],
-    repository_rollups: &[StorageRepositoryWorkspaceRollup],
-    volume_states: &[StorageVolumeState],
-    situation_summary: &StorageSituationSummary,
-    cache_status: &StorageCacheStatus,
-    system_volume_bytes: u64,
-    measured_at_millis: u64,
+    input: StorageOwnershipProjectionInput<'_>,
 ) -> StorageOwnershipBreakdown {
+    let StorageOwnershipProjectionInput {
+        summaries,
+        repository_rollups,
+        ownership_generation,
+        volume_states,
+        situation_summary,
+        cache_status,
+        system_volume_bytes,
+        measured_at_millis,
+    } = input;
     let used_bytes = volume_states
         .iter()
         .max_by_key(|volume| volume.total_bytes)
@@ -813,6 +835,43 @@ pub(super) fn summarize_storage_ownership(
         }
     }
 
+    let active_generation = ownership_generation.filter(|generation| {
+        generation.classifier_version == STORAGE_OWNERSHIP_CLASSIFIER_VERSION
+            && !generation.rollups.is_empty()
+    });
+    let mut generation_completeness = BTreeMap::<&'static str, bool>::new();
+    if let Some(generation) = active_generation {
+        let legacy_reclaimable = raw
+            .iter()
+            .map(|(id, (_, reclaimable))| (*id, *reclaimable))
+            .collect::<BTreeMap<_, _>>();
+        raw.clear();
+        raw.insert("system", (system_volume_bytes, 0));
+        repository_sub_buckets.clear();
+        for rollup in &generation.rollups {
+            let Some(category) = ownership::storage_ownership_category(&rollup.category_id) else {
+                continue;
+            };
+            let entry = raw.entry(category.id).or_default();
+            entry.0 = entry.0.saturating_add(rollup.physical_bytes);
+            generation_completeness
+                .entry(category.id)
+                .and_modify(|complete| *complete &= rollup.complete)
+                .or_insert(rollup.complete);
+            if category.id == "repositories" {
+                for bucket in &rollup.sub_buckets {
+                    let aggregate = repository_sub_buckets
+                        .entry(bucket.id.clone())
+                        .or_insert_with(|| (bucket.label.clone(), 0));
+                    aggregate.1 = aggregate.1.saturating_add(bucket.bytes);
+                }
+            }
+        }
+        for (id, (_, reclaimable)) in &mut raw {
+            *reclaimable = legacy_reclaimable.get(id).copied().unwrap_or_default();
+        }
+    }
+
     let known_total = raw
         .values()
         .fold(0u64, |total, (bytes, _)| total.saturating_add(*bytes));
@@ -822,42 +881,11 @@ pub(super) fn summarize_storage_ownership(
         "indexed"
     }
     .to_owned();
-    let definitions = [
-        (
-            "system",
-            "System",
-            "macOS APFS volumes and indexed system-wide support files.",
-        ),
-        (
-            "repositories",
-            "Repositories",
-            "Source trees, dependencies, build products, Git data, and repository-local media.",
-        ),
-        (
-            "applications",
-            "Apps & Support",
-            "Installed applications, containers, and per-user application support.",
-        ),
-        (
-            "developer",
-            "Developer Infrastructure",
-            "Container VMs, toolchains, package stores, IDE data, and agent workspaces.",
-        ),
-        (
-            "personal",
-            "Personal Data",
-            "Documents, desktop files, downloads, and locally materialized cloud files.",
-        ),
-        (
-            "other",
-            "Other",
-            "Indexed ownership roots that do not fit a primary storage category.",
-        ),
-    ];
     let mut buckets = Vec::new();
     let mut assigned_bytes = 0u64;
     let mut assigned_reclaimable = 0u64;
-    for (id, label, detail) in definitions {
+    for definition in STORAGE_OWNERSHIP_CATEGORIES {
+        let id = definition.id;
         let (raw_bytes, raw_reclaimable) = raw.get(id).copied().unwrap_or_default();
         if raw_bytes == 0 {
             continue;
@@ -868,14 +896,25 @@ pub(super) fn summarize_storage_ownership(
             raw_bytes
         };
         let reclaimable_bytes = raw_reclaimable.min(bytes);
-        let measured_at = (id == "repositories")
-            .then(|| {
-                repository_rollups
+        let measured_at = active_generation
+            .and_then(|generation| {
+                generation
+                    .rollups
                     .iter()
+                    .filter(|rollup| rollup.category_id == id)
                     .map(|rollup| rollup.measured_at_millis)
                     .min()
             })
-            .flatten();
+            .or_else(|| {
+                (id == "repositories")
+                    .then(|| {
+                        repository_rollups
+                            .iter()
+                            .map(|rollup| rollup.measured_at_millis)
+                            .min()
+                    })
+                    .flatten()
+            });
         let repository_rollup_is_fresh = measured_at.is_some_and(|measured| {
             repository_rollups.iter().all(|rollup| rollup.complete)
                 && measured_at_millis.saturating_sub(measured) < 6 * 60 * 60 * 1000
@@ -902,17 +941,25 @@ pub(super) fn summarize_storage_ownership(
         assigned_reclaimable = assigned_reclaimable.saturating_add(reclaimable_bytes);
         buckets.push(StorageOwnershipBucket {
             id: id.to_owned(),
-            label: label.to_owned(),
+            label: definition.label.to_owned(),
             bytes,
             reclaimable_bytes,
-            source: if id == "system" {
+            source: if active_generation.is_some() {
+                "ownership_generation+storage_index".to_owned()
+            } else if id == "system" {
                 "native_volume+storage_index".to_owned()
             } else if id == "repositories" && !repository_rollups.is_empty() {
                 "repository_workspace_rollup+storage_index".to_owned()
             } else {
                 "storage_index".to_owned()
             },
-            confidence: if id == "system" && raw_bytes == system_volume_bytes {
+            confidence: if active_generation.is_some()
+                && generation_completeness.get(id).copied().unwrap_or(false)
+            {
+                "measured".to_owned()
+            } else if active_generation.is_some() && generation_completeness.contains_key(id) {
+                "partial".to_owned()
+            } else if id == "system" && raw_bytes == system_volume_bytes {
                 "live".to_owned()
             } else if id == "repositories" && repository_rollup_is_fresh {
                 "measured".to_owned()
@@ -921,7 +968,13 @@ pub(super) fn summarize_storage_ownership(
             } else {
                 confidence.clone()
             },
-            detail: detail.to_owned(),
+            detail: definition.detail.to_owned(),
+            rank: definition.rank,
+            state: if active_generation.is_some() {
+                "classified".to_owned()
+            } else {
+                "legacy_index".to_owned()
+            },
             measured_at_millis: measured_at,
             sub_buckets,
         });
@@ -944,6 +997,11 @@ pub(super) fn summarize_storage_ownership(
                 .min(other.bytes);
             other.source = "storage_index+volume_residual".to_owned();
             other.confidence = "unattributed".to_owned();
+            other.state = if active_generation.is_some() {
+                "protected_or_unclassified".to_owned()
+            } else {
+                "volume_residual".to_owned()
+            };
             other.detail =
                 "Indexed miscellaneous roots plus used capacity not yet assigned to a scanned ownership root."
                     .to_owned();
@@ -957,6 +1015,13 @@ pub(super) fn summarize_storage_ownership(
                 confidence: "unattributed".to_owned(),
                 detail: "Used volume capacity not yet assigned to a scanned ownership root."
                     .to_owned(),
+                rank: ownership::storage_ownership_category("other")
+                    .map_or(90, |definition| definition.rank),
+                state: if active_generation.is_some() {
+                    "protected_or_unclassified".to_owned()
+                } else {
+                    "volume_residual".to_owned()
+                },
                 measured_at_millis: None,
                 sub_buckets: Vec::new(),
             });
@@ -970,6 +1035,12 @@ pub(super) fn summarize_storage_ownership(
         reclaimable_bytes: total_reclaimable,
         measured_at_millis,
         confidence,
+        generation_id: active_generation.map(|generation| generation.generation_id),
+        classifier_version: active_generation.map_or(0, |generation| generation.classifier_version),
+        generation_status: active_generation.map_or_else(
+            || "legacy".to_owned(),
+            |generation| generation.status.clone(),
+        ),
         buckets,
     }
 }

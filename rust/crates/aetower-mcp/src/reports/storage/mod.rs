@@ -559,14 +559,15 @@ use models::{
     StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
 };
 pub use ownership::storage_ownership_refresh_json;
+use ownership::{STORAGE_OWNERSHIP_CATEGORIES, STORAGE_OWNERSHIP_CLASSIFIER_VERSION};
 #[cfg(test)]
 use ownership::{
-    STORAGE_OWNERSHIP_CATEGORIES, StorageOwnershipBoundarySpec, measure_storage_ownership_boundary,
+    StorageOwnershipBoundarySpec, measure_storage_ownership_boundary,
     normalize_storage_ownership_boundaries, storage_ownership_boundary_for_path,
     storage_ownership_excluded_descendants,
 };
 #[cfg(test)]
-use projection::summarize_storage_ownership;
+use projection::{StorageOwnershipProjectionInput, summarize_storage_ownership};
 pub use projection::{
     storage_backlog_drain_json, storage_growth_insights_json, storage_hygiene_actions_json,
     storage_hygiene_items_page_json, storage_hygiene_overview_json,

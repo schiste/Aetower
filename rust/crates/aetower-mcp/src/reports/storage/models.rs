@@ -153,6 +153,12 @@ pub(super) struct StorageOwnershipBreakdown {
     pub(super) reclaimable_bytes: u64,
     pub(super) measured_at_millis: u64,
     pub(super) confidence: String,
+    #[serde(default)]
+    pub(super) generation_id: Option<i64>,
+    #[serde(default)]
+    pub(super) classifier_version: u32,
+    #[serde(default)]
+    pub(super) generation_status: String,
     pub(super) buckets: Vec<StorageOwnershipBucket>,
 }
 
@@ -165,6 +171,10 @@ pub(super) struct StorageOwnershipBucket {
     pub(super) source: String,
     pub(super) confidence: String,
     pub(super) detail: String,
+    #[serde(default)]
+    pub(super) rank: u16,
+    #[serde(default)]
+    pub(super) state: String,
     #[serde(default)]
     pub(super) measured_at_millis: Option<u64>,
     #[serde(default)]
