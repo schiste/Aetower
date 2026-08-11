@@ -42,6 +42,14 @@ struct StorageOwnershipBucketModel: Decodable, Identifiable, Sendable {
     let source: String
     let confidence: String
     let detail: String
+    let measuredAtMillis: UInt64?
+    let subBuckets: [StorageOwnershipSubBucketModel]?
+}
+
+struct StorageOwnershipSubBucketModel: Decodable, Identifiable, Sendable {
+    let id: String
+    let label: String
+    let bytes: UInt64
 }
 
 struct StorageSituationRecoveryPlanModel: Decodable, Sendable {

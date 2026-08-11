@@ -17,9 +17,14 @@ final class StorageHygieneModelsTests: XCTestCase {
               "label": "Repositories",
               "bytes": 400,
               "reclaimable_bytes": 40,
-              "source": "storage_index",
-              "confidence": "partial",
-              "detail": "Source trees and repository-local artifacts."
+              "source": "repository_workspace_rollup+storage_index",
+              "confidence": "measured",
+              "detail": "Source trees and repository-local artifacts.",
+              "measured_at_millis": 41,
+              "sub_buckets": [
+                { "id": "builds", "label": "Build & test", "bytes": 300 },
+                { "id": "source", "label": "Source & other", "bytes": 100 }
+              ]
             }
           ]
         }
@@ -36,6 +41,9 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertEqual(breakdown.unattributedBytes, 500)
         XCTAssertEqual(breakdown.buckets.first?.id, "repositories")
         XCTAssertEqual(breakdown.buckets.first?.reclaimableBytes, 40)
+        XCTAssertEqual(breakdown.buckets.first?.measuredAtMillis, 41)
+        XCTAssertEqual(breakdown.buckets.first?.subBuckets?.count, 2)
+        XCTAssertEqual(breakdown.buckets.first?.subBuckets?.first?.bytes, 300)
     }
 
     @MainActor

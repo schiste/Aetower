@@ -1151,7 +1151,7 @@ struct AetowerApp: App {
                     .tag(WorkspaceTab.activity)
                     .accessibilityIdentifier(WorkspaceTab.activity.accessibilityIdentifier)
 
-                StorageView(state: state)
+                StorageView(state: state, settings: settings)
                     .tabItem {
                         Label(WorkspaceTab.storage.title, systemImage: WorkspaceTab.storage.systemImage)
                     }

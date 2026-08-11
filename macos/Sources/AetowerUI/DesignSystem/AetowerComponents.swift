@@ -75,6 +75,36 @@ public struct AetowerStorageReclaimMark: View {
     }
 }
 
+public struct AetowerStorageStrataSegment: View {
+    let color: Color
+
+    public init(color: Color) {
+        self.color = color
+    }
+
+    public var body: some View {
+        Rectangle()
+            .fill(color)
+    }
+}
+
+public struct AetowerStorageStrataMark: View {
+    let color: Color
+
+    public init(color: Color) {
+        self.color = color
+    }
+
+    public var body: some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(color)
+            .frame(
+                width: AetowerDesign.Size.storageRepositoryStrataMark,
+                height: AetowerDesign.Size.storageRepositoryStrataMark
+            )
+    }
+}
+
 public enum AetowerComponentSize {
     case compact
     case regular

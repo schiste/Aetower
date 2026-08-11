@@ -292,6 +292,7 @@ struct StorageDirectTrashUndo {
 
 public struct StorageView: View {
     let state: AppState
+    let settings: SettingsStore
     @State private var selectedFilter: StorageFilter = .attention
     @State private var artifactScope: StorageArtifactScope = .all
     @State private var artifactSort: StorageArtifactSort = .largest
@@ -345,8 +346,9 @@ public struct StorageView: View {
     @State private var similarityTelemetryViewedGroupKeys: Set<String> = []
     @State private var similarityTelemetryViewedSurfaceKeys: Set<String> = []
 
-    public init(state: AppState) {
+    public init(state: AppState, settings: SettingsStore) {
         self.state = state
+        self.settings = settings
     }
 
     public var body: some View {
@@ -423,6 +425,7 @@ public struct StorageView: View {
                 refresh: false
             )
             state.loadStorageForDisplay()
+            state.ensureRepositoryWorkspaceOwnership(roots: settings.repositoryRoots)
         }
         .sheet(item: $candidateCommandPreviewBundle) { bundle in
             cleanupCommandPreviewSheet(bundle)
@@ -5445,6 +5448,72 @@ public struct StorageView: View {
         }
     }
 
+    @ViewBuilder
+    private func storageRepositoryStrata(_ breakdown: StorageOwnershipBreakdownModel) -> some View {
+        if let repository = breakdown.buckets.first(where: { $0.id == "repositories" }),
+           let unorderedBuckets = repository.subBuckets,
+           !unorderedBuckets.isEmpty,
+           repository.bytes > 0 {
+            let order = ["source", "dependencies", "builds", "git", "media", "workspace"]
+            let buckets = unorderedBuckets.sorted { left, right in
+                (order.firstIndex(of: left.id) ?? order.count)
+                    < (order.firstIndex(of: right.id) ?? order.count)
+            }
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Text("Repository strata")
+                        .font(AetowerDesign.Typography.metadataStrong)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                    GeometryReader { geometry in
+                        HStack(spacing: AetowerDesign.Size.storageRepositoryStrataGap) {
+                            ForEach(buckets) { bucket in
+                                AetowerStorageStrataSegment(
+                                    color: storageRepositoryStrataColor(bucket.id)
+                                )
+                                .frame(
+                                    width: max(
+                                        1,
+                                        geometry.size.width
+                                            * CGFloat(Double(bucket.bytes) / Double(repository.bytes))
+                                    )
+                                )
+                                .help("\(bucket.label) · \(formatBytes(bucket.bytes))")
+                            }
+                        }
+                        .aetowerStorageBarClip()
+                    }
+                    .frame(height: AetowerDesign.Size.storageRepositoryStrataHeight)
+                    Text(storageRepositoryFreshness(repository))
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: AetowerDesign.Spacing.md) {
+                    ForEach(buckets) { bucket in
+                        HStack(spacing: AetowerDesign.Spacing.storageLegendLabel) {
+                            AetowerStorageStrataMark(
+                                color: storageRepositoryStrataColor(bucket.id)
+                            )
+                            Text(bucket.label)
+                            Text(formatBytes(bucket.bytes))
+                                .monospacedDigit()
+                                .foregroundStyle(AetowerDesign.Ink.primary)
+                        }
+                    }
+                }
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+            }
+            .accessibilityElement(children: .combine)
+        } else if state.repositoryWorkspaceRefreshIsLoading {
+            Text("Measuring repository ownership in the background…")
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
+        }
+    }
+
     private func storageOwnershipColor(_ id: String) -> Color {
         switch id {
         case "system": AetowerDesign.StorageOwnership.system
@@ -5454,6 +5523,33 @@ public struct StorageView: View {
         case "personal": AetowerDesign.StorageOwnership.personal
         default: AetowerDesign.StorageOwnership.other
         }
+    }
+
+    private func storageRepositoryStrataColor(_ id: String) -> Color {
+        switch id {
+        case "source": AetowerDesign.StorageOwnership.RepositoryStrata.source
+        case "dependencies": AetowerDesign.StorageOwnership.RepositoryStrata.dependencies
+        case "builds": AetowerDesign.StorageOwnership.RepositoryStrata.builds
+        case "git": AetowerDesign.StorageOwnership.RepositoryStrata.git
+        case "media": AetowerDesign.StorageOwnership.RepositoryStrata.media
+        default: AetowerDesign.StorageOwnership.RepositoryStrata.workspace
+        }
+    }
+
+    private func storageRepositoryFreshness(_ bucket: StorageOwnershipBucketModel) -> String {
+        if state.repositoryWorkspaceRefreshIsLoading {
+            return "updating…"
+        }
+        guard let measuredAtMillis = bucket.measuredAtMillis else {
+            return bucket.confidence
+        }
+        let ageSeconds = max(
+            0,
+            Date().timeIntervalSince1970 - Double(measuredAtMillis) / 1_000
+        )
+        if ageSeconds < 60 { return "measured now" }
+        if ageSeconds < 3_600 { return "measured \(Int(ageSeconds / 60))m ago" }
+        return "measured \(Int(ageSeconds / 3_600))h ago"
     }
 
     private func storageOwnershipDisplayLabel(_ bucket: StorageOwnershipBucketModel) -> String {
@@ -5467,6 +5563,13 @@ public struct StorageView: View {
         }
         if bucket.confidence != "live" && bucket.confidence != "indexed" {
             parts.append("Coverage: \(bucket.confidence)")
+        }
+        if let subBuckets = bucket.subBuckets, !subBuckets.isEmpty {
+            parts.append(
+                subBuckets
+                    .map { "\($0.label): \(formatBytes($0.bytes))" }
+                    .joined(separator: " · ")
+            )
         }
         return parts.joined(separator: "\n")
     }
@@ -9631,6 +9734,7 @@ public struct StorageView: View {
                         free: free,
                         breakdown: breakdown
                     )
+                    storageRepositoryStrata(breakdown)
                     storageOwnershipLegend(breakdown)
                 } else {
                     diskCapacityBar(

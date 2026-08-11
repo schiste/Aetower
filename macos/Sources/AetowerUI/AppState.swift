@@ -275,6 +275,11 @@ private final class StorageHygieneMainActorPublisher: @unchecked Sendable {
     }
 
     @MainActor
+    func publishRepositoryWorkspaceRefreshFinished(_ situation: StorageSituationModel?) {
+        state?.finishRepositoryWorkspaceRefresh(situation)
+    }
+
+    @MainActor
     func storageSituationPollRoots() -> [String] {
         state?.storageSituationPollRootsForBackground() ?? []
     }
@@ -632,6 +637,7 @@ public final class AppState {
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
     private(set) var repositoryInventoryRefreshState: RepositoryInventoryRefreshState?
+    private(set) var repositoryWorkspaceRefreshIsLoading = false
     /// Server-paged Storage Explorer table state. The page is fetched on
     /// demand from `storage_hygiene_items_page_json` (index-backed, sorted
     /// server-side); the offset/sort properties record the most recent
@@ -694,6 +700,8 @@ public final class AppState {
     @ObservationIgnored private var lastPublishedBrowserTabAutomationSignature: String?
     @ObservationIgnored private var lastInventorySignalRefreshMillis: UInt64 = 0
     @ObservationIgnored private var lastRepositoryInventoryFingerprintAuditMillis: UInt64 = 0
+    @ObservationIgnored private var lastRepositoryWorkspaceRefreshMillis: UInt64 = 0
+    @ObservationIgnored fileprivate var repositoryWorkspaceRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var lastStorageEstimateRefreshMillis: UInt64 = 0
     @ObservationIgnored private var lastStorageEstimateDecisionMillis: UInt64 = 0
     @ObservationIgnored private var ticksSinceFullSnapshot = 0
@@ -1124,6 +1132,9 @@ public final class AppState {
         repositoryCloudflareProviderTasks.removeAll()
         repositoryInventorySignalTask?.cancel()
         repositoryInventorySignalTask = nil
+        repositoryWorkspaceRefreshTask?.cancel()
+        repositoryWorkspaceRefreshTask = nil
+        repositoryWorkspaceRefreshIsLoading = false
         repositoryInventoryRefreshState = nil
         storageScanController.stop()
         storageRootChangeMonitor.stop()
@@ -2522,7 +2533,12 @@ public final class AppState {
     ) -> String {
         guard let breakdown else { return "" }
         let buckets = breakdown.buckets
-            .map { "\($0.id)|\($0.bytes)|\($0.reclaimableBytes)|\($0.confidence)" }
+            .map { bucket in
+                let subBuckets = (bucket.subBuckets ?? [])
+                    .map { "\($0.id):\($0.bytes)" }
+                    .joined(separator: ";")
+                return "\(bucket.id)|\(bucket.bytes)|\(bucket.reclaimableBytes)|\(bucket.confidence)|\(bucket.measuredAtMillis ?? 0)|\(subBuckets)"
+            }
             .joined(separator: ",")
         return "\(breakdown.usedBytes)|\(breakdown.attributedBytes)|\(breakdown.unattributedBytes)|\(breakdown.reclaimableBytes)|\(breakdown.confidence)|\(buckets)"
     }
@@ -3365,6 +3381,41 @@ public final class AppState {
     func ensureRepositoryInventoryResponsiveLoad(roots: [String] = []) {
         loadStorageForDisplay(roots: roots)
         refreshRepositoryInventoryForVisibleCache(roots: roots)
+    }
+
+    /// Refresh the heavier physical-byte ownership rollup separately from
+    /// cheap Git discovery. The Storage view keeps painting cached facts while
+    /// this utility-priority task measures configured repository workspaces.
+    func ensureRepositoryWorkspaceOwnership(roots: [String], force: Bool = false) {
+        guard repositoryWorkspaceRefreshTask == nil else { return }
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
+        let cooldownMillis: UInt64 = 2 * 60 * 1000
+        guard force || nowMillis >= lastRepositoryWorkspaceRefreshMillis + cooldownMillis else {
+            return
+        }
+        lastRepositoryWorkspaceRefreshMillis = nowMillis
+        repositoryWorkspaceRefreshIsLoading = true
+
+        let bridge = self.bridge
+        let publisher = StorageHygieneMainActorPublisher(self)
+        repositoryWorkspaceRefreshTask = Task.detached(priority: .utility) { [bridge, publisher] in
+            _ = bridge.repositoryWorkspaceRefreshJSON(roots: roots, force: force)
+            guard !Task.isCancelled else {
+                await publisher.publishRepositoryWorkspaceRefreshFinished(nil)
+                return
+            }
+            let situationResult = bridge.storageSituationJSON(roots: [])
+            let situation = Self.decodeStorageSituationForBackground(situationResult)
+            await publisher.publishRepositoryWorkspaceRefreshFinished(situation)
+        }
+    }
+
+    fileprivate func finishRepositoryWorkspaceRefresh(_ situation: StorageSituationModel?) {
+        repositoryWorkspaceRefreshTask = nil
+        repositoryWorkspaceRefreshIsLoading = false
+        if let situation {
+            publishStorageSituation(situation, updateEstimate: true)
+        }
     }
 
     func loadStorageForDisplay(roots: [String] = []) {

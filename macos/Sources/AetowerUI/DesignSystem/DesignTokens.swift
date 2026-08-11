@@ -50,6 +50,9 @@ public enum AetowerDesign {
         public static let storageReclaimMinimumWidth: CGFloat = 2
         public static let storageReclaimMarkCompactWidth: CGFloat = 9
         public static let storageReclaimMarkRegularWidth: CGFloat = 12
+        public static let storageRepositoryStrataHeight: CGFloat = 5
+        public static let storageRepositoryStrataMark: CGFloat = 6
+        public static let storageRepositoryStrataGap: CGFloat = 1
     }
 
     // MARK: - Typography
@@ -125,6 +128,15 @@ public enum AetowerDesign {
         public static let personal = Color(red: 0.38, green: 0.56, blue: 0.70)
         public static let other = Color(red: 0.43, green: 0.45, blue: 0.50)
         public static let reclaimable = Color(red: 0.85, green: 0.36, blue: 0.36)
+
+        public enum RepositoryStrata {
+            public static let source = Color(red: 0.40, green: 0.46, blue: 0.66)
+            public static let dependencies = Color(red: 0.31, green: 0.39, blue: 0.61)
+            public static let builds = Color(red: 0.50, green: 0.42, blue: 0.68)
+            public static let git = Color(red: 0.32, green: 0.53, blue: 0.69)
+            public static let media = Color(red: 0.52, green: 0.57, blue: 0.74)
+            public static let workspace = Color(red: 0.60, green: 0.62, blue: 0.68)
+        }
     }
 
     public enum Status {
