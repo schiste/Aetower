@@ -16,9 +16,9 @@ use aetower_mcp::{
     start_local_socket_server, storage_backlog_drain_json, storage_hygiene_actions_json,
     storage_hygiene_indexed_json, storage_hygiene_items_page_json, storage_hygiene_json,
     storage_hygiene_mode_json, storage_hygiene_overview_json, storage_hygiene_repo_detail_json,
-    storage_scan_cancel_json, storage_scan_pause_json, storage_scan_result_json,
-    storage_scan_resume_json, storage_scan_start_json, storage_scan_status_json,
-    storage_situation_json, wakeup_attribution_json,
+    storage_ownership_refresh_json, storage_scan_cancel_json, storage_scan_pause_json,
+    storage_scan_result_json, storage_scan_resume_json, storage_scan_start_json,
+    storage_scan_status_json, storage_situation_json, wakeup_attribution_json,
 };
 use aetower_model as model;
 
@@ -1785,6 +1785,16 @@ impl MonitorEngine {
         force: bool,
     ) -> JsonQueryResult {
         json_query_result(repository_workspace_refresh_json(roots, force))
+    }
+
+    /// Refresh and atomically activate the durable whole-volume ownership
+    /// generation. Unchanged boundaries are reused by filesystem identity.
+    pub fn storage_ownership_refresh_json(
+        &self,
+        repository_roots: Vec<String>,
+        force: bool,
+    ) -> JsonQueryResult {
+        json_query_result(storage_ownership_refresh_json(repository_roots, force))
     }
 
     /// Trigger one pressure-gated incremental storage backlog pass and return

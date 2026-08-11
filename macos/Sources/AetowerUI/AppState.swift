@@ -275,8 +275,11 @@ private final class StorageHygieneMainActorPublisher: @unchecked Sendable {
     }
 
     @MainActor
-    func publishRepositoryWorkspaceRefreshFinished(_ situation: StorageSituationModel?) {
-        state?.finishRepositoryWorkspaceRefresh(situation)
+    func publishStorageOwnershipRefreshFinished(
+        _ situation: StorageSituationModel?,
+        errorMessage: String?
+    ) {
+        state?.finishStorageOwnershipRefresh(situation, errorMessage: errorMessage)
     }
 
     @MainActor
@@ -637,7 +640,8 @@ public final class AppState {
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
     private(set) var repositoryInventoryRefreshState: RepositoryInventoryRefreshState?
-    private(set) var repositoryWorkspaceRefreshIsLoading = false
+    private(set) var storageOwnershipRefreshIsLoading = false
+    private(set) var storageOwnershipRefreshError: String?
     /// Server-paged Storage Explorer table state. The page is fetched on
     /// demand from `storage_hygiene_items_page_json` (index-backed, sorted
     /// server-side); the offset/sort properties record the most recent
@@ -700,8 +704,8 @@ public final class AppState {
     @ObservationIgnored private var lastPublishedBrowserTabAutomationSignature: String?
     @ObservationIgnored private var lastInventorySignalRefreshMillis: UInt64 = 0
     @ObservationIgnored private var lastRepositoryInventoryFingerprintAuditMillis: UInt64 = 0
-    @ObservationIgnored private var lastRepositoryWorkspaceRefreshMillis: UInt64 = 0
-    @ObservationIgnored fileprivate var repositoryWorkspaceRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var lastStorageOwnershipRefreshMillis: UInt64 = 0
+    @ObservationIgnored fileprivate var storageOwnershipRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var lastStorageEstimateRefreshMillis: UInt64 = 0
     @ObservationIgnored private var lastStorageEstimateDecisionMillis: UInt64 = 0
     @ObservationIgnored private var ticksSinceFullSnapshot = 0
@@ -1132,9 +1136,10 @@ public final class AppState {
         repositoryCloudflareProviderTasks.removeAll()
         repositoryInventorySignalTask?.cancel()
         repositoryInventorySignalTask = nil
-        repositoryWorkspaceRefreshTask?.cancel()
-        repositoryWorkspaceRefreshTask = nil
-        repositoryWorkspaceRefreshIsLoading = false
+        storageOwnershipRefreshTask?.cancel()
+        storageOwnershipRefreshTask = nil
+        storageOwnershipRefreshIsLoading = false
+        storageOwnershipRefreshError = nil
         repositoryInventoryRefreshState = nil
         storageScanController.stop()
         storageRootChangeMonitor.stop()
@@ -3383,36 +3388,54 @@ public final class AppState {
         refreshRepositoryInventoryForVisibleCache(roots: roots)
     }
 
-    /// Refresh the heavier physical-byte ownership rollup separately from
-    /// cheap Git discovery. The Storage view keeps painting cached facts while
-    /// this utility-priority task measures configured repository workspaces.
-    func ensureRepositoryWorkspaceOwnership(roots: [String], force: Bool = false) {
-        guard repositoryWorkspaceRefreshTask == nil else { return }
+    /// Refresh the durable whole-volume ownership generation. The Storage view
+    /// keeps painting the last atomically activated generation while this
+    /// utility-priority task reuses or measures individual boundaries.
+    func ensureStorageOwnership(roots: [String], force: Bool = false) {
+        guard storageOwnershipRefreshTask == nil else { return }
         let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
         let cooldownMillis: UInt64 = 2 * 60 * 1000
-        guard force || nowMillis >= lastRepositoryWorkspaceRefreshMillis + cooldownMillis else {
+        guard force || nowMillis >= lastStorageOwnershipRefreshMillis + cooldownMillis else {
             return
         }
-        lastRepositoryWorkspaceRefreshMillis = nowMillis
-        repositoryWorkspaceRefreshIsLoading = true
+        lastStorageOwnershipRefreshMillis = nowMillis
+        storageOwnershipRefreshIsLoading = true
+        storageOwnershipRefreshError = nil
 
         let bridge = self.bridge
         let publisher = StorageHygieneMainActorPublisher(self)
-        repositoryWorkspaceRefreshTask = Task.detached(priority: .utility) { [bridge, publisher] in
-            _ = bridge.repositoryWorkspaceRefreshJSON(roots: roots, force: force)
+        storageOwnershipRefreshTask = Task.detached(priority: .utility) { [bridge, publisher] in
+            let refreshResult = bridge.storageOwnershipRefreshJSON(
+                repositoryRoots: roots,
+                force: force
+            )
             guard !Task.isCancelled else {
-                await publisher.publishRepositoryWorkspaceRefreshFinished(nil)
+                await publisher.publishStorageOwnershipRefreshFinished(nil, errorMessage: nil)
+                return
+            }
+            if let errorMessage = refreshResult.errorMessage {
+                await publisher.publishStorageOwnershipRefreshFinished(
+                    nil,
+                    errorMessage: errorMessage
+                )
                 return
             }
             let situationResult = bridge.storageSituationJSON(roots: [])
             let situation = Self.decodeStorageSituationForBackground(situationResult)
-            await publisher.publishRepositoryWorkspaceRefreshFinished(situation)
+            await publisher.publishStorageOwnershipRefreshFinished(
+                situation,
+                errorMessage: situation == nil ? "Ownership snapshot could not be decoded." : nil
+            )
         }
     }
 
-    fileprivate func finishRepositoryWorkspaceRefresh(_ situation: StorageSituationModel?) {
-        repositoryWorkspaceRefreshTask = nil
-        repositoryWorkspaceRefreshIsLoading = false
+    fileprivate func finishStorageOwnershipRefresh(
+        _ situation: StorageSituationModel?,
+        errorMessage: String?
+    ) {
+        storageOwnershipRefreshTask = nil
+        storageOwnershipRefreshIsLoading = false
+        storageOwnershipRefreshError = errorMessage
         if let situation {
             publishStorageSituation(situation, updateEstimate: true)
         }

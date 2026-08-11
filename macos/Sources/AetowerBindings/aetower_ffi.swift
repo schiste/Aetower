@@ -751,6 +751,12 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
 
     func storageHygieneRepoDetailJson(repoRoot: String, mode: String)  -> JsonQueryResult
 
+    /**
+     * Refresh and atomically activate the durable whole-volume ownership
+     * generation. Unchanged boundaries are reused by filesystem identity.
+     */
+    func storageOwnershipRefreshJson(repositoryRoots: [String], force: Bool)  -> JsonQueryResult
+
     func storageScanCancelJson(jobId: String)  -> JsonQueryResult
 
     func storageScanPauseJson(jobId: String)  -> JsonQueryResult
@@ -1445,6 +1451,19 @@ open func storageHygieneRepoDetailJson(repoRoot: String, mode: String) -> JsonQu
     uniffi_aetower_ffi_fn_method_monitorengine_storage_hygiene_repo_detail_json(self.uniffiClonePointer(),
         FfiConverterString.lower(repoRoot),
         FfiConverterString.lower(mode),$0
+    )
+})
+}
+
+    /**
+     * Refresh and atomically activate the durable whole-volume ownership
+     * generation. Unchanged boundaries are reused by filesystem identity.
+     */
+open func storageOwnershipRefreshJson(repositoryRoots: [String], force: Bool) -> JsonQueryResult  {
+    return try!  FfiConverterTypeJsonQueryResult_lift(try! rustCall() {
+    uniffi_aetower_ffi_fn_method_monitorengine_storage_ownership_refresh_json(self.uniffiClonePointer(),
+        FfiConverterSequenceString.lower(repositoryRoots),
+        FfiConverterBool.lower(force),$0
     )
 })
 }
@@ -12775,6 +12794,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_hygiene_repo_detail_json() != 58897) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_ownership_refresh_json() != 13530) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_storage_scan_cancel_json() != 49188) {

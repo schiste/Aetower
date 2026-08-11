@@ -425,7 +425,7 @@ public struct StorageView: View {
                 refresh: false
             )
             state.loadStorageForDisplay()
-            state.ensureRepositoryWorkspaceOwnership(roots: settings.repositoryRoots)
+            state.ensureStorageOwnership(roots: settings.repositoryRoots)
         }
         .sheet(item: $candidateCommandPreviewBundle) { bundle in
             cleanupCommandPreviewSheet(bundle)
@@ -5519,10 +5519,14 @@ public struct StorageView: View {
                 .foregroundStyle(AetowerDesign.Ink.secondary)
             }
             .accessibilityElement(children: .combine)
-        } else if state.repositoryWorkspaceRefreshIsLoading {
-            Text("Measuring repository ownership in the background…")
+        } else if state.storageOwnershipRefreshIsLoading {
+            Text("Measuring storage ownership in the background…")
                 .font(AetowerDesign.Typography.metadata)
                 .foregroundStyle(AetowerDesign.Ink.tertiary)
+        } else if let error = state.storageOwnershipRefreshError {
+            Text("Ownership refresh paused: \(error)")
+                .font(AetowerDesign.Typography.metadata)
+                .foregroundStyle(AetowerDesign.Status.warning)
         }
     }
 
@@ -5549,7 +5553,7 @@ public struct StorageView: View {
     }
 
     private func storageRepositoryFreshness(_ bucket: StorageOwnershipBucketModel) -> String {
-        if state.repositoryWorkspaceRefreshIsLoading {
+        if state.storageOwnershipRefreshIsLoading {
             return "updating…"
         }
         guard let measuredAtMillis = bucket.measuredAtMillis else {

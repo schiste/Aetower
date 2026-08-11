@@ -290,6 +290,13 @@ public final class EngineBridge: @unchecked Sendable {
         engine.repositoryWorkspaceRefreshJson(roots: roots, force: force)
     }
 
+    public func storageOwnershipRefreshJSON(
+        repositoryRoots: [String],
+        force: Bool = false
+    ) -> JsonQueryResult {
+        engine.storageOwnershipRefreshJson(repositoryRoots: repositoryRoots, force: force)
+    }
+
     public func storageBacklogDrainJSON(
         roots: [String] = [],
         limit: UInt32 = 12
