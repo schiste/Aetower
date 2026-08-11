@@ -5459,6 +5459,11 @@ public struct StorageView: View {
                 (order.firstIndex(of: left.id) ?? order.count)
                     < (order.firstIndex(of: right.id) ?? order.count)
             }
+            let strataColumns = [
+                GridItem(.flexible(), spacing: AetowerDesign.Spacing.md, alignment: .leading),
+                GridItem(.flexible(), spacing: AetowerDesign.Spacing.md, alignment: .leading),
+                GridItem(.flexible(), alignment: .leading),
+            ]
 
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                 HStack(spacing: AetowerDesign.Spacing.sm) {
@@ -5490,16 +5495,23 @@ public struct StorageView: View {
                         .lineLimit(1)
                 }
 
-                HStack(spacing: AetowerDesign.Spacing.md) {
+                LazyVGrid(
+                    columns: strataColumns,
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.xxs
+                ) {
                     ForEach(buckets) { bucket in
                         HStack(spacing: AetowerDesign.Spacing.storageLegendLabel) {
                             AetowerStorageStrataMark(
                                 color: storageRepositoryStrataColor(bucket.id)
                             )
                             Text(bucket.label)
+                                .lineLimit(1)
+                            Spacer(minLength: AetowerDesign.Spacing.xs)
                             Text(formatBytes(bucket.bytes))
                                 .monospacedDigit()
                                 .foregroundStyle(AetowerDesign.Ink.primary)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
                     }
                 }

@@ -44,7 +44,7 @@ public enum AetowerDesign {
         public static let sidebarWidth: CGFloat = 188
         public static let actionTileMinWidth: CGFloat = 116
         public static let storageBarHeight: CGFloat = 14
-        public static let storageLegendMinWidth: CGFloat = 148
+        public static let storageLegendMinWidth: CGFloat = 176
         public static let storageOwnerMark: CGFloat = 7
         public static let storageReclaimSeamHeight: CGFloat = 3
         public static let storageReclaimMinimumWidth: CGFloat = 2
