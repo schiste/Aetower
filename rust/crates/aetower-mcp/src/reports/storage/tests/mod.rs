@@ -674,8 +674,109 @@ fn storage_situation_snapshot_refreshes_live_volume_capacity() {
             .is_some_and(|bytes| bytes > 1),
         "the persisted available-space sentinel must be replaced by a live statfs value"
     );
+    let ownership_used = refreshed["ownership_breakdown"]["used_bytes"]
+        .as_u64()
+        .expect("ownership breakdown reports used bytes");
+    let ownership_bucket_total = refreshed["ownership_breakdown"]["buckets"]
+        .as_array()
+        .expect("ownership breakdown reports buckets")
+        .iter()
+        .filter_map(|bucket| bucket["bytes"].as_u64())
+        .sum::<u64>();
+    assert!(ownership_used > 0);
+    assert_eq!(ownership_bucket_total, ownership_used);
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_ownership_breakdown_partitions_used_bytes_without_nested_root_overlap() {
+    let summary_row = |source_root: &str, bytes: u64, reclaimable: u64| StorageIndexSummaryRow {
+        source_root: source_root.to_owned(),
+        item_count: 1,
+        inventory_size_bytes: bytes,
+        safe_reclaimable_bytes: reclaimable,
+        ..StorageIndexSummaryRow::default()
+    };
+    let summaries = vec![
+        summary_row("/Users/test/Library", 700, 0),
+        summary_row("/Users/test/Library/Application Support", 300, 30),
+        summary_row("/Users/test/Repositories", 400, 40),
+        summary_row("/Users/test/.colima", 100, 0),
+        summary_row("/Users/test/Documents", 50, 0),
+        summary_row("/Library", 50, 0),
+    ];
+    let volume = StorageVolumeState {
+        path: "/System/Volumes/Data".to_owned(),
+        device_id: 99,
+        filesystem_type: "apfs".to_owned(),
+        total_bytes: 2_000,
+        free_now_bytes: 500,
+        available_bytes: 500,
+        purgeable_bytes_estimate: 0,
+        important_usage_available_bytes: None,
+        opportunistic_usage_available_bytes: None,
+        detail: String::new(),
+    };
+    let situation_summary = StorageSituationSummary {
+        safely_reclaimable_now_bytes: 100,
+        ..StorageSituationSummary::default()
+    };
+    let cache_status = StorageCacheStatus {
+        source: "test".to_owned(),
+        stale: true,
+        partial: true,
+        confidence: "low".to_owned(),
+        confidence_score: 30,
+        latest_scan_millis: Some(1),
+        age_millis: Some(1),
+        message: String::new(),
+    };
+
+    let breakdown = summarize_storage_ownership(
+        &summaries,
+        &[volume],
+        &situation_summary,
+        &cache_status,
+        100,
+        2,
+    );
+    let bytes_for = |id: &str| {
+        breakdown
+            .buckets
+            .iter()
+            .find(|bucket| bucket.id == id)
+            .map(|bucket| bucket.bytes)
+            .unwrap_or_default()
+    };
+
+    assert_eq!(breakdown.used_bytes, 1_500);
+    assert_eq!(breakdown.attributed_bytes, 1_000);
+    assert_eq!(breakdown.unattributed_bytes, 500);
+    assert_eq!(bytes_for("system"), 150);
+    assert_eq!(bytes_for("repositories"), 400);
+    assert_eq!(bytes_for("applications"), 300);
+    assert_eq!(bytes_for("developer"), 100);
+    assert_eq!(bytes_for("personal"), 50);
+    assert_eq!(bytes_for("other"), 500);
+    assert_eq!(
+        breakdown
+            .buckets
+            .iter()
+            .map(|bucket| bucket.bytes)
+            .sum::<u64>(),
+        breakdown.used_bytes
+    );
+    assert_eq!(breakdown.reclaimable_bytes, 100);
+    assert_eq!(breakdown.confidence, "partial");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn system_volume_usage_uses_native_apfs_accounting() {
+    let bytes = summarize_system_volume_usage_bytes();
+    assert!(bytes > 1024 * 1024 * 1024);
+    assert!(bytes < 200 * 1024 * 1024 * 1024);
 }
 
 #[test]

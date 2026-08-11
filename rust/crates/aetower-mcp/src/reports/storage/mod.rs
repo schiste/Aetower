@@ -543,8 +543,8 @@ use models::{
     StorageHygieneItem, StorageHygieneItemsPageResponse, StorageHygieneOptions,
     StorageHygieneOverviewResponse, StorageHygieneRepoDetailResponse, StorageHygieneSummary,
     StorageInvestigationFinding, StorageInvestigationSummary, StorageItemSortKey,
-    StoragePerformanceBudgetDiagnostics, StoragePipelineDebugResponse,
-    StoragePipelineEventLedgerDebug, StoragePipelineMeasurementDebug,
+    StorageOwnershipBreakdown, StorageOwnershipBucket, StoragePerformanceBudgetDiagnostics,
+    StoragePipelineDebugResponse, StoragePipelineEventLedgerDebug, StoragePipelineMeasurementDebug,
     StoragePipelineSituationSnapshotDebug, StoragePreventionPolicy, StoragePreventionSuggestion,
     StorageRedundancyGroup, StorageRedundancyItem, StorageRepoArtifactFolder,
     StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryInventoryItem,
@@ -554,6 +554,8 @@ use models::{
     StorageSituationTopOffender, StorageSkippedRoot, StorageSourceCoverage,
     StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
 };
+#[cfg(test)]
+use projection::summarize_storage_ownership;
 pub use projection::{
     storage_backlog_drain_json, storage_growth_insights_json, storage_hygiene_actions_json,
     storage_hygiene_items_page_json, storage_hygiene_overview_json,
@@ -585,7 +587,7 @@ use report::{
     storage_byte_accounting_label, storage_index_cache_status, storage_item_evidence,
     storage_item_next_step, storage_local_reclaimable_bytes,
     storage_performance_budget_diagnostics, storage_reclaim_bucket, storage_source_kind,
-    storage_source_label, summarize_volume_states,
+    storage_source_label, summarize_system_volume_usage_bytes, summarize_volume_states,
 };
 #[cfg(test)]
 pub(crate) use report::{

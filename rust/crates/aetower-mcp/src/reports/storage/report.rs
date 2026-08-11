@@ -4498,9 +4498,15 @@ fn default_storage_roots() -> Vec<String> {
     .collect();
 
     roots.extend(
-        ["/Applications", "/Library", "/Users/Shared"]
-            .into_iter()
-            .map(String::from),
+        [
+            "/Applications",
+            "/Library",
+            "/private/var/db",
+            "/private/var/log",
+            "/Users/Shared",
+        ]
+        .into_iter()
+        .map(String::from),
     );
 
     if let Ok(entries) = fs::read_dir("/Volumes") {
@@ -4674,6 +4680,62 @@ pub(super) fn summarize_volume_states(requested_roots: &[PathBuf]) -> Vec<Storag
     }
     volumes.sort_by(|left, right| left.path.cmp(&right.path));
     volumes
+}
+
+/// Physical bytes owned by macOS APFS support volumes rather than the writable
+/// Data volume. `ATTR_VOL_SPACEUSED` is the native source used by `df` for an
+/// individual APFS volume; ordinary `statfs(total - free)` would incorrectly
+/// report container-wide usage for every sibling volume.
+#[cfg(target_os = "macos")]
+pub(super) fn summarize_system_volume_usage_bytes() -> u64 {
+    [
+        "/",
+        "/System/Volumes/Preboot",
+        "/System/Volumes/VM",
+        "/System/Volumes/Update",
+    ]
+    .into_iter()
+    .filter_map(attr_volume_space_used)
+    .fold(0u64, u64::saturating_add)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn summarize_system_volume_usage_bytes() -> u64 {
+    0
+}
+
+#[cfg(target_os = "macos")]
+fn attr_volume_space_used(path: &str) -> Option<u64> {
+    let c_path = CString::new(path).ok()?;
+    let mut attributes = libc::attrlist {
+        bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+        reserved: 0,
+        commonattr: 0,
+        volattr: libc::ATTR_VOL_SPACEUSED,
+        dirattr: 0,
+        fileattr: 0,
+        forkattr: 0,
+    };
+    // Attribute buffers begin with a u32 length. Scalar volume attributes are
+    // packed on a four-byte boundary, so read the following off_t unaligned.
+    let mut buffer = [0u8; 16];
+    let rc = unsafe {
+        libc::getattrlist(
+            c_path.as_ptr(),
+            std::ptr::from_mut(&mut attributes).cast(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            0,
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    let reported_length = u32::from_ne_bytes(buffer[..4].try_into().ok()?) as usize;
+    if reported_length < 12 || reported_length > buffer.len() {
+        return None;
+    }
+    Some(u64::from_ne_bytes(buffer[4..12].try_into().ok()?))
 }
 
 fn volume_state_for_path(path: &Path) -> Option<StorageVolumeState> {

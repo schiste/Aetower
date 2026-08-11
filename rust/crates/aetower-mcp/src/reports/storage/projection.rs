@@ -294,6 +294,7 @@ pub(super) fn persist_storage_situation_snapshot_from_report(report: &StorageHyg
     };
     let response = build_storage_situation_response_from_report(
         report,
+        &storage_index,
         storage_index.status.clone(),
         dirty_summary,
         &dirty_paths,
@@ -374,6 +375,15 @@ fn build_storage_situation_response(
         );
     }
     let recovery_plan = storage_situation_recovery_plan(&dirty_summary);
+    let volume_states = summarize_volume_states(roots);
+    let ownership_breakdown = summarize_storage_ownership(
+        &summaries,
+        &volume_states,
+        &situation_summary,
+        &cache_status,
+        summarize_system_volume_usage_bytes(),
+        now_millis,
+    );
     StorageSituationResponse {
         captured_at_millis: now_millis,
         snapshot_updated_at_millis: Some(now_millis),
@@ -389,7 +399,8 @@ fn build_storage_situation_response(
         summary: situation_summary,
         top_offenders,
         domains,
-        volume_states: summarize_volume_states(roots),
+        ownership_breakdown,
+        volume_states,
         caveats,
     }
 }
@@ -571,6 +582,14 @@ fn overlay_storage_situation_snapshot(
     // the lifetime of the persisted directory-inventory snapshot: free space
     // can change by tens of GiB without a storage scan completing.
     snapshot.volume_states = summarize_volume_states(roots);
+    snapshot.ownership_breakdown = summarize_storage_ownership(
+        &summaries,
+        &snapshot.volume_states,
+        &snapshot.summary,
+        &snapshot.cache_status,
+        summarize_system_volume_usage_bytes(),
+        storage_now_millis(),
+    );
     snapshot.snapshot_updated_at_millis = Some(storage_now_millis());
     snapshot.backlog_drain =
         storage_situation_backlog_drain(storage_index, roots, &dirty_summary, storage_now_millis());
@@ -603,6 +622,7 @@ fn overlay_storage_situation_snapshot(
 
 fn build_storage_situation_response_from_report(
     report: &StorageHygieneReport,
+    storage_index: &StorageSizeIndex,
     storage_index_status: String,
     dirty_summary: StorageDirtyPathSummary,
     dirty_paths: &[String],
@@ -656,6 +676,23 @@ fn build_storage_situation_response_from_report(
     );
 
     let recovery_plan = storage_situation_recovery_plan(&dirty_summary);
+    let summaries = storage_index.load_index_summaries(&report_roots);
+    let ownership_breakdown = summarize_storage_ownership(
+        &summaries,
+        &report.volume_states,
+        &StorageSituationSummary {
+            source_root_count: report.roots.len(),
+            item_count: report.summary.item_count.min(u64::MAX as usize) as u64,
+            inventory_size_bytes: report.summary.inventory_size_bytes,
+            safely_reclaimable_now_bytes: report.summary.safely_reclaimable_now_bytes,
+            maybe_reclaimable_bytes: report.summary.maybe_reclaimable_bytes,
+            review_required_bytes: report.summary.review_required_bytes,
+            dangerous_user_data_bytes: report.summary.dangerous_user_data_bytes,
+        },
+        &cache_status,
+        summarize_system_volume_usage_bytes(),
+        report.captured_at_millis,
+    );
     StorageSituationResponse {
         captured_at_millis: report.captured_at_millis,
         snapshot_updated_at_millis: Some(report.captured_at_millis),
@@ -676,8 +713,231 @@ fn build_storage_situation_response_from_report(
         },
         top_offenders,
         domains,
+        ownership_breakdown,
         volume_states: report.volume_states.clone(),
         caveats,
+    }
+}
+
+pub(super) fn summarize_storage_ownership(
+    summaries: &[StorageIndexSummaryRow],
+    volume_states: &[StorageVolumeState],
+    situation_summary: &StorageSituationSummary,
+    cache_status: &StorageCacheStatus,
+    system_volume_bytes: u64,
+    measured_at_millis: u64,
+) -> StorageOwnershipBreakdown {
+    let used_bytes = volume_states
+        .iter()
+        .max_by_key(|volume| volume.total_bytes)
+        .map(|volume| {
+            let free = if volume.available_bytes > 0 {
+                volume.available_bytes
+            } else {
+                volume.free_now_bytes
+            };
+            volume.total_bytes.saturating_sub(free)
+        })
+        .unwrap_or_default();
+
+    // A broad root such as ~/Library overlaps its explicitly scanned child
+    // roots. Only leaf roots participate in ownership accounting; uncovered
+    // parent bytes remain in the honest volume residual instead of being
+    // counted twice.
+    let leaf_summaries = summaries
+        .iter()
+        .filter(|candidate| {
+            !summaries.iter().any(|other| {
+                candidate.source_root != other.source_root
+                    && path_is_under_root(
+                        &other.source_root,
+                        Path::new(candidate.source_root.as_str()),
+                    )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut raw = BTreeMap::<&'static str, (u64, u64)>::new();
+    raw.insert("system", (system_volume_bytes, 0));
+    for row in leaf_summaries {
+        let id = storage_ownership_id(Path::new(&row.source_root));
+        let entry = raw.entry(id).or_default();
+        entry.0 = entry.0.saturating_add(row.inventory_size_bytes);
+        entry.1 = entry.1.saturating_add(row.safe_reclaimable_bytes);
+    }
+
+    let known_total = raw
+        .values()
+        .fold(0u64, |total, (bytes, _)| total.saturating_add(*bytes));
+    let confidence = if cache_status.stale || cache_status.partial {
+        "partial"
+    } else {
+        "indexed"
+    }
+    .to_owned();
+    let definitions = [
+        (
+            "system",
+            "System",
+            "macOS APFS volumes and indexed system-wide support files.",
+        ),
+        (
+            "repositories",
+            "Repositories",
+            "Source trees, dependencies, build products, Git data, and repository-local media.",
+        ),
+        (
+            "applications",
+            "Apps & Support",
+            "Installed applications, containers, and per-user application support.",
+        ),
+        (
+            "developer",
+            "Developer Infrastructure",
+            "Container VMs, toolchains, package stores, IDE data, and agent workspaces.",
+        ),
+        (
+            "personal",
+            "Personal Data",
+            "Documents, desktop files, downloads, and locally materialized cloud files.",
+        ),
+        (
+            "other",
+            "Other",
+            "Indexed ownership roots that do not fit a primary storage category.",
+        ),
+    ];
+    let mut buckets = Vec::new();
+    let mut assigned_bytes = 0u64;
+    let mut assigned_reclaimable = 0u64;
+    for (id, label, detail) in definitions {
+        let (raw_bytes, raw_reclaimable) = raw.get(id).copied().unwrap_or_default();
+        if raw_bytes == 0 {
+            continue;
+        }
+        let bytes = if known_total > used_bytes && known_total > 0 {
+            ((raw_bytes as u128 * used_bytes as u128) / known_total as u128) as u64
+        } else {
+            raw_bytes
+        };
+        let reclaimable_bytes = raw_reclaimable.min(bytes);
+        assigned_bytes = assigned_bytes.saturating_add(bytes);
+        assigned_reclaimable = assigned_reclaimable.saturating_add(reclaimable_bytes);
+        buckets.push(StorageOwnershipBucket {
+            id: id.to_owned(),
+            label: label.to_owned(),
+            bytes,
+            reclaimable_bytes,
+            source: if id == "system" {
+                "native_volume+storage_index".to_owned()
+            } else {
+                "storage_index".to_owned()
+            },
+            confidence: if id == "system" && raw_bytes == system_volume_bytes {
+                "live".to_owned()
+            } else {
+                confidence.clone()
+            },
+            detail: detail.to_owned(),
+        });
+    }
+
+    let attributed_bytes = assigned_bytes.min(used_bytes);
+    let unattributed_bytes = used_bytes.saturating_sub(attributed_bytes);
+    let total_reclaimable = situation_summary
+        .safely_reclaimable_now_bytes
+        .min(used_bytes);
+    if unattributed_bytes > 0 {
+        let reclaimable_bytes = total_reclaimable
+            .saturating_sub(assigned_reclaimable)
+            .min(unattributed_bytes);
+        if let Some(other) = buckets.iter_mut().find(|bucket| bucket.id == "other") {
+            other.bytes = other.bytes.saturating_add(unattributed_bytes);
+            other.reclaimable_bytes = other
+                .reclaimable_bytes
+                .saturating_add(reclaimable_bytes)
+                .min(other.bytes);
+            other.source = "storage_index+volume_residual".to_owned();
+            other.confidence = "unattributed".to_owned();
+            other.detail =
+                "Indexed miscellaneous roots plus used capacity not yet assigned to a scanned ownership root."
+                    .to_owned();
+        } else {
+            buckets.push(StorageOwnershipBucket {
+                id: "other".to_owned(),
+                label: "Other".to_owned(),
+                bytes: unattributed_bytes,
+                reclaimable_bytes,
+                source: "volume_residual".to_owned(),
+                confidence: "unattributed".to_owned(),
+                detail: "Used volume capacity not yet assigned to a scanned ownership root."
+                    .to_owned(),
+            });
+        }
+    }
+
+    StorageOwnershipBreakdown {
+        used_bytes,
+        attributed_bytes,
+        unattributed_bytes,
+        reclaimable_bytes: total_reclaimable,
+        measured_at_millis,
+        confidence,
+        buckets,
+    }
+}
+
+fn storage_ownership_id(path: &Path) -> &'static str {
+    let normalized = path.display().to_string().to_ascii_lowercase();
+    let components = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>();
+    let has_component = |value: &str| components.iter().any(|component| component == value);
+
+    if has_component("repositories") || has_component("projects") {
+        "repositories"
+    } else if normalized == "/library"
+        || normalized.starts_with("/private/var/db")
+        || normalized.starts_with("/private/var/log")
+    {
+        "system"
+    } else if has_component("applications")
+        || normalized.contains("/library/application support")
+        || normalized.contains("/library/containers")
+    {
+        "applications"
+    } else if [
+        ".colima",
+        ".docker",
+        ".cargo",
+        ".npm",
+        ".pnpm-store",
+        ".cache",
+        ".codex",
+        ".claude",
+    ]
+    .iter()
+    .any(|component| has_component(component))
+        || normalized.contains("/library/developer")
+        || normalized.contains("/library/caches/org.swift.swiftpm")
+        || normalized.contains("/library/caches/com.apple.dt.xcode")
+    {
+        "developer"
+    } else if [
+        "documents",
+        "desktop",
+        "downloads",
+        "cloudstorage",
+        "mobile documents",
+    ]
+    .iter()
+    .any(|component| has_component(component))
+    {
+        "personal"
+    } else {
+        "other"
     }
 }
 

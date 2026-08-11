@@ -139,8 +139,32 @@ pub(super) struct StorageSituationResponse {
     pub(super) top_offenders: Vec<StorageSituationTopOffender>,
     #[serde(default)]
     pub(super) domains: Vec<StorageSituationDomain>,
+    #[serde(default)]
+    pub(super) ownership_breakdown: StorageOwnershipBreakdown,
     pub(super) volume_states: Vec<StorageVolumeState>,
     pub(super) caveats: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct StorageOwnershipBreakdown {
+    pub(super) used_bytes: u64,
+    pub(super) attributed_bytes: u64,
+    pub(super) unattributed_bytes: u64,
+    pub(super) reclaimable_bytes: u64,
+    pub(super) measured_at_millis: u64,
+    pub(super) confidence: String,
+    pub(super) buckets: Vec<StorageOwnershipBucket>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct StorageOwnershipBucket {
+    pub(super) id: String,
+    pub(super) label: String,
+    pub(super) bytes: u64,
+    pub(super) reclaimable_bytes: u64,
+    pub(super) source: String,
+    pub(super) confidence: String,
+    pub(super) detail: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
