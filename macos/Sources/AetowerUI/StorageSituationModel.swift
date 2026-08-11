@@ -11,7 +11,7 @@ struct StorageSituationModel: Decodable, Sendable {
     let recoveryPlan: StorageSituationRecoveryPlanModel?
     let summary: StorageSituationSummaryModel
     let topOffenders: [StorageSituationTopOffenderModel]
-    let volumeStates: [StorageVolumeStateModel]
+    var volumeStates: [StorageVolumeStateModel]
     let caveats: [String]
 
     var hasCachedFacts: Bool {

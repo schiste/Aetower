@@ -633,6 +633,52 @@ fn storage_situation_snapshot_preserves_partial_empty_cache_status() {
 }
 
 #[test]
+fn storage_situation_snapshot_refreshes_live_volume_capacity() {
+    let _index_guard = storage_index_test_guard();
+    let root = test_root("situation-refreshes-volume-capacity");
+    if let Err(error) = fs::create_dir_all(&root) {
+        panic!("create volume-capacity root: {error}");
+    }
+    let roots = vec![root.clone()];
+
+    let _ = must_ok(
+        storage_situation_json(vec![root.display().to_string()], 4),
+        "seed situation snapshot",
+    );
+    let storage_index = StorageSizeIndex::open();
+    let mut stale = storage_index
+        .load_situation_snapshot(&roots, 4)
+        .expect("seeded situation snapshot is loadable");
+    assert!(!stale.volume_states.is_empty());
+    stale.volume_states[0].free_now_bytes = 1;
+    stale.volume_states[0].available_bytes = 1;
+    must_ok(
+        storage_index.persist_situation_snapshot(&roots, "test_stale_capacity", &stale),
+        "persist stale volume capacity",
+    );
+
+    let refreshed = must_ok(
+        storage_situation_json(vec![root.display().to_string()], 4),
+        "refresh situation snapshot",
+    );
+    let refreshed = parse_json_value(&refreshed, "refreshed situation parses");
+    assert!(
+        refreshed["volume_states"][0]["free_now_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 1),
+        "the persisted free-space sentinel must be replaced by a live statfs value"
+    );
+    assert!(
+        refreshed["volume_states"][0]["available_bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 1),
+        "the persisted available-space sentinel must be replaced by a live statfs value"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_situation_snapshot_requires_exact_root_set() {
     let _index_guard = storage_index_test_guard();
     let root = test_root("exact-situation-snapshot");

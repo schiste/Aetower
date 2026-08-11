@@ -567,6 +567,10 @@ fn overlay_storage_situation_snapshot(
     }
     apply_dirty_summary_to_cache_status(&mut snapshot.cache_status, &dirty_summary);
     snapshot.storage_index_status = storage_index.status.clone();
+    // Volume capacity is a cheap, live filesystem fact. Never let it inherit
+    // the lifetime of the persisted directory-inventory snapshot: free space
+    // can change by tens of GiB without a storage scan completing.
+    snapshot.volume_states = summarize_volume_states(roots);
     snapshot.snapshot_updated_at_millis = Some(storage_now_millis());
     snapshot.backlog_drain =
         storage_situation_backlog_drain(storage_index, roots, &dirty_summary, storage_now_millis());

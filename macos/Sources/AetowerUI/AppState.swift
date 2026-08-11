@@ -2451,10 +2451,22 @@ public final class AppState {
     }
 
     fileprivate func publishStorageSituation(
-        _ situation: StorageSituationModel,
+        _ decodedSituation: StorageSituationModel,
         updateEstimate: Bool
     ) {
+        var situation = decodedSituation
+        situation.volumeStates = StorageVolumeCapacityEnricher.enrich(situation.volumeStates)
         let signature = Self.storageSituationPublishSignature(situation)
+
+        // The compatibility report can arrive after the situation snapshot. Keep
+        // its cheap volume facts live even when the situation itself is unchanged.
+        if var report = storageHygieneReport,
+           Self.storageVolumePublishSignature(report.volumeStates)
+               != Self.storageVolumePublishSignature(situation.volumeStates) {
+            report.volumeStates = situation.volumeStates
+            storageHygieneReport = report
+        }
+
         if storageSituationPublishSignature == signature, storageSituation != nil {
             return
         }
@@ -2472,9 +2484,7 @@ public final class AppState {
         let topOffenders = situation.topOffenders.prefix(8)
             .map { "\($0.path)|\($0.physicalBytes)|\($0.stale ? 1 : 0)" }
             .joined(separator: ",")
-        let volumes = situation.volumeStates
-            .map { "\($0.path)|\($0.freeNowBytes)|\($0.availableBytes)|\($0.purgeableBytesEstimate)" }
-            .joined(separator: ",")
+        let volumes = storageVolumePublishSignature(situation.volumeStates)
         let backlogDrain = Self.storageSituationBacklogDrainSignature(situation.backlogDrain)
         let recoveryPlan = Self.storageSituationRecoveryPlanSignature(situation.recoveryPlan)
         var fields: [String] = [
@@ -2503,6 +2513,16 @@ public final class AppState {
         fields.append(topOffenders)
         fields.append(volumes)
         return fields.joined(separator: "|")
+    }
+
+    nonisolated private static func storageVolumePublishSignature(
+        _ volumeStates: [StorageVolumeStateModel]
+    ) -> String {
+        volumeStates
+            .map {
+                "\($0.path)|\($0.totalBytes)|\($0.freeNowBytes)|\($0.availableBytes)|\($0.purgeableBytesEstimate)|\($0.importantUsageAvailableBytes ?? 0)|\($0.opportunisticUsageAvailableBytes ?? 0)"
+            }
+            .joined(separator: ",")
     }
 
     nonisolated private static func storageSituationBacklogDrainSignature(
