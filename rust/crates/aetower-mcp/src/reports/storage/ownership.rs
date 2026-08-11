@@ -301,11 +301,25 @@ pub fn storage_ownership_refresh_json(
         .load_repository_inventory_cache(&repository_roots)
         .into_keys()
         .collect::<BTreeSet<_>>();
-    let boundaries = canonical_storage_ownership_boundaries(&repository_roots);
+    let repository_boundary_roots =
+        repository_ownership_boundary_roots(&repository_roots, &cached_repository_roots);
+    let boundaries = canonical_storage_ownership_boundaries(&repository_boundary_roots);
     let active_generation = storage_index.load_active_ownership_generation();
+    let current_boundary_ids = boundaries
+        .iter()
+        .map(|boundary| boundary.boundary_id.as_str())
+        .collect::<BTreeSet<_>>();
     let reusable_by_boundary = active_generation
         .as_ref()
-        .filter(|generation| generation.classifier_version == STORAGE_OWNERSHIP_CLASSIFIER_VERSION)
+        .filter(|generation| {
+            generation.classifier_version == STORAGE_OWNERSHIP_CLASSIFIER_VERSION
+                && generation
+                    .rollups
+                    .iter()
+                    .map(|rollup| rollup.boundary_id.as_str())
+                    .collect::<BTreeSet<_>>()
+                    == current_boundary_ids
+        })
         .map(|generation| {
             generation
                 .rollups
@@ -371,6 +385,32 @@ pub fn storage_ownership_refresh_json(
         rollups: generation.rollups,
     })
     .map_err(|error| error.to_string())
+}
+
+pub(super) fn repository_ownership_boundary_roots(
+    workspace_roots: &[PathBuf],
+    repository_roots: &BTreeSet<String>,
+) -> Vec<PathBuf> {
+    let mut boundaries = workspace_roots.iter().cloned().collect::<BTreeSet<_>>();
+    for repository_root in repository_roots {
+        let repository_root = Path::new(repository_root);
+        let Some(workspace_root) = workspace_roots.iter().find(|workspace_root| {
+            path_is_under_root(&repository_root.display().to_string(), workspace_root)
+        }) else {
+            continue;
+        };
+        let Ok(relative) = repository_root.strip_prefix(workspace_root) else {
+            continue;
+        };
+        let owner = relative.components().next().map_or_else(
+            || workspace_root.clone(),
+            |component| workspace_root.join(component),
+        );
+        if owner.is_dir() {
+            boundaries.insert(owner);
+        }
+    }
+    boundaries.into_iter().collect()
 }
 
 fn durable_repository_workspace_roots(

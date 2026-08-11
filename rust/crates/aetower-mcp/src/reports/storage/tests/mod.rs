@@ -1133,6 +1133,28 @@ fn storage_repository_workspace_discovery_is_selective() {
 }
 
 #[test]
+fn storage_repository_ownership_collapses_nested_repositories_to_project_owner() {
+    let workspace = test_root("ownership-project-boundaries");
+    let project = workspace.join("Project");
+    let nested_repository = project.join("services/api");
+    let sibling = workspace.join("Sibling");
+    for repository in [&project, &nested_repository, &sibling] {
+        fs::create_dir_all(repository.join(".git")).expect("project repository fixture");
+    }
+    let repository_roots = BTreeSet::from([
+        project.display().to_string(),
+        nested_repository.display().to_string(),
+        sibling.display().to_string(),
+    ]);
+
+    let boundaries =
+        repository_ownership_boundary_roots(std::slice::from_ref(&workspace), &repository_roots);
+
+    assert_eq!(boundaries, vec![workspace.clone(), project, sibling]);
+    let _ = fs::remove_dir_all(workspace);
+}
+
+#[test]
 fn storage_repository_workspace_identity_survives_rename() {
     let guard = storage_index_test_guard();
     let index = StorageSizeIndex::open();

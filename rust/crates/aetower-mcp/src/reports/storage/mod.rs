@@ -565,7 +565,8 @@ use ownership::{STORAGE_OWNERSHIP_CATEGORIES, STORAGE_OWNERSHIP_CLASSIFIER_VERSI
 use ownership::{
     StorageOwnershipBoundarySpec, discover_repository_workspace_roots,
     measure_storage_ownership_boundary, normalize_storage_ownership_boundaries,
-    storage_ownership_boundary_for_path, storage_ownership_excluded_descendants,
+    repository_ownership_boundary_roots, storage_ownership_boundary_for_path,
+    storage_ownership_excluded_descendants,
 };
 #[cfg(test)]
 use projection::{StorageOwnershipProjectionInput, summarize_storage_ownership};
