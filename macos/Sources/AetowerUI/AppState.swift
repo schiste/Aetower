@@ -2491,7 +2491,12 @@ public final class AppState {
                 return "\(bucket.id)|\(bucket.bytes)|\(bucket.reclaimableBytes)|\(bucket.confidence)|\(bucket.measuredAtMillis ?? 0)|\(subBuckets)"
             }
             .joined(separator: ",")
-        return "\(breakdown.usedBytes)|\(breakdown.attributedBytes)|\(breakdown.unattributedBytes)|\(breakdown.reclaimableBytes)|\(breakdown.confidence)|\(breakdown.generationId ?? 0)|\(breakdown.classifierVersion ?? 0)|\(breakdown.generationStatus ?? "")|\(buckets)"
+        let repositoryArtifacts = breakdown.stableRepositoryArtifacts
+        let artifactBytes = repositoryArtifacts.reduce(UInt64(0)) { $0 &+ $1.physicalBytes }
+        let reclaimableArtifactBytes = repositoryArtifacts
+            .filter(\.cleanupAllowed)
+            .reduce(UInt64(0)) { $0 &+ $1.physicalBytes }
+        return "\(breakdown.usedBytes)|\(breakdown.attributedBytes)|\(breakdown.unattributedBytes)|\(breakdown.reclaimableBytes)|\(breakdown.confidence)|\(breakdown.generationId ?? 0)|\(breakdown.classifierVersion ?? 0)|\(breakdown.generationStatus ?? "")|\(buckets)|artifacts:\(repositoryArtifacts.count):\(artifactBytes):\(reclaimableArtifactBytes)"
     }
 
     nonisolated private static func storageVolumePublishSignature(

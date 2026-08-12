@@ -59,6 +59,33 @@ final class StorageHygieneModelsTests: XCTestCase {
                 { "id": "source", "label": "Source & other", "bytes": 100 }
               ]
             }
+          ],
+          "repository_artifacts": [
+            {
+              "id": "family:worktree:target",
+              "path": "/Repositories/project-worktree/target",
+              "relative_path": "target",
+              "repository_root": "/Repositories/project-worktree",
+              "repository_family_id": "family",
+              "repository_family_root": "/Repositories/project",
+              "repository_family_label": "project",
+              "worktree": true,
+              "kind": "rust-build",
+              "label": "Rust builds",
+              "physical_bytes": 300,
+              "file_count": 10,
+              "newest_modified_millis": 1,
+              "evidence": ["Cargo marker", "Git ignored"],
+              "confidence": "confirmed",
+              "git_ignored": true,
+              "git_tracked": false,
+              "cleanup_tier": "rebuildable",
+              "cleanup_allowed": true,
+              "cleanup_blockers": [],
+              "default_cleanup_action": "trash",
+              "rebuild_instruction": "Run the owning Cargo workspace build or tests.",
+              "estimated_rebuild_cost": "low"
+            }
           ]
         }
         """
@@ -80,6 +107,10 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertEqual(breakdown.stableBuckets.first?.measuredAtMillis, 41)
         XCTAssertEqual(breakdown.stableBuckets.first?.subBuckets?.count, 2)
         XCTAssertEqual(breakdown.stableBuckets.first?.subBuckets?.first?.bytes, 300)
+        XCTAssertEqual(breakdown.stableRepositoryArtifacts.first?.kind, "rust-build")
+        XCTAssertEqual(breakdown.repositoryArtifactKinds.first?.bytes, 300)
+        XCTAssertEqual(breakdown.repositoryArtifactFamilies.first?.worktreeBytes, 300)
+        XCTAssertEqual(breakdown.repositoryArtifactFamilies.first?.reclaimableBytes, 300)
     }
 
     @MainActor

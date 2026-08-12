@@ -31,6 +31,7 @@ struct StorageOwnershipBreakdownModel: Decodable, Sendable {
     let classifierVersion: UInt32?
     let generationStatus: String?
     let buckets: [StorageOwnershipBucketModel]
+    let repositoryArtifacts: [StorageRepositoryArtifactModel]?
 
     var isUsable: Bool {
         usedBytes > 0 && !buckets.isEmpty
@@ -40,6 +41,53 @@ struct StorageOwnershipBreakdownModel: Decodable, Sendable {
         buckets.sorted { left, right in
             (left.effectiveRank, left.id) < (right.effectiveRank, right.id)
         }
+    }
+
+    var stableRepositoryArtifacts: [StorageRepositoryArtifactModel] {
+        (repositoryArtifacts ?? []).sorted {
+            ($0.physicalBytes, $1.path) > ($1.physicalBytes, $0.path)
+        }
+    }
+
+    var repositoryArtifactKinds: [StorageRepositoryArtifactKindModel] {
+        Dictionary(grouping: stableRepositoryArtifacts, by: \StorageRepositoryArtifactModel.kind)
+            .map { kind, artifacts in
+                StorageRepositoryArtifactKindModel(
+                    id: kind,
+                    label: artifacts.first?.label ?? kind,
+                    bytes: artifacts.reduce(0) { $0 &+ $1.physicalBytes },
+                    reclaimableBytes: artifacts
+                        .filter(\.cleanupAllowed)
+                        .reduce(0) { $0 &+ $1.physicalBytes },
+                    artifactCount: artifacts.count
+                )
+            }
+            .sorted { ($0.bytes, $1.id) > ($1.bytes, $0.id) }
+    }
+
+    var repositoryArtifactFamilies: [StorageRepositoryArtifactFamilyModel] {
+        Dictionary(
+            grouping: stableRepositoryArtifacts,
+            by: \StorageRepositoryArtifactModel.repositoryFamilyId
+        )
+        .map { familyID, artifacts in
+            StorageRepositoryArtifactFamilyModel(
+                id: familyID,
+                label: artifacts.first?.repositoryFamilyLabel ?? "Repository",
+                root: artifacts.first?.repositoryFamilyRoot ?? "",
+                bytes: artifacts.reduce(0) { $0 &+ $1.physicalBytes },
+                reclaimableBytes: artifacts
+                    .filter(\.cleanupAllowed)
+                    .reduce(0) { $0 &+ $1.physicalBytes },
+                worktreeBytes: artifacts
+                    .filter(\.worktree)
+                    .reduce(0) { $0 &+ $1.physicalBytes },
+                artifacts: artifacts.sorted {
+                    ($0.physicalBytes, $1.path) > ($1.physicalBytes, $0.path)
+                }
+            )
+        }
+        .sorted { ($0.bytes, $1.id) > ($1.bytes, $0.id) }
     }
 }
 
@@ -74,6 +122,50 @@ struct StorageOwnershipSubBucketModel: Decodable, Identifiable, Sendable {
     let id: String
     let label: String
     let bytes: UInt64
+}
+
+struct StorageRepositoryArtifactModel: Decodable, Identifiable, Sendable {
+    let id: String
+    let path: String
+    let relativePath: String
+    let repositoryRoot: String
+    let repositoryFamilyId: String
+    let repositoryFamilyRoot: String
+    let repositoryFamilyLabel: String
+    let worktree: Bool
+    let kind: String
+    let label: String
+    let physicalBytes: UInt64
+    let fileCount: UInt64
+    let newestModifiedMillis: UInt64?
+    let evidence: [String]
+    let confidence: String
+    let gitIgnored: Bool
+    let gitTracked: Bool
+    let cleanupTier: String
+    let cleanupAllowed: Bool
+    let cleanupBlockers: [String]
+    let defaultCleanupAction: String
+    let rebuildInstruction: String
+    let estimatedRebuildCost: String
+}
+
+struct StorageRepositoryArtifactKindModel: Identifiable, Sendable {
+    let id: String
+    let label: String
+    let bytes: UInt64
+    let reclaimableBytes: UInt64
+    let artifactCount: Int
+}
+
+struct StorageRepositoryArtifactFamilyModel: Identifiable, Sendable {
+    let id: String
+    let label: String
+    let root: String
+    let bytes: UInt64
+    let reclaimableBytes: UInt64
+    let worktreeBytes: UInt64
+    let artifacts: [StorageRepositoryArtifactModel]
 }
 
 struct StorageSituationRecoveryPlanModel: Decodable, Sendable {

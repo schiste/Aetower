@@ -309,6 +309,7 @@ public struct StorageView: View {
     @State private var showRawArtifacts = false
     @State private var showScannedRoots = false
     @State private var showCaveats = false
+    @State private var showRepositoryArtifactDetails = false
     @State private var pendingCleanupExecutionRequest: StorageCleanupExecutionRequest?
     @State private var cleanupExecutionResult: StorageCleanupExecutionResult?
     @State private var cleanupExecutionIsRunning = false
@@ -5518,6 +5519,12 @@ public struct StorageView: View {
                 }
                 .font(AetowerDesign.Typography.metadata)
                 .foregroundStyle(AetowerDesign.Ink.secondary)
+
+                if !breakdown.stableRepositoryArtifacts.isEmpty {
+                    Divider()
+                        .padding(.vertical, AetowerDesign.Spacing.xxs)
+                    storageRepositoryArtifactInventory(breakdown)
+                }
             }
             .accessibilityElement(children: .combine)
         } else if state.storageOwnershipRefreshIsLoading {
@@ -5529,6 +5536,202 @@ public struct StorageView: View {
                 .font(AetowerDesign.Typography.metadata)
                 .foregroundStyle(AetowerDesign.Status.warning)
         }
+    }
+
+    private func storageRepositoryArtifactInventory(
+        _ breakdown: StorageOwnershipBreakdownModel
+    ) -> some View {
+        let artifacts = breakdown.stableRepositoryArtifacts
+        let families = breakdown.repositoryArtifactFamilies
+        let kinds = breakdown.repositoryArtifactKinds
+        let reclaimable = artifacts
+            .filter(\.cleanupAllowed)
+            .reduce(UInt64(0)) { $0 &+ $1.physicalBytes }
+
+        return DisclosureGroup(isExpanded: $showRepositoryArtifactDetails) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.adaptive(minimum: 180), spacing: AetowerDesign.Spacing.md),
+                    ],
+                    alignment: .leading,
+                    spacing: AetowerDesign.Spacing.xs
+                ) {
+                    ForEach(kinds) { kind in
+                        HStack(spacing: AetowerDesign.Spacing.storageLegendLabel) {
+                            AetowerStorageStrataMark(
+                                color: storageRepositoryArtifactColor(kind.id)
+                            )
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(kind.label)
+                                    .lineLimit(1)
+                                Text("\(kind.artifactCount) artifact\(kind.artifactCount == 1 ? "" : "s")")
+                                    .font(AetowerDesign.Typography.metadata)
+                                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                            }
+                            Spacer(minLength: AetowerDesign.Spacing.xs)
+                            Text(formatBytes(kind.bytes))
+                                .font(AetowerDesign.Typography.dataSmall)
+                                .monospacedDigit()
+                        }
+                    }
+                }
+
+                ForEach(Array(families.prefix(12))) { family in
+                    DisclosureGroup {
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                            ForEach(Array(family.artifacts.prefix(12))) { artifact in
+                                storageRepositoryArtifactRow(artifact)
+                            }
+                            if family.artifacts.count > 12 {
+                                Text("\(family.artifacts.count - 12) smaller artifacts are included in this total.")
+                                    .font(AetowerDesign.Typography.metadata)
+                                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                            }
+                        }
+                        .padding(.top, AetowerDesign.Spacing.xs)
+                    } label: {
+                        HStack(spacing: AetowerDesign.Spacing.sm) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(family.label)
+                                    .font(AetowerDesign.Typography.metadataStrong)
+                                if family.worktreeBytes > 0 {
+                                    Text("\(formatBytes(family.worktreeBytes)) in linked worktrees")
+                                        .font(AetowerDesign.Typography.metadata)
+                                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                                }
+                            }
+                            Spacer()
+                            if family.reclaimableBytes > 0 {
+                                Text("\(formatBytes(family.reclaimableBytes)) reclaimable")
+                                    .font(AetowerDesign.Typography.metadata)
+                                    .foregroundStyle(AetowerDesign.Tone.disk)
+                            }
+                            Text(formatBytes(family.bytes))
+                                .font(AetowerDesign.Typography.dataSmall)
+                                .monospacedDigit()
+                        }
+                    }
+                }
+            }
+            .padding(.top, AetowerDesign.Spacing.sm)
+        } label: {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Text("Build & test details")
+                    .font(AetowerDesign.Typography.metadataStrong)
+                Text("\(artifacts.count) generated roots")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                Spacer()
+                if reclaimable > 0 {
+                    Text("\(formatBytes(reclaimable)) evidenced reclaimable")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Tone.disk)
+                }
+            }
+        }
+    }
+
+    private func storageRepositoryArtifactRow(
+        _ artifact: StorageRepositoryArtifactModel
+    ) -> some View {
+        HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
+            AetowerStorageStrataMark(color: storageRepositoryArtifactColor(artifact.kind))
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Text(artifact.relativePath)
+                        .font(AetowerDesign.Typography.metadataStrong)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if artifact.worktree {
+                        Text("worktree")
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    }
+                }
+                Text(artifactEvidenceSummary(artifact))
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(
+                        artifact.cleanupAllowed
+                            ? AetowerDesign.Ink.tertiary
+                            : AetowerDesign.Status.warning
+                    )
+                    .lineLimit(1)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.sm)
+            Text(formatBytes(artifact.physicalBytes))
+                .font(AetowerDesign.Typography.dataSmall)
+                .monospacedDigit()
+            Button("Reveal") { reveal(path: artifact.path) }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            if artifact.cleanupAllowed {
+                Button("Stage") { stageRepositoryArtifact(artifact) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Add this evidenced rebuildable artifact to the reviewed Finder Trash flow.")
+            } else {
+                Image(systemName: "lock")
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .help(artifact.cleanupBlockers.joined(separator: "\n"))
+            }
+        }
+        .help(artifact.evidence.joined(separator: "\n"))
+    }
+
+    private func artifactEvidenceSummary(_ artifact: StorageRepositoryArtifactModel) -> String {
+        if artifact.cleanupAllowed {
+            return "Confirmed generated · Git-ignored · \(artifact.estimatedRebuildCost) rebuild cost"
+        }
+        return artifact.cleanupBlockers.first ?? "Review classification evidence"
+    }
+
+    private func storageRepositoryArtifactColor(_ kind: String) -> Color {
+        switch kind {
+        case "rust-build": AetowerDesign.StorageOwnership.RepositoryStrata.builds
+        case "swift-build": AetowerDesign.Tone.cpu
+        case "web-build": AetowerDesign.Tone.disk
+        case "test-output", "coverage-output": AetowerDesign.Status.warning
+        case "generated-data": AetowerDesign.StorageOwnership.RepositoryStrata.media
+        default: AetowerDesign.StorageOwnership.RepositoryStrata.workspace
+        }
+    }
+
+    private func stageRepositoryArtifact(_ artifact: StorageRepositoryArtifactModel) {
+        guard artifact.cleanupAllowed,
+              artifact.defaultCleanupAction == "trash",
+              artifact.cleanupBlockers.isEmpty,
+              !cleanupBasket.contains(where: { $0.path == artifact.path })
+        else { return }
+        cleanupBasket.append(
+            StorageCleanupBasketItem(
+                id: artifact.id,
+                title: artifact.relativePath,
+                path: artifact.path,
+                source: "Repository artifact inventory",
+                cleanupTier: artifact.cleanupTier,
+                safety: "rebuildable",
+                estimatedBytes: artifact.physicalBytes,
+                reason: artifact.evidence.joined(separator: " "),
+                consequence: "Moves the generated artifact root to Finder Trash. \(artifact.rebuildInstruction)",
+                evidence: artifact.evidence,
+                requiresReview: true,
+                blockers: artifact.cleanupBlockers,
+                prerequisites: [
+                    "Aetower will recheck for active writers immediately before moving this path.",
+                    "Review the repository and artifact path in the cleanup basket.",
+                ]
+            )
+        )
+        appendCleanupAudit(
+            action: "stage",
+            path: artifact.path,
+            detail: "Staged evidenced repository artifact from Build & test details.",
+            bytes: artifact.physicalBytes,
+            cleanupTier: artifact.cleanupTier,
+            safety: "rebuildable",
+            succeeded: true
+        )
     }
 
     private func storageOwnershipColor(_ id: String) -> Color {
