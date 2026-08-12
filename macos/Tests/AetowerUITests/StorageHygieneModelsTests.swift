@@ -2,6 +2,23 @@
 import XCTest
 
 final class StorageHygieneModelsTests: XCTestCase {
+    func testStorageMaintenanceTracksWorkInsteadOfPermanentCoverageState() throws {
+        let summaries = try AetowerJSON.snakeCaseDecoder().decode(
+            [StorageDirtyPathSummaryModel].self,
+            from: Data("""
+            [
+              {"dirty_path_count": 0, "unknown_gap": false},
+              {"dirty_path_count": 1, "unknown_gap": false},
+              {"dirty_path_count": 0, "unknown_gap": true}
+            ]
+            """.utf8)
+        )
+
+        XCTAssertFalse(summaries[0].hasPendingMaintenance)
+        XCTAssertTrue(summaries[1].hasPendingMaintenance)
+        XCTAssertTrue(summaries[2].hasPendingMaintenance)
+    }
+
     func testStorageOwnershipBreakdownDecodesSnakeCaseJSON() throws {
         let rawJSON = """
         {

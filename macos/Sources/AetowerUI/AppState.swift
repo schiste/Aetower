@@ -629,8 +629,7 @@ public final class AppState {
     @ObservationIgnored private var storageHygieneLoadWatchdogMode = "fast_changed_only"
     @ObservationIgnored private var storageHygieneLoadWatchdogBudgetSeconds: TimeInterval = 30
     private(set) var storageHygieneIsVerifyingCache = false
-    @ObservationIgnored private var storageSituationBacklogDrainTask: Task<Void, Never>?
-    @ObservationIgnored private var storageSituationSnapshotPollTask: Task<Void, Never>?
+    @ObservationIgnored private var storageSituationMaintenanceTask: Task<Void, Never>?
     @ObservationIgnored private var storageSituationPublishSignature: String?
     @ObservationIgnored private var storageSituationPollRoots: [String] = []
     @ObservationIgnored private var lastStorageBacklogDecisionDiagnosticMillis: UInt64 = 0
@@ -1057,8 +1056,7 @@ public final class AppState {
         publishFrontmostState(force: true)
         refresh(force: true)
         updateLagMonitoringState()
-        startStorageSituationBacklogDrain()
-        startStorageSituationSnapshotPoll()
+        startStorageSituationMaintenance()
         baseRefreshIntervalNanos = UInt64(max(1.0, refreshInterval) * 1_000_000_000)
         refreshTask = Task { [weak self] in
             guard let self else { return }
@@ -1115,10 +1113,8 @@ public final class AppState {
         diagnosticsLoadTask = nil
         storageHygieneTask?.cancel()
         storageHygieneTask = nil
-        storageSituationBacklogDrainTask?.cancel()
-        storageSituationBacklogDrainTask = nil
-        storageSituationSnapshotPollTask?.cancel()
-        storageSituationSnapshotPollTask = nil
+        storageSituationMaintenanceTask?.cancel()
+        storageSituationMaintenanceTask = nil
         storageHygieneIsVerifyingCache = false
         storageScheduledScanTask?.cancel()
         storageScheduledScanTask = nil
@@ -2238,14 +2234,11 @@ public final class AppState {
     private static let storageEstimateQuietMillis: UInt64 = 45_000
     private static let storageEstimateRefreshCooldownMillis: UInt64 = 120_000
     private static let storageCacheReverifyIntervalMillis: UInt64 = 6 * 60 * 60 * 1000
-    private static let storageSituationBacklogInitialDelayNanos: UInt64 = 20_000_000_000
+    private static let storageSituationMaintenanceInitialDelayNanos: UInt64 = 5_000_000_000
     private static let storageSituationBacklogNormalRetryNanos: UInt64 = 30_000_000_000
     private static let storageSituationBacklogSlowRetryNanos: UInt64 = 75_000_000_000
     private static let storageSituationBacklogPressureRetryNanos: UInt64 = 120_000_000_000
-    private static let storageSituationBacklogCleanPasses = 2
-    private static let storageSituationSnapshotPollInitialDelayNanos: UInt64 = 5_000_000_000
-    private static let storageSituationSnapshotPollActiveNanos: UInt64 = 15_000_000_000
-    private static let storageSituationSnapshotPollIdleNanos: UInt64 = 45_000_000_000
+    private static let storageSituationMaintenanceIdleNanos: UInt64 = 45_000_000_000
     private static let storageBacklogDecisionDiagnosticCooldownMillis: UInt64 = 120_000
 
     @discardableResult
@@ -2624,7 +2617,6 @@ public final class AppState {
 
         let host = snapshot.host
         let totalBytes = max(Double(host.memoryTotalBytes), 1)
-        let swapRatio = Double(host.swapUsedBytes) / totalBytes
         let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
 
         if host.thermalState == .serious || host.thermalState == .critical {
@@ -2634,15 +2626,6 @@ public final class AppState {
                 retryDelayNanos: pressureDelay,
                 state: "paused",
                 detail: "macOS reports serious thermal pressure."
-            )
-        }
-        if host.swapUsedBytes >= 2 * 1_073_741_824 || swapRatio >= 0.10 {
-            return makeStorageBacklogDrainDecision(
-                shouldDrain: false,
-                reason: "swap-pressure",
-                retryDelayNanos: pressureDelay,
-                state: "paused",
-                detail: "Swap usage is elevated; exact cleanup verification waits."
             )
         }
         if host.cpuPercent >= 85 {
@@ -2658,8 +2641,7 @@ public final class AppState {
         let shouldSlowDown = host.thermalState == .fair
             || host.onBattery
             || host.lowPowerMode
-            || compressedRatio >= 0.08
-            || hostPressureBand(host) != .nominal
+            || compressedRatio >= 0.12
 
         return makeStorageBacklogDrainDecision(
             shouldDrain: true,
@@ -2749,93 +2731,47 @@ public final class AppState {
         )
     }
 
-    private func startStorageSituationBacklogDrain() {
-        storageSituationBacklogDrainTask?.cancel()
+    private func startStorageSituationMaintenance() {
+        storageSituationMaintenanceTask?.cancel()
         let bridge = self.bridge
         let publisher = StorageHygieneMainActorPublisher(self)
-        let initialDelayNanos = Self.storageSituationBacklogInitialDelayNanos
-        let cleanPassLimit = Self.storageSituationBacklogCleanPasses
-        storageSituationBacklogDrainTask = Task.detached(priority: .utility) { [bridge, publisher] in
-            var cleanPasses = 0
-            try? await Task.sleep(nanoseconds: initialDelayNanos)
-            while !Task.isCancelled && cleanPasses < cleanPassLimit {
-                let decision = await publisher.storageBacklogDrainDecision()
-                if !decision.shouldDrain {
-                    try? await Task.sleep(nanoseconds: decision.retryDelayNanos)
-                    continue
-                }
-
-                await publisher.publishStorageBacklogDrainStatus(
-                    state: "draining",
-                    reason: decision.reason,
-                    shouldDrain: true,
-                    retryDelayNanos: decision.retryDelayNanos,
-                    detail: "Measuring changed storage paths from the persisted dirty queue."
-                )
-                let result = bridge.storageBacklogDrainJSON(roots: [])
-                guard let situation = Self.decodeStorageSituationForBackground(result) else {
-                    await publisher.publishStorageBacklogDrainStatus(
-                        state: "failed",
-                        reason: "snapshot-decode-failed",
-                        shouldDrain: false,
-                        retryDelayNanos: decision.retryDelayNanos,
-                        detail: "The storage backlog drain returned a payload the app could not decode."
-                    )
-                    try? await Task.sleep(nanoseconds: decision.retryDelayNanos)
-                    continue
-                }
-
-                await publisher.publishStorageSituation(situation, updateEstimate: true)
-
-                let queueIsClean = situation.dirtyPaths.dirtyPathCount == 0
-                    && !situation.cacheStatus.stale
-                    && !situation.cacheStatus.partial
-                    && !situation.dirtyPaths.unknownGap
-                await publisher.publishStorageBacklogDrainStatus(
-                    state: queueIsClean ? "idle" : "published",
-                    reason: queueIsClean ? "queue-clean" : "snapshot-published",
-                    shouldDrain: !queueIsClean,
-                    retryDelayNanos: decision.retryDelayNanos,
-                    detail: queueIsClean
-                        ? "No dirty storage paths remain after the latest backlog pass."
-                        : "A fresher storage situation snapshot was published; more dirty paths remain."
-                )
-                cleanPasses = queueIsClean ? cleanPasses + 1 : 0
-                try? await Task.sleep(nanoseconds: decision.retryDelayNanos)
-            }
-        }
-    }
-
-    private func startStorageSituationSnapshotPoll() {
-        storageSituationSnapshotPollTask?.cancel()
-        let bridge = self.bridge
-        let publisher = StorageHygieneMainActorPublisher(self)
-        let initialDelayNanos = Self.storageSituationSnapshotPollInitialDelayNanos
-        let activeDelayNanos = Self.storageSituationSnapshotPollActiveNanos
-        let idleDelayNanos = Self.storageSituationSnapshotPollIdleNanos
-        storageSituationSnapshotPollTask = Task.detached(priority: .utility) { [bridge, publisher] in
+        let initialDelayNanos = Self.storageSituationMaintenanceInitialDelayNanos
+        let idleDelayNanos = Self.storageSituationMaintenanceIdleNanos
+        storageSituationMaintenanceTask = Task.detached(priority: .utility) { [bridge, publisher] in
             try? await Task.sleep(nanoseconds: initialDelayNanos)
             while !Task.isCancelled {
+                let decision = await publisher.storageBacklogDrainDecision()
                 let roots = await publisher.storageSituationPollRoots()
-                let result = bridge.storageSituationJSON(roots: roots)
+                let result = decision.shouldDrain
+                    ? bridge.storageBacklogDrainJSON(roots: roots)
+                    : bridge.storageSituationJSON(roots: roots)
                 guard let situation = Self.decodeStorageSituationForBackground(result) else {
                     await publisher.publishStorageBacklogDrainStatus(
                         state: "failed",
-                        reason: "snapshot-poll-decode-failed",
+                        reason: "maintenance-decode-failed",
                         shouldDrain: false,
-                        retryDelayNanos: idleDelayNanos,
-                        detail: "The cache-first storage snapshot poll returned a payload the app could not decode."
+                        retryDelayNanos: decision.retryDelayNanos,
+                        detail: "The storage maintenance response could not be decoded."
                     )
-                    try? await Task.sleep(nanoseconds: idleDelayNanos)
+                    try? await Task.sleep(nanoseconds: decision.retryDelayNanos)
                     continue
                 }
 
                 await publisher.publishStorageSituation(situation, updateEstimate: true)
-                let needsActivePoll = situation.dirtyPaths.dirtyPathCount > 0
-                    || situation.cacheStatus.stale
-                    || situation.cacheStatus.partial
-                    || situation.dirtyPaths.unknownGap
-                try? await Task.sleep(nanoseconds: needsActivePoll ? activeDelayNanos : idleDelayNanos)
+
+                let queueNeedsWork = situation.dirtyPaths.hasPendingMaintenance
+                await publisher.publishStorageBacklogDrainStatus(
+                    state: queueNeedsWork ? (decision.shouldDrain ? "published" : "paused") : "idle",
+                    reason: queueNeedsWork ? decision.reason : "queue-clean",
+                    shouldDrain: queueNeedsWork && decision.shouldDrain,
+                    retryDelayNanos: queueNeedsWork ? decision.retryDelayNanos : idleDelayNanos,
+                    detail: queueNeedsWork
+                        ? "Storage changes remain queued for bounded background measurement."
+                        : "No storage changes need background measurement."
+                )
+                try? await Task.sleep(
+                    nanoseconds: queueNeedsWork ? decision.retryDelayNanos : idleDelayNanos
+                )
             }
         }
     }

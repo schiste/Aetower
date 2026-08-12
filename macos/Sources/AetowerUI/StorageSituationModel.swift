@@ -112,6 +112,13 @@ struct StorageDirtyPathSummaryModel: Decodable, Sendable {
     let unknownGap: Bool
     let unknownGapRoots: [String]
 
+    /// Partial cached coverage can be durable (for example, protected paths).
+    /// Only queued filesystem changes or an event-stream gap require the
+    /// background maintenance worker to keep running at its active cadence.
+    var hasPendingMaintenance: Bool {
+        dirtyPathCount > 0 || unknownGap
+    }
+
     private enum CodingKeys: String, CodingKey {
         case dirtyPathCount
         case oldestDirtyMillis
