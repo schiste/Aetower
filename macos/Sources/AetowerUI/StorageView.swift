@@ -7094,12 +7094,12 @@ public struct StorageView: View {
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
             HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
                 Image(systemName: "trash.square.fill")
-                    .font(.system(size: 28, weight: .semibold))
+                    .font(AetowerDesign.Typography.metricValue(size: 28, weight: .semibold))
                     .foregroundStyle(AetowerDesign.Status.warning)
-                    .frame(width: 36)
+                    .frame(width: AetowerDesign.Size.minTouchTarget)
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                     Text("\(formatBytes(plan.totalBytes)) will move to Trash")
-                        .font(.title2.weight(.semibold))
+                        .font(AetowerDesign.Typography.metricValue(size: 22, weight: .semibold))
                         .foregroundStyle(AetowerDesign.Ink.primary)
                     Text(
                         "Review the exact boundary below. Nothing is permanently erased until you empty Finder Trash."
@@ -7130,19 +7130,22 @@ public struct StorageView: View {
                 )
             }
 
-            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
-                Image(systemName: "lock.shield")
-                    .foregroundStyle(AetowerDesign.Tone.disk)
-                Text(
-                    "Still excluded: dangerous user and AI-session data, Docker/VM storage, protected or cloud-only files, hardlinks, risky paths, and anything currently in use."
-                )
-                .font(AetowerDesign.Typography.caption)
-                .foregroundStyle(AetowerDesign.Ink.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            AetowerSurface(
+                level: .selected,
+                padding: AetowerDesign.Spacing.md,
+                cornerRadius: AetowerDesign.Radius.md
+            ) {
+                HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                    Image(systemName: "lock.shield")
+                        .foregroundStyle(AetowerDesign.Tone.disk)
+                    Text(
+                        "Still excluded: dangerous user and AI-session data, Docker/VM storage, protected or cloud-only files, hardlinks, risky paths, and anything currently in use."
+                    )
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .padding(AetowerDesign.Spacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
                 Text("What will move")
@@ -7190,26 +7193,10 @@ public struct StorageView: View {
     }
 
     private func aggressiveCleanupImpactBar(_ plan: StorageBulkCleanupPlan) -> some View {
-        GeometryReader { geometry in
-            let total = max(UInt64(1), plan.totalBytes)
-            let safeFraction = CGFloat(Double(plan.safeBytes) / Double(total))
-            let gap = plan.safeBytes > 0 && plan.additionalReviewBytes > 0
-                ? AetowerDesign.Spacing.storageSegmentGap
-                : 0
-            let drawableWidth = max(0, geometry.size.width - gap)
-            HStack(spacing: AetowerDesign.Spacing.storageSegmentGap) {
-                if plan.safeBytes > 0 {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(AetowerDesign.Status.ready)
-                        .frame(width: max(4, drawableWidth * safeFraction))
-                }
-                if plan.additionalReviewBytes > 0 {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(AetowerDesign.Status.warning)
-                }
-            }
-        }
-        .frame(height: 10)
+        AetowerStorageCleanupImpactBar(
+            safeBytes: plan.safeBytes,
+            reviewBytes: plan.additionalReviewBytes
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             "Cleanup impact: \(formatBytes(plan.safeBytes)) verified safe and \(formatBytes(plan.additionalReviewBytes)) broader cleanup"
@@ -7223,26 +7210,17 @@ public struct StorageView: View {
         systemImage: String,
         tone: Color
     ) -> some View {
-        HStack(spacing: AetowerDesign.Spacing.sm) {
-            Image(systemName: systemImage)
-                .foregroundStyle(tone)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(AetowerDesign.Typography.caption.weight(.semibold))
-                    .foregroundStyle(AetowerDesign.Ink.primary)
-                Text("\(formatBytes(bytes)) · \(count) target\(count == 1 ? "" : "s")")
-                    .font(AetowerDesign.Typography.metadata)
-                    .foregroundStyle(AetowerDesign.Ink.secondary)
+        AetowerOperationalListRow(tone: tone, minHeight: AetowerDesign.Size.minTouchTarget) {
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                AetowerBadge(title, systemImage: systemImage, tone: tone)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    Text("\(formatBytes(bytes)) · \(count) target\(count == 1 ? "" : "s")")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+                Spacer(minLength: AetowerDesign.Spacing.none)
             }
-            Spacer(minLength: 0)
         }
-        .padding(AetowerDesign.Spacing.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tone.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(tone.opacity(0.22), lineWidth: 1)
-        )
     }
 
     private func aggressiveCleanupItemRow(
@@ -7252,38 +7230,37 @@ public struct StorageView: View {
         let tone = isSafe ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
         let consequence = item.cleanupConsequence.isEmpty ? item.reason : item.cleanupConsequence
 
-        return HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
-            Image(systemName: isSafe ? "checkmark.shield" : "exclamationmark.triangle")
-                .foregroundStyle(tone)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: AetowerDesign.Spacing.xs) {
-                    Text(item.displayName)
-                        .font(AetowerDesign.Typography.caption.weight(.semibold))
-                        .foregroundStyle(AetowerDesign.Ink.primary)
+        return AetowerOperationalListRow(tone: tone, minHeight: AetowerDesign.Size.minTouchTarget) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                    HStack(spacing: AetowerDesign.Spacing.xs) {
+                        Text(item.displayName)
+                            .font(AetowerDesign.Typography.caption.weight(.semibold))
+                            .foregroundStyle(AetowerDesign.Ink.primary)
+                            .lineLimit(1)
+                        AetowerBadge(
+                            isSafe ? "Verified" : "Review",
+                            systemImage: isSafe ? "checkmark.shield" : "exclamationmark.triangle",
+                            tone: tone
+                        )
+                    }
+                    Text(storageShortPath(item.path))
+                        .font(AetowerDesign.Typography.compactData(size: 10))
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
                         .lineLimit(1)
-                    Text(isSafe ? "Verified" : "Review")
-                        .font(AetowerDesign.Typography.metadata.weight(.semibold))
-                        .foregroundStyle(tone)
+                        .truncationMode(.middle)
+                    Text(consequence)
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                        .lineLimit(2)
                 }
-                Text(storageShortPath(item.path))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(AetowerDesign.Ink.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(consequence)
-                    .font(AetowerDesign.Typography.metadata)
-                    .foregroundStyle(AetowerDesign.Ink.tertiary)
-                    .lineLimit(2)
+                Spacer(minLength: AetowerDesign.Spacing.sm)
+                Text(formatBytes(item.sizeBytes))
+                    .font(AetowerDesign.Typography.dataSmall)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                    .monospacedDigit()
             }
-            Spacer(minLength: AetowerDesign.Spacing.sm)
-            Text(formatBytes(item.sizeBytes))
-                .font(AetowerDesign.Typography.dataSmall)
-                .foregroundStyle(AetowerDesign.Ink.primary)
-                .monospacedDigit()
         }
-        .padding(AetowerDesign.Spacing.sm)
-        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func cleanupExecutionSheet(_ request: StorageCleanupExecutionRequest) -> some View {
@@ -8237,7 +8214,7 @@ public struct StorageView: View {
             Image(systemName: cleanupTierIcon(entry.cleanupTier))
                 .foregroundStyle(tone(forCleanupTier: entry.cleanupTier))
                 .frame(width: 16)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                 Text(entry.displayName)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)

@@ -105,6 +105,47 @@ public struct AetowerStorageStrataMark: View {
     }
 }
 
+public struct AetowerStorageCleanupImpactBar: View {
+    let safeBytes: UInt64
+    let reviewBytes: UInt64
+
+    public init(safeBytes: UInt64, reviewBytes: UInt64) {
+        self.safeBytes = safeBytes
+        self.reviewBytes = reviewBytes
+    }
+
+    public var body: some View {
+        GeometryReader { geometry in
+            let totalResult = safeBytes.addingReportingOverflow(reviewBytes)
+            let total = max(UInt64(1), totalResult.overflow ? UInt64.max : totalResult.partialValue)
+            let gap = safeBytes > 0 && reviewBytes > 0
+                ? AetowerDesign.Spacing.storageSegmentGap
+                : 0
+            let drawableWidth = max(0, geometry.size.width - gap)
+            let safeFraction = CGFloat(Double(safeBytes) / Double(total))
+
+            HStack(spacing: AetowerDesign.Spacing.storageSegmentGap) {
+                if safeBytes > 0 {
+                    Rectangle()
+                        .fill(AetowerDesign.Status.ready)
+                        .frame(
+                            width: max(
+                                AetowerDesign.Size.storageReclaimMinimumWidth,
+                                drawableWidth * safeFraction
+                            )
+                        )
+                }
+                if reviewBytes > 0 {
+                    Rectangle()
+                        .fill(AetowerDesign.Status.warning)
+                }
+            }
+            .aetowerStorageBarClip()
+        }
+        .frame(height: AetowerDesign.Size.storageBarHeight)
+    }
+}
+
 public enum AetowerComponentSize {
     case compact
     case regular
