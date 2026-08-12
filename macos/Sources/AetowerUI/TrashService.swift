@@ -55,6 +55,7 @@ enum TrashService {
     struct PermanentBatchOutcome: Sendable {
         let reclaimedItems: [MovedItem]
         let pendingTrashItems: [MovedItem]
+        let alreadyMissingPaths: [String]
         let failedPaths: [String: String]
     }
 
@@ -107,7 +108,12 @@ enum TrashService {
         let trashed = trash(paths: paths, activeWriterProbe: activeWriterProbe)
         var reclaimedItems: [MovedItem] = []
         var pendingTrashItems: [MovedItem] = []
-        var failedPaths = trashed.failedPaths
+        let alreadyMissingPaths = trashed.failedPaths.compactMap { path, reason in
+            reason == "Path no longer exists" ? path : nil
+        }
+        var failedPaths = trashed.failedPaths.filter { _, reason in
+            reason != "Path no longer exists"
+        }
 
         for item in trashed.movedItems {
             do {
@@ -123,6 +129,7 @@ enum TrashService {
         return PermanentBatchOutcome(
             reclaimedItems: reclaimedItems,
             pendingTrashItems: pendingTrashItems,
+            alreadyMissingPaths: alreadyMissingPaths.sorted(),
             failedPaths: failedPaths
         )
     }

@@ -141,6 +141,7 @@ private struct StorageCleanupExecutionResult: Sendable {
 private struct StoragePermanentCleanupResult: Sendable {
     let reclaimedPaths: [String]
     let pendingTrashURLs: [String: URL]
+    let alreadyMissingPaths: [String]
     let failedPaths: [String: String]
 }
 
@@ -11692,10 +11693,8 @@ public struct StorageView: View {
         let metadataByPath = Dictionary(uniqueKeysWithValues: items.map { ($0.path, $0) })
         let reclaimed = Set(result.reclaimedPaths)
         let pending = Set(result.pendingTrashURLs.keys)
-        let alreadyReclaimed = Set(result.failedPaths.compactMap { path, reason in
-            reason == "Path no longer exists" ? path : nil
-        })
-        let resolved = reclaimed.union(pending).union(alreadyReclaimed)
+        let alreadyMissing = Set(result.alreadyMissingPaths)
+        let resolved = reclaimed.union(pending).union(alreadyMissing)
 
         cleanupBasket.removeAll { resolved.contains($0.path) }
         state.markStoragePathsMovedToTrash(Array(resolved), refresh: false)
@@ -11713,18 +11712,25 @@ public struct StorageView: View {
 
         for path in metadataByPath.keys.sorted() {
             let metadata = metadataByPath[path]
-            let pathReclaimed = reclaimed.contains(path) || alreadyReclaimed.contains(path)
+            let pathReclaimed = reclaimed.contains(path)
+            let pathAlreadyMissing = alreadyMissing.contains(path)
             appendCleanupAudit(
-                action: pathReclaimed ? "direct-delete" : pending.contains(path) ? "pending-trash" : "failed-direct-delete",
+                action: pathReclaimed
+                    ? "direct-delete"
+                    : pathAlreadyMissing
+                        ? "already-reclaimed"
+                        : pending.contains(path) ? "pending-trash" : "failed-direct-delete",
                 path: path,
                 detail: pathReclaimed
                     ? "\(sourceTitle) permanently reclaimed this verified target."
+                    : pathAlreadyMissing
+                        ? "Path was already absent; no additional space was reclaimed."
                     : (result.failedPaths[path] ?? "Not attempted."),
-                bytes: metadata?.sizeBytes ?? 0,
+                bytes: pathReclaimed ? metadata?.sizeBytes ?? 0 : 0,
                 cleanupTier: metadata?.cleanupTier,
                 safety: metadata?.safety,
                 blockers: metadata?.cleanupBlockers ?? [],
-                succeeded: pathReclaimed
+                succeeded: pathReclaimed || pathAlreadyMissing
             )
         }
 
@@ -11732,7 +11738,7 @@ public struct StorageView: View {
             let (sum, overflow) = total.addingReportingOverflow(metadataByPath[path]?.sizeBytes ?? 0)
             return overflow ? UInt64.max : sum
         }
-        let issueCount = result.failedPaths.filter { !alreadyReclaimed.contains($0.key) }.count
+        let issueCount = result.failedPaths.count
         presentDirectTrashUndo(
             StorageDirectTrashUndo(
                 message: reclaimed.isEmpty
@@ -12814,6 +12820,7 @@ public struct StorageView: View {
                     ($0.originalPath, $0.trashURL)
                 }
             ),
+            alreadyMissingPaths: outcome.alreadyMissingPaths,
             failedPaths: outcome.failedPaths
         )
     }
