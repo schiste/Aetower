@@ -315,6 +315,7 @@ public struct StorageView: View {
     @State private var cleanupExecutionIsRunning = false
     @State private var cleanupBasket: [StorageCleanupBasketItem] = []
     @State private var showCleanupBasket = false
+    @State private var aggressiveCleanupPreview: StorageBulkCleanupPlan?
     @State private var directTrashUndo: StorageDirectTrashUndo?
     @State private var directTrashUndoDismissTask: Task<Void, Never>?
     @State private var directTrashInFlightPaths: Set<String> = []
@@ -432,6 +433,9 @@ public struct StorageView: View {
         }
         .sheet(isPresented: $showCleanupBasket) {
             cleanupBasketSheet
+        }
+        .sheet(item: $aggressiveCleanupPreview) { plan in
+            aggressiveCleanupPreviewSheet(plan)
         }
         .sheet(isPresented: $showCustomScanSettings) {
             storageCustomScanSettingsSheet
@@ -1050,7 +1054,6 @@ public struct StorageView: View {
             }
 
             storageReclaimBucketTracks(report)
-            storageReclaimQuickDeleteRow(report)
 
             if actions.isEmpty {
                 ContentUnavailableView(
@@ -1142,71 +1145,6 @@ public struct StorageView: View {
                 .disabled(bytes == 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    @ViewBuilder
-    private func storageReclaimQuickDeleteRow(_ report: StorageHygieneReportModel) -> some View {
-        let candidates = safeDirectTrashCandidates(from: visibleStorageItems(from: report))
-        if !candidates.isEmpty {
-            let readyItems = candidates.filter { !directTrashInFlightPaths.contains($0.path) }
-            let movingCount = candidates.count - readyItems.count
-            let bytes = sumItemBytes(candidates)
-
-            AetowerOperationalListRow(tone: AetowerDesign.Status.ready, minHeight: 76) {
-                HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
-                    VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                        HStack(spacing: AetowerDesign.Spacing.sm) {
-                            Label("Quick delete safe artifacts", systemImage: "trash")
-                                .font(AetowerDesign.Typography.controlLabel)
-                                .foregroundStyle(AetowerDesign.Ink.primary)
-                            AetowerBadge(formatBytes(bytes), tone: AetowerDesign.Status.ready)
-                            AetowerBadge(
-                                "\(candidates.count) path\(candidates.count == 1 ? "" : "s")",
-                                tone: AetowerDesign.Status.neutral
-                            )
-                            if movingCount > 0 {
-                                AetowerBadge(
-                                    "\(movingCount) moving",
-                                    systemImage: "arrow.triangle.2.circlepath",
-                                    tone: AetowerDesign.Status.warning
-                                )
-                            }
-                        }
-
-                        Text("Only policy-approved safe/rebuildable local artifacts are eligible. Aetower moves them to Finder Trash and tracks undo/delete state.")
-                            .font(AetowerDesign.Typography.caption)
-                            .foregroundStyle(AetowerDesign.Ink.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Spacer(minLength: AetowerDesign.Spacing.md)
-
-                    HStack(spacing: AetowerDesign.Spacing.sm) {
-                        Button {
-                            focusExploreBrowseTable(filter: .safe, scope: .all, sort: .recommended)
-                        } label: {
-                            Label("Review", systemImage: "magnifyingglass")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-
-                        Button {
-                            trashStorageItemsDirectly(readyItems, sourceTitle: "Safe artifacts")
-                        } label: {
-                            Label(
-                                readyItems.isEmpty ? "Moving" : "Move to Trash",
-                                systemImage: readyItems.isEmpty ? "arrow.triangle.2.circlepath" : "trash"
-                            )
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .disabled(readyItems.isEmpty)
-                    }
-                    .fixedSize()
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
         }
     }
 
@@ -7150,6 +7088,204 @@ public struct StorageView: View {
         .frame(width: 720, height: 560, alignment: .topLeading)
     }
 
+    private func aggressiveCleanupPreviewSheet(_ plan: StorageBulkCleanupPlan) -> some View {
+        let safePaths = Set(plan.safeItems.map(\.path))
+
+        return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
+                Image(systemName: "trash.square.fill")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(AetowerDesign.Status.warning)
+                    .frame(width: 36)
+                VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    Text("\(formatBytes(plan.totalBytes)) will move to Trash")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                    Text(
+                        "Review the exact boundary below. Nothing is permanently erased until you empty Finder Trash."
+                    )
+                    .font(AetowerDesign.Typography.caption)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+
+            aggressiveCleanupImpactBar(plan)
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                aggressiveCleanupImpactSummary(
+                    title: "Verified safe",
+                    bytes: plan.safeBytes,
+                    count: plan.safeItems.count,
+                    systemImage: "checkmark.shield.fill",
+                    tone: AetowerDesign.Status.ready
+                )
+                aggressiveCleanupImpactSummary(
+                    title: "Broader cleanup",
+                    bytes: plan.additionalReviewBytes,
+                    count: plan.additionalReviewItems.count,
+                    systemImage: "exclamationmark.triangle.fill",
+                    tone: AetowerDesign.Status.warning
+                )
+            }
+
+            HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+                Image(systemName: "lock.shield")
+                    .foregroundStyle(AetowerDesign.Tone.disk)
+                Text(
+                    "Still excluded: dangerous user and AI-session data, Docker/VM storage, protected or cloud-only files, hardlinks, risky paths, and anything currently in use."
+                )
+                .font(AetowerDesign.Typography.caption)
+                .foregroundStyle(AetowerDesign.Ink.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(AetowerDesign.Spacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                Text("What will move")
+                    .font(AetowerDesign.Typography.controlLabel)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                Text("\(plan.items.count) target\(plan.items.count == 1 ? "" : "s"), largest first")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+            }
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
+                    ForEach(plan.items) { item in
+                        aggressiveCleanupItemRow(item, isSafe: safePaths.contains(item.path))
+                    }
+                }
+                .padding(.trailing, AetowerDesign.Spacing.sm)
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.sm) {
+                Text("Second click confirms the whole plan.")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                Spacer()
+                Button("Cancel") {
+                    aggressiveCleanupPreview = nil
+                }
+                Button("Clean aggressively", role: .destructive) {
+                    let items = plan.items
+                    aggressiveCleanupPreview = nil
+                    trashStorageItemsDirectly(
+                        items,
+                        sourceTitle: "Aggressive clean",
+                        scope: .aggressive
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AetowerDesign.Status.error)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("storage.clean.aggressive.confirm")
+            }
+        }
+        .padding(AetowerDesign.Spacing.xl)
+        .frame(width: 760, height: 640, alignment: .topLeading)
+    }
+
+    private func aggressiveCleanupImpactBar(_ plan: StorageBulkCleanupPlan) -> some View {
+        GeometryReader { geometry in
+            let total = max(UInt64(1), plan.totalBytes)
+            let safeFraction = CGFloat(Double(plan.safeBytes) / Double(total))
+            let gap = plan.safeBytes > 0 && plan.additionalReviewBytes > 0
+                ? AetowerDesign.Spacing.storageSegmentGap
+                : 0
+            let drawableWidth = max(0, geometry.size.width - gap)
+            HStack(spacing: AetowerDesign.Spacing.storageSegmentGap) {
+                if plan.safeBytes > 0 {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(AetowerDesign.Status.ready)
+                        .frame(width: max(4, drawableWidth * safeFraction))
+                }
+                if plan.additionalReviewBytes > 0 {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(AetowerDesign.Status.warning)
+                }
+            }
+        }
+        .frame(height: 10)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "Cleanup impact: \(formatBytes(plan.safeBytes)) verified safe and \(formatBytes(plan.additionalReviewBytes)) broader cleanup"
+        )
+    }
+
+    private func aggressiveCleanupImpactSummary(
+        title: String,
+        bytes: UInt64,
+        count: Int,
+        systemImage: String,
+        tone: Color
+    ) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tone)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                Text("\(formatBytes(bytes)) · \(count) target\(count == 1 ? "" : "s")")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(AetowerDesign.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tone.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(tone.opacity(0.22), lineWidth: 1)
+        )
+    }
+
+    private func aggressiveCleanupItemRow(
+        _ item: StorageHygieneItemModel,
+        isSafe: Bool
+    ) -> some View {
+        let tone = isSafe ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
+        let consequence = item.cleanupConsequence.isEmpty ? item.reason : item.cleanupConsequence
+
+        return HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
+            Image(systemName: isSafe ? "checkmark.shield" : "exclamationmark.triangle")
+                .foregroundStyle(tone)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: AetowerDesign.Spacing.xs) {
+                    Text(item.displayName)
+                        .font(AetowerDesign.Typography.caption.weight(.semibold))
+                        .foregroundStyle(AetowerDesign.Ink.primary)
+                        .lineLimit(1)
+                    Text(isSafe ? "Verified" : "Review")
+                        .font(AetowerDesign.Typography.metadata.weight(.semibold))
+                        .foregroundStyle(tone)
+                }
+                Text(storageShortPath(item.path))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(consequence)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: AetowerDesign.Spacing.sm)
+            Text(formatBytes(item.sizeBytes))
+                .font(AetowerDesign.Typography.dataSmall)
+                .foregroundStyle(AetowerDesign.Ink.primary)
+                .monospacedDigit()
+        }
+        .padding(AetowerDesign.Spacing.sm)
+        .background(AetowerDesign.Surface.rowIdle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
     private func cleanupExecutionSheet(_ request: StorageCleanupExecutionRequest) -> some View {
         VStack(alignment: .leading, spacing: AetowerDesign.Spacing.lg) {
             HStack(alignment: .top, spacing: AetowerDesign.Spacing.md) {
@@ -9635,6 +9771,7 @@ public struct StorageView: View {
                         breakdown: breakdown
                     )
                     storageRepositoryStrata(breakdown)
+                    storageBulkCleanupControls()
                     storageOwnershipLegend(breakdown)
                 } else {
                     diskCapacityBar(
@@ -9643,6 +9780,7 @@ public struct StorageView: View {
                         reclaimable: reclaimable,
                         tone: tone
                     )
+                    storageBulkCleanupControls()
                 }
                 HStack(spacing: AetowerDesign.Spacing.md) {
                     Text("\(formatBytes(volume.totalBytes - free)) used")
@@ -9666,6 +9804,69 @@ public struct StorageView: View {
                 }
             }
         }
+    }
+
+    private func storageBulkCleanupControls() -> some View {
+        let plan = storageBulkCleanupPlan()
+
+        return HStack(alignment: .center, spacing: AetowerDesign.Spacing.md) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Cleanup")
+                    .font(AetowerDesign.Typography.caption.weight(.semibold))
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                if plan.items.isEmpty {
+                    Text(state.storageHygieneReport == nil ? "Run a scan to prepare verified targets" : "No eligible targets")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                } else {
+                    Text(
+                        "\(formatBytes(plan.safeBytes)) verified safe"
+                            + (plan.additionalReviewItems.isEmpty
+                                ? ""
+                                : " · \(formatBytes(plan.additionalReviewBytes)) with review")
+                    )
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.secondary)
+                }
+            }
+
+            Spacer(minLength: AetowerDesign.Spacing.md)
+
+            Button {
+                trashStorageItemsDirectly(plan.safeItems, sourceTitle: "Safe clean")
+            } label: {
+                Label("Clean safely", systemImage: "checkmark.shield.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AetowerDesign.Status.ready)
+            .disabled(plan.safeItems.isEmpty)
+            .help("One click: move only policy-verified safe and rebuildable data to Finder Trash")
+            .accessibilityIdentifier("storage.clean.safe")
+
+            Button {
+                aggressiveCleanupPreview = plan
+            } label: {
+                Label("Clean aggressively", systemImage: "exclamationmark.triangle.fill")
+            }
+            .buttonStyle(.bordered)
+            .tint(AetowerDesign.Status.warning)
+            .disabled(plan.items.isEmpty)
+            .help("Review the exact impact, then confirm on the second click")
+            .accessibilityIdentifier("storage.clean.aggressive")
+        }
+        .controlSize(.regular)
+        .padding(.top, AetowerDesign.Spacing.xs)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func storageBulkCleanupPlan() -> StorageBulkCleanupPlan {
+        guard let report = state.storageHygieneReport else {
+            return StorageBulkCleanupPlan(safeItems: [], additionalReviewItems: [])
+        }
+        let availableItems = visibleStorageItems(from: report).filter {
+            !directTrashInFlightPaths.contains($0.path)
+        }
+        return StorageReclaimPolicy.bulkCleanupPlan(items: availableItems)
     }
 
     private func storageSituationTopOffenderRow(
@@ -11381,27 +11582,34 @@ public struct StorageView: View {
         }
     }
 
-    private func safeDirectTrashCandidates(from items: [StorageHygieneItemModel]) -> [StorageHygieneItemModel] {
-        uniqueStorageItems(items).filter {
-            storageItemIsSafelyReclaimableNow($0)
-        }
-    }
-
-    private func directCleanItems(from items: [StorageHygieneItemModel]) -> [StorageHygieneItemModel] {
-        safeDirectTrashCandidates(from: items).filter {
-            !directTrashInFlightPaths.contains($0.path)
+    private func directCleanItems(
+        from items: [StorageHygieneItemModel],
+        scope: StorageBulkCleanupScope = .safe
+    ) -> [StorageHygieneItemModel] {
+        uniqueStorageItems(items).filter { item in
+            guard !directTrashInFlightPaths.contains(item.path),
+                  storageItemIsTrashActionable(item)
+            else {
+                return false
+            }
+            switch scope {
+            case .safe:
+                return StorageReclaimPolicy.itemIsSafeDirectTrash(item)
+            case .aggressive:
+                return StorageReclaimPolicy.itemIsAggressiveDirectTrash(item)
+            }
         }
     }
 
     private func trashStorageItemsDirectly(
         _ items: [StorageHygieneItemModel],
-        sourceTitle: String
+        sourceTitle: String,
+        scope: StorageBulkCleanupScope = .safe
     ) {
-        let candidates = directCleanItems(from: items)
+        let candidates = directCleanItems(from: items, scope: scope)
         guard !candidates.isEmpty else { return }
 
-        let limited = Array(candidates.prefix(80))
-        let paths = limited.map(\.path)
+        let paths = candidates.map(\.path)
         for path in paths {
             directTrashInFlightPaths.insert(path)
         }
@@ -11414,7 +11622,7 @@ public struct StorageView: View {
                     directTrashInFlightPaths.remove(path)
                 }
                 recordDirectTrashResult(
-                    items: limited,
+                    items: candidates,
                     result: result,
                     sourceTitle: sourceTitle
                 )
@@ -11481,13 +11689,14 @@ public struct StorageView: View {
             let (sum, overflow) = total.addingReportingOverflow(metadataByPath[path]?.sizeBytes ?? 0)
             return overflow ? UInt64.max : sum
         }
+        let singleMovedPath = result.movedPaths.count == 1 ? result.movedPaths.first : nil
         presentDirectTrashUndo(
             StorageDirectTrashUndo(
                 message: movedCount > 0
                     ? "\(sourceTitle): moved \(movedCount) item\(movedCount == 1 ? "" : "s") (\(formatBytes(bytes))) to Trash"
                     : "\(sourceTitle): no items moved\(failedCount > 0 ? " (\(failedCount) issue\(failedCount == 1 ? "" : "s"))" : "")",
-                originalPath: result.movedPaths.first ?? sourceTitle,
-                trashURL: result.movedTrashURLs[result.movedPaths.first ?? ""],
+                originalPath: singleMovedPath ?? sourceTitle,
+                trashURL: singleMovedPath.flatMap { result.movedTrashURLs[$0] },
                 bytes: bytes,
                 succeeded: movedCount > 0
             )
