@@ -179,6 +179,74 @@ final class StorageReclaimPolicyTests: XCTestCase {
         XCTAssertFalse(action.canMoveToTrash)
     }
 
+    func testBulkCleanupPlanKeepsSafeOneClickStrictAndAggressiveReviewBounded() throws {
+        let safeBuild = try storageItem(
+            kind: "rust-build",
+            path: "/repo/target",
+            sizeGB: 6
+        )
+        let oldDeviceSupport = try storageItem(
+            kind: "xcode-device-support",
+            path: "/Users/me/Library/Developer/Xcode/iOS DeviceSupport/17.0",
+            sizeGB: 11,
+            safety: "review",
+            cleanupTier: "rebuildable"
+        )
+        let codexSession = try storageItem(
+            kind: "ai-session-data",
+            path: "/Users/me/.codex/sessions/old.jsonl",
+            sizeGB: 9,
+            safety: "review",
+            cleanupTier: "rebuildable",
+            provider: "codex",
+            aiAgentSession: "codex"
+        )
+        let hardlinkedBuild = try storageItem(
+            kind: "rust-build",
+            path: "/repo/shared-target",
+            sizeGB: 8,
+            hasHardlinks: true
+        )
+        let protectedBuild = try storageItem(
+            kind: "test-output",
+            path: "/repo/protected-results",
+            sizeGB: 7,
+            protectedPath: true
+        )
+        let unknownSafety = try storageItem(
+            kind: "test-output",
+            path: "/repo/unknown-safety",
+            sizeGB: 12,
+            safety: "unknown"
+        )
+
+        let plan = StorageReclaimPolicy.bulkCleanupPlan(
+            items: [
+                safeBuild,
+                oldDeviceSupport,
+                codexSession,
+                hardlinkedBuild,
+                protectedBuild,
+                unknownSafety,
+                safeBuild,
+            ]
+        )
+
+        XCTAssertEqual(plan.safeItems.map(\.path), ["/repo/target"])
+        XCTAssertEqual(
+            plan.additionalReviewItems.map(\.path),
+            ["/Users/me/Library/Developer/Xcode/iOS DeviceSupport/17.0"]
+        )
+        XCTAssertEqual(plan.items.count, 2)
+        XCTAssertEqual(plan.items.map(\.path), [
+            "/Users/me/Library/Developer/Xcode/iOS DeviceSupport/17.0",
+            "/repo/target",
+        ])
+        XCTAssertEqual(plan.safeBytes, 6 * gigabyte)
+        XCTAssertEqual(plan.additionalReviewBytes, 11 * gigabyte)
+        XCTAssertEqual(plan.totalBytes, 17 * gigabyte)
+    }
+
     private func storageItem(
         kind: String,
         path: String,
@@ -189,7 +257,9 @@ final class StorageReclaimPolicyTests: XCTestCase {
         defaultCleanupAction: String = "trash",
         storageRole: String? = nil,
         provider: String? = nil,
-        aiAgentSession: String? = nil
+        aiAgentSession: String? = nil,
+        hasHardlinks: Bool = false,
+        protectedPath: Bool = false
     ) throws -> StorageHygieneItemModel {
         var attribution: [String: Any] = [
             "confidence": "high",
@@ -211,6 +281,8 @@ final class StorageReclaimPolicyTests: XCTestCase {
             "cleanupTier": cleanupTier,
             "sizeBytes": sizeGB * gigabyte,
             "sizeTruncated": false,
+            "hasHardlinks": hasHardlinks,
+            "protectedPath": protectedPath,
             "stale": false,
             "reason": "Unit test fixture.",
             "recommendation": "Review this fixture.",

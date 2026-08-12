@@ -337,6 +337,47 @@ struct StorageReclaimPrimaryAction: Identifiable {
     }
 }
 
+struct StorageBulkCleanupPlan: Identifiable {
+    let safeItems: [StorageHygieneItemModel]
+    let additionalReviewItems: [StorageHygieneItemModel]
+
+    var id: String {
+        "\(items.count)|\(totalBytes)|\(items.first?.path ?? "")"
+    }
+
+    var items: [StorageHygieneItemModel] {
+        (safeItems + additionalReviewItems).sorted { left, right in
+            left.sizeBytes == right.sizeBytes
+                ? left.path < right.path
+                : left.sizeBytes > right.sizeBytes
+        }
+    }
+
+    var safeBytes: UInt64 {
+        Self.sumBytes(safeItems)
+    }
+
+    var additionalReviewBytes: UInt64 {
+        Self.sumBytes(additionalReviewItems)
+    }
+
+    var totalBytes: UInt64 {
+        Self.sumBytes(items)
+    }
+
+    private static func sumBytes(_ items: [StorageHygieneItemModel]) -> UInt64 {
+        items.reduce(UInt64(0)) { total, item in
+            let result = total.addingReportingOverflow(item.sizeBytes)
+            return result.overflow ? UInt64.max : result.partialValue
+        }
+    }
+}
+
+enum StorageBulkCleanupScope {
+    case safe
+    case aggressive
+}
+
 enum StorageReclaimPolicy {
     static func primaryActionDecision(
         hasStageableContent: Bool,
@@ -386,6 +427,27 @@ enum StorageReclaimPolicy {
             && !item.hasHardlinks
     }
 
+    static func bulkCleanupPlan(items: [StorageHygieneItemModel]) -> StorageBulkCleanupPlan {
+        let eligible = uniqueStorageItems(items)
+            .filter(itemIsAggressiveDirectTrash)
+            .sorted { left, right in
+                left.sizeBytes == right.sizeBytes
+                    ? left.path < right.path
+                    : left.sizeBytes > right.sizeBytes
+            }
+        return StorageBulkCleanupPlan(
+            safeItems: eligible.filter(itemIsSafeDirectTrash),
+            additionalReviewItems: eligible.filter { !itemIsSafeDirectTrash($0) }
+        )
+    }
+
+    static func itemIsAggressiveDirectTrash(_ item: StorageHygieneItemModel) -> Bool {
+        itemIsTrashActionable(item)
+            && (item.safety == "safe" || item.safety == "review")
+            && !item.hasHardlinks
+            && !requiresDedicatedReview(item)
+    }
+
     private static func sumItemBytes(_ items: [StorageHygieneItemModel]) -> UInt64 {
         items.reduce(UInt64(0)) { total, item in
             let result = total.addingReportingOverflow(item.sizeBytes)
@@ -400,5 +462,11 @@ enum StorageReclaimPolicy {
             unique.append(item)
         }
         return unique
+    }
+
+    private static func requiresDedicatedReview(_ item: StorageHygieneItemModel) -> Bool {
+        StorageReclaimPrimaryKind.dockerBuildCache.matches(item)
+            || StorageReclaimPrimaryKind.colimaVM.matches(item)
+            || StorageReclaimPrimaryKind.codexSessions.matches(item)
     }
 }
