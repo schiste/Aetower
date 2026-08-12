@@ -2517,27 +2517,21 @@ public final class AppState {
             return makeStorageBacklogDrainDecision(
                 shouldDrain: false,
                 reason: "snapshot-warming-up",
-                retryDelayNanos: normalDelay,
-                state: "waiting",
-                detail: "Waiting for the first monitor snapshot before scheduling storage refresh work."
+                retryDelayNanos: normalDelay
             )
         }
         if storageScanJob?.isActive == true || storageHygieneIsLoading || storageHygieneIsVerifyingCache {
             return makeStorageBacklogDrainDecision(
                 shouldDrain: false,
                 reason: "storage-scan-active",
-                retryDelayNanos: slowDelay,
-                state: "paused",
-                detail: "A storage scan or verification is already active."
+                retryDelayNanos: slowDelay
             )
         }
         if runtimeLagMetrics.selfCpuPercent >= 35 {
             return makeStorageBacklogDrainDecision(
                 shouldDrain: false,
                 reason: "self-cpu",
-                retryDelayNanos: pressureDelay,
-                state: "paused",
-                detail: "Aetower self CPU is elevated; backlog work is deferred."
+                retryDelayNanos: pressureDelay
             )
         }
 
@@ -2547,18 +2541,14 @@ public final class AppState {
             return makeStorageBacklogDrainDecision(
                 shouldDrain: false,
                 reason: "thermal-pressure",
-                retryDelayNanos: pressureDelay,
-                state: "paused",
-                detail: "macOS reports serious thermal pressure."
+                retryDelayNanos: pressureDelay
             )
         }
         if host.cpuPercent >= 85 {
             return makeStorageBacklogDrainDecision(
                 shouldDrain: false,
                 reason: "host-cpu",
-                retryDelayNanos: slowDelay,
-                state: "paused",
-                detail: "Host CPU is busy; storage backlog work is slowed."
+                retryDelayNanos: slowDelay
             )
         }
 
@@ -2569,28 +2559,15 @@ public final class AppState {
         return makeStorageBacklogDrainDecision(
             shouldDrain: true,
             reason: shouldSlowDown ? "host-elevated" : "normal",
-            retryDelayNanos: shouldSlowDown ? slowDelay : normalDelay,
-            state: "scheduled",
-            detail: shouldSlowDown
-                ? "Backlog refresh is allowed at the slow cadence because the host is under mild pressure."
-                : "Backlog refresh is allowed at the normal cadence."
+            retryDelayNanos: shouldSlowDown ? slowDelay : normalDelay
         )
     }
 
     private func makeStorageBacklogDrainDecision(
         shouldDrain: Bool,
         reason: String,
-        retryDelayNanos: UInt64,
-        state: String,
-        detail: String
+        retryDelayNanos: UInt64
     ) -> StorageBacklogDrainDecision {
-        publishStorageBacklogDrainStatus(
-            state: state,
-            reason: reason,
-            shouldDrain: shouldDrain,
-            retryDelayNanos: retryDelayNanos,
-            detail: detail
-        )
         return StorageBacklogDrainDecision(
             shouldDrain: shouldDrain,
             reason: reason,
@@ -2624,8 +2601,8 @@ public final class AppState {
         recordLocalDiagnosticsEvent(
             level: .info,
             subsystem: .ui,
-            eventType: "storage-backlog-drain-decision",
-            message: "Storage backlog drain decision recorded.",
+            eventType: "storage-maintenance-state",
+            message: "Storage maintenance state recorded.",
             fields: [
                 DiagnosticsField(key: "state", value: phase),
                 DiagnosticsField(key: "reason", value: reason),
