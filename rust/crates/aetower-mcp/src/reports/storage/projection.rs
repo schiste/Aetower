@@ -878,12 +878,10 @@ pub(super) fn summarize_storage_ownership(
         .filter(|rollup| rollup.category_id == "repositories")
         .flat_map(|rollup| rollup.repository_artifacts.iter().cloned())
         .collect::<Vec<_>>();
-    repository_artifacts.sort_by(|left, right| {
-        right
-            .physical_bytes
-            .cmp(&left.physical_bytes)
-            .then_with(|| left.path.cmp(&right.path))
-    });
+    for artifact in &mut repository_artifacts {
+        repository_artifacts::refresh_repository_artifact_staleness(artifact, measured_at_millis);
+    }
+    repository_artifacts::sort_repository_artifacts(&mut repository_artifacts);
     repository_artifacts.truncate(512);
     let artifact_reclaimable = repository_artifacts
         .iter()

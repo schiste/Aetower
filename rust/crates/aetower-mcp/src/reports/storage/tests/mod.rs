@@ -1036,6 +1036,62 @@ fn repository_artifact_classifier_is_relative_and_precedence_ordered() {
 }
 
 #[test]
+fn repository_artifact_staleness_uses_latest_activity_and_prioritizes_old_tests() {
+    const DAY: u64 = 24 * 60 * 60 * 1_000;
+    let now = 1_000 * DAY;
+    let mut old_test = StorageRepositoryArtifact {
+        path: "/repo/test-results".to_owned(),
+        kind: "test-output".to_owned(),
+        physical_bytes: 50_000_000,
+        newest_modified_millis: Some(now - 730 * DAY),
+        newest_accessed_millis: Some(now - 730 * DAY),
+        cleanup_allowed: true,
+        estimated_rebuild_cost: "low".to_owned(),
+        ..StorageRepositoryArtifact::default()
+    };
+    repository_artifacts::refresh_repository_artifact_staleness(&mut old_test, now);
+
+    assert_eq!(old_test.last_activity_millis, Some(now - 730 * DAY));
+    assert_eq!(old_test.activity_basis, "modified");
+    assert_eq!(old_test.inactivity_days, Some(730));
+    assert_eq!(old_test.staleness, "archival");
+    assert_eq!(old_test.staleness_score, 91);
+    assert!(old_test.stale_candidate);
+    assert_eq!(old_test.reclaim_priority, 100);
+
+    let mut recently_accessed = StorageRepositoryArtifact {
+        path: "/repo/target".to_owned(),
+        kind: "rust-build".to_owned(),
+        physical_bytes: 10_000_000_000,
+        newest_modified_millis: Some(now - 730 * DAY),
+        newest_accessed_millis: Some(now - 2 * DAY),
+        cleanup_allowed: true,
+        estimated_rebuild_cost: "high".to_owned(),
+        ..StorageRepositoryArtifact::default()
+    };
+    repository_artifacts::refresh_repository_artifact_staleness(&mut recently_accessed, now);
+
+    assert_eq!(recently_accessed.activity_basis, "accessed");
+    assert_eq!(recently_accessed.inactivity_days, Some(2));
+    assert_eq!(recently_accessed.staleness, "recent");
+    assert!(!recently_accessed.stale_candidate);
+    assert_eq!(recently_accessed.reclaim_priority, 10);
+
+    let mut locked = old_test.clone();
+    locked.path = "/repo/tracked-test-results".to_owned();
+    locked.cleanup_allowed = false;
+    repository_artifacts::refresh_repository_artifact_staleness(&mut locked, now);
+    assert!(!locked.stale_candidate);
+    assert_eq!(locked.reclaim_priority, 0);
+
+    let mut candidates = vec![recently_accessed, locked, old_test];
+    repository_artifacts::sort_repository_artifacts(&mut candidates);
+    assert_eq!(candidates[0].path, "/repo/test-results");
+    assert_eq!(candidates[1].path, "/repo/target");
+    assert_eq!(candidates[2].path, "/repo/tracked-test-results");
+}
+
+#[test]
 fn repository_family_groups_linked_worktrees_by_common_git_directory() {
     let root = test_root("repository-family-worktree");
     let family = root.join("project");
@@ -1321,6 +1377,14 @@ fn storage_ownership_generation_activation_is_atomic_and_durable() {
             physical_bytes: 128,
             file_count: 1,
             newest_modified_millis: Some(1),
+            newest_accessed_millis: Some(2),
+            last_activity_millis: None,
+            activity_basis: String::new(),
+            inactivity_days: None,
+            staleness: String::new(),
+            staleness_score: 0,
+            stale_candidate: false,
+            reclaim_priority: 0,
             evidence: vec!["Cargo marker".to_owned()],
             confidence: "confirmed".to_owned(),
             git_ignored: true,
@@ -1349,6 +1413,10 @@ fn storage_ownership_generation_activation_is_atomic_and_durable() {
     assert_eq!(active.rollups[0].boundary_id, rollup.boundary_id);
     assert_eq!(active.rollups[0].repository_artifacts.len(), 1);
     assert_eq!(active.rollups[0].repository_artifacts[0].kind, "rust-build");
+    assert_eq!(
+        active.rollups[0].repository_artifacts[0].newest_accessed_millis,
+        Some(2)
+    );
 }
 
 #[cfg(target_os = "macos")]

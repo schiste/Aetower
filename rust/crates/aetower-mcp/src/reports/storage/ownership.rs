@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const STORAGE_OWNERSHIP_CLASSIFIER_VERSION: u32 = 2;
+pub(super) const STORAGE_OWNERSHIP_CLASSIFIER_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct StorageOwnershipCategoryDefinition {

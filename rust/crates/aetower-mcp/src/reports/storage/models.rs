@@ -231,6 +231,21 @@ pub(super) struct StorageRepositoryArtifact {
     pub(super) physical_bytes: u64,
     pub(super) file_count: u64,
     pub(super) newest_modified_millis: Option<u64>,
+    pub(super) newest_accessed_millis: Option<u64>,
+    #[serde(default)]
+    pub(super) last_activity_millis: Option<u64>,
+    #[serde(default)]
+    pub(super) activity_basis: String,
+    #[serde(default)]
+    pub(super) inactivity_days: Option<u64>,
+    #[serde(default)]
+    pub(super) staleness: String,
+    #[serde(default)]
+    pub(super) staleness_score: u8,
+    #[serde(default)]
+    pub(super) stale_candidate: bool,
+    #[serde(default)]
+    pub(super) reclaim_priority: u8,
     pub(super) evidence: Vec<String>,
     pub(super) confidence: String,
     pub(super) git_ignored: bool,

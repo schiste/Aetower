@@ -39,7 +39,10 @@ pub(super) struct RepositoryArtifactAccumulator {
     pub(super) physical_bytes: u64,
     pub(super) file_count: u64,
     pub(super) newest_modified_millis: Option<u64>,
+    pub(super) newest_accessed_millis: Option<u64>,
 }
+
+const MILLIS_PER_DAY: u64 = 24 * 60 * 60 * 1_000;
 
 /// Classify a path relative to its owning repository. Absolute ancestors are
 /// intentionally excluded: a checkout nested below a directory named `build`
@@ -176,6 +179,12 @@ pub(super) fn accumulate_repository_artifact(
         .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
         .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
     accumulator.newest_modified_millis = accumulator.newest_modified_millis.max(modified_millis);
+    let accessed_millis = metadata
+        .accessed()
+        .ok()
+        .and_then(|accessed| accessed.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
+    accumulator.newest_accessed_millis = accumulator.newest_accessed_millis.max(accessed_millis);
 }
 
 pub(super) fn finalize_repository_artifacts(
@@ -248,7 +257,7 @@ pub(super) fn finalize_repository_artifacts(
             let id = format!("{}:{repository_identity}:{relative_path}", family.id);
             let rebuild_instruction = rebuild_instruction(&artifact.kind);
             let estimated_rebuild_cost = rebuild_cost(artifact.physical_bytes).to_owned();
-            artifacts.push(StorageRepositoryArtifact {
+            let mut finalized = StorageRepositoryArtifact {
                 id,
                 path: artifact.path.display().to_string(),
                 relative_path,
@@ -262,6 +271,14 @@ pub(super) fn finalize_repository_artifacts(
                 physical_bytes: artifact.physical_bytes,
                 file_count: artifact.file_count,
                 newest_modified_millis: artifact.newest_modified_millis,
+                newest_accessed_millis: artifact.newest_accessed_millis,
+                last_activity_millis: None,
+                activity_basis: String::new(),
+                inactivity_days: None,
+                staleness: String::new(),
+                staleness_score: 0,
+                stale_candidate: false,
+                reclaim_priority: 0,
                 evidence,
                 confidence: confidence.to_owned(),
                 git_ignored,
@@ -276,16 +293,87 @@ pub(super) fn finalize_repository_artifacts(
                 default_cleanup_action: if cleanup_allowed { "trash" } else { "review" }.to_owned(),
                 rebuild_instruction,
                 estimated_rebuild_cost,
-            });
+            };
+            refresh_repository_artifact_staleness(&mut finalized, measured_at_millis);
+            artifacts.push(finalized);
         }
     }
+    sort_repository_artifacts(&mut artifacts);
+    artifacts
+}
+
+pub(super) fn refresh_repository_artifact_staleness(
+    artifact: &mut StorageRepositoryArtifact,
+    now_millis: u64,
+) {
+    let (last_activity_millis, activity_basis) = match (
+        artifact.newest_modified_millis,
+        artifact.newest_accessed_millis,
+    ) {
+        (Some(modified), Some(accessed)) if accessed > modified => (Some(accessed), "accessed"),
+        (Some(modified), _) => (Some(modified), "modified"),
+        (None, Some(accessed)) => (Some(accessed), "accessed"),
+        (None, None) => (None, "unknown"),
+    };
+    let inactivity_days =
+        last_activity_millis.map(|activity| now_millis.saturating_sub(activity) / MILLIS_PER_DAY);
+    let (staleness, staleness_score) = inactivity_days.map_or(("unknown", 0), |days| match days {
+        0 => ("active", 0),
+        1..=6 => ("recent", 10),
+        7..=29 => ("aging", 30),
+        30..=179 => ("stale", 60 + ((days - 30) / 8).min(19) as u8),
+        180..=364 => ("cold", 80 + ((days - 180) / 19).min(9) as u8),
+        _ => ("archival", 90 + ((days - 365) / 365).min(10) as u8),
+    });
+    artifact.last_activity_millis = last_activity_millis;
+    artifact.activity_basis = activity_basis.to_owned();
+    artifact.inactivity_days = inactivity_days;
+    artifact.staleness = staleness.to_owned();
+    artifact.staleness_score = staleness_score;
+    artifact.stale_candidate =
+        artifact.cleanup_allowed && inactivity_days.is_some_and(|days| days >= 30);
+    artifact.reclaim_priority = reclaim_priority(artifact);
+}
+
+pub(super) fn sort_repository_artifacts(artifacts: &mut [StorageRepositoryArtifact]) {
     artifacts.sort_by(|left, right| {
         right
-            .physical_bytes
-            .cmp(&left.physical_bytes)
+            .stale_candidate
+            .cmp(&left.stale_candidate)
+            .then_with(|| right.reclaim_priority.cmp(&left.reclaim_priority))
+            .then_with(|| right.physical_bytes.cmp(&left.physical_bytes))
             .then_with(|| left.path.cmp(&right.path))
     });
-    artifacts
+}
+
+fn reclaim_priority(artifact: &StorageRepositoryArtifact) -> u8 {
+    if !artifact.cleanup_allowed {
+        return 0;
+    }
+    let kind_boost = match artifact.kind.as_str() {
+        "test-output" => 10,
+        "coverage-output" => 8,
+        "web-build" => 3,
+        _ => 0,
+    };
+    let size_boost = match artifact.physical_bytes {
+        0..100_000_000 => 0,
+        100_000_000..1_000_000_000 => 4,
+        1_000_000_000..5_000_000_000 => 7,
+        5_000_000_000..10_000_000_000 => 9,
+        _ => 10,
+    };
+    let rebuild_penalty = match artifact.estimated_rebuild_cost.as_str() {
+        "high" => 10,
+        "moderate" => 5,
+        _ => 0,
+    };
+    artifact
+        .staleness_score
+        .saturating_add(kind_boost)
+        .saturating_add(size_boost)
+        .saturating_sub(rebuild_penalty)
+        .min(100)
 }
 
 fn rebuild_instruction(kind: &str) -> String {
