@@ -40,43 +40,6 @@ private struct StorageBacklogDrainDecision: Sendable {
     let retryDelayNanos: UInt64
 }
 
-struct StorageBacklogDrainStatus: Codable, Equatable, Sendable {
-    let state: String
-    let reason: String
-    let detail: String
-    let shouldDrain: Bool
-    let retryDelayMillis: UInt64
-    let updatedAtMillis: UInt64
-    let dirtyPathCount: UInt64
-    let selfCpuPercent: Double
-    let hostCpuPercent: Double
-    let swapBytes: UInt64
-    let compressedMemoryBytes: UInt64
-    let thermalState: String
-    let decisionCount: UInt64
-
-    var isPaused: Bool {
-        state == "paused"
-    }
-
-    var isActive: Bool {
-        state == "scheduled" || state == "draining" || state == "published"
-    }
-}
-
-private enum StorageBacklogDrainStatusStore {
-    private static let key = "aetower.storageBacklogDrainStatus"
-
-    static func load() -> StorageBacklogDrainStatus? {
-        decodeUserDefaultsJSON(StorageBacklogDrainStatus.self, key: key)
-    }
-
-    static func save(_ status: StorageBacklogDrainStatus) {
-        guard let data = try? JSONEncoder().encode(status) else { return }
-        UserDefaults.standard.set(data, forKey: key)
-    }
-}
-
 enum StorageEstimateConfidence: String, Sendable {
     case verified
     case partial
@@ -634,8 +597,7 @@ public final class AppState {
     @ObservationIgnored private var storageSituationPollRoots: [String] = []
     @ObservationIgnored private var lastStorageBacklogDecisionDiagnosticMillis: UInt64 = 0
     @ObservationIgnored private var lastStorageBacklogDecisionDiagnosticKey: String?
-    private(set) var storageBacklogDrainStatus: StorageBacklogDrainStatus? =
-        StorageBacklogDrainStatusStore.load()
+    @ObservationIgnored private var storageBacklogDecisionCount: UInt64 = 0
     private(set) var storageHygieneError: String?
     private(set) var storageHygieneCompletedAt: Date?
     private(set) var repositoryInventoryRefreshState: RepositoryInventoryRefreshState?
@@ -2495,16 +2457,11 @@ public final class AppState {
             .joined(separator: ",")
         let volumes = storageVolumePublishSignature(situation.volumeStates)
         let ownership = storageOwnershipPublishSignature(situation.ownershipBreakdown)
-        let backlogDrain = Self.storageSituationBacklogDrainSignature(situation.backlogDrain)
-        let recoveryPlan = Self.storageSituationRecoveryPlanSignature(situation.recoveryPlan)
         var fields: [String] = [
             situation.storageIndexStatus,
-            String(situation.snapshotUpdatedAtMillis ?? 0),
-            situation.cacheStatus.source,
             situation.cacheStatus.stale ? "stale" : "fresh",
             situation.cacheStatus.partial ? "partial" : "complete",
-            situation.cacheStatus.confidence,
-            String(situation.cacheStatus.confidenceScore),
+            situation.cacheStatus.message,
             String(situation.cacheStatus.latestScanMillis ?? 0),
             String(summary.sourceRootCount),
             String(summary.itemCount),
@@ -2514,11 +2471,7 @@ public final class AppState {
             String(summary.reviewRequiredBytes),
             String(summary.dangerousUserDataBytes),
             String(dirty.dirtyPathCount),
-            String(dirty.latestEventId ?? 0),
             dirty.unknownGap ? "gap" : "no-gap",
-            dirty.unknownGapRoots.joined(separator: ","),
-            backlogDrain,
-            recoveryPlan,
         ]
         fields.append(topOffenders)
         fields.append(volumes)
@@ -2549,33 +2502,6 @@ public final class AppState {
                 "\($0.path)|\($0.totalBytes)|\($0.freeNowBytes)|\($0.availableBytes)|\($0.purgeableBytesEstimate)|\($0.importantUsageAvailableBytes ?? 0)|\($0.opportunisticUsageAvailableBytes ?? 0)"
             }
             .joined(separator: ",")
-    }
-
-    nonisolated private static func storageSituationBacklogDrainSignature(
-        _ backlogDrain: StorageSituationBacklogDrainModel?
-    ) -> String {
-        guard let backlogDrain else { return "" }
-        var fields: [String] = []
-        fields.append(backlogDrain.state)
-        fields.append(backlogDrain.reason)
-        fields.append(String(backlogDrain.dirtyPathCount))
-        fields.append(String(backlogDrain.latestEventId ?? 0))
-        fields.append(String(backlogDrain.latestMeasurementMillis ?? 0))
-        fields.append(backlogDrain.latestMeasurementStatus ?? "")
-        fields.append(backlogDrain.lastError ?? "")
-        return fields.joined(separator: ":")
-    }
-
-    nonisolated private static func storageSituationRecoveryPlanSignature(
-        _ recoveryPlan: StorageSituationRecoveryPlanModel?
-    ) -> String {
-        guard let recoveryPlan else { return "" }
-        var fields: [String] = []
-        fields.append(recoveryPlan.state)
-        fields.append(recoveryPlan.reason)
-        fields.append(recoveryPlan.cleanupBlocked ? "blocked" : "open")
-        fields.append(recoveryPlan.roots.joined(separator: ","))
-        return fields.joined(separator: ":")
     }
 
     fileprivate func storageSituationPollRootsForBackground() -> [String] {
@@ -2616,8 +2542,6 @@ public final class AppState {
         }
 
         let host = snapshot.host
-        let totalBytes = max(Double(host.memoryTotalBytes), 1)
-        let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
 
         if host.thermalState == .serious || host.thermalState == .critical {
             return makeStorageBacklogDrainDecision(
@@ -2641,7 +2565,6 @@ public final class AppState {
         let shouldSlowDown = host.thermalState == .fair
             || host.onBattery
             || host.lowPowerMode
-            || compressedRatio >= 0.12
 
         return makeStorageBacklogDrainDecision(
             shouldDrain: true,
@@ -2684,23 +2607,12 @@ public final class AppState {
     ) {
         let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
         let host = snapshot.host
-        let status = StorageBacklogDrainStatus(
-            state: phase,
-            reason: reason,
-            detail: detail,
-            shouldDrain: shouldDrain,
-            retryDelayMillis: retryDelayNanos / 1_000_000,
-            updatedAtMillis: nowMillis,
-            dirtyPathCount: storageSituation?.dirtyPaths.dirtyPathCount ?? 0,
-            selfCpuPercent: Double(runtimeLagMetrics.selfCpuPercent),
-            hostCpuPercent: Double(host.cpuPercent),
-            swapBytes: host.swapUsedBytes,
-            compressedMemoryBytes: host.compressedMemoryBytes,
-            thermalState: thermalStateLabel(host.thermalState),
-            decisionCount: (storageBacklogDrainStatus?.decisionCount ?? 0) + 1
-        )
-        storageBacklogDrainStatus = status
-        StorageBacklogDrainStatusStore.save(status)
+        let retryDelayMillis = retryDelayNanos / 1_000_000
+        let dirtyPathCount = storageSituation?.dirtyPaths.dirtyPathCount ?? 0
+        let selfCpuPercent = Double(runtimeLagMetrics.selfCpuPercent)
+        let hostCpuPercent = Double(host.cpuPercent)
+        let thermalState = thermalStateLabel(host.thermalState)
+        storageBacklogDecisionCount &+= 1
 
         let diagnosticKey = "\(phase)|\(reason)|\(shouldDrain)"
         let shouldRecordDiagnostic = diagnosticKey != lastStorageBacklogDecisionDiagnosticKey
@@ -2719,14 +2631,14 @@ public final class AppState {
                 DiagnosticsField(key: "reason", value: reason),
                 DiagnosticsField(key: "detail", value: detail),
                 DiagnosticsField(key: "should_drain", value: shouldDrain ? "true" : "false"),
-                DiagnosticsField(key: "retry_millis", value: String(status.retryDelayMillis)),
-                DiagnosticsField(key: "self_cpu_percent", value: String(format: "%.1f", status.selfCpuPercent)),
-                DiagnosticsField(key: "host_cpu_percent", value: String(format: "%.1f", status.hostCpuPercent)),
-                DiagnosticsField(key: "swap_bytes", value: String(status.swapBytes)),
-                DiagnosticsField(key: "compressed_memory_bytes", value: String(status.compressedMemoryBytes)),
-                DiagnosticsField(key: "thermal_state", value: status.thermalState),
-                DiagnosticsField(key: "dirty_path_count", value: String(status.dirtyPathCount)),
-                DiagnosticsField(key: "decision_count", value: String(status.decisionCount)),
+                DiagnosticsField(key: "retry_millis", value: String(retryDelayMillis)),
+                DiagnosticsField(key: "self_cpu_percent", value: String(format: "%.1f", selfCpuPercent)),
+                DiagnosticsField(key: "host_cpu_percent", value: String(format: "%.1f", hostCpuPercent)),
+                DiagnosticsField(key: "swap_bytes", value: String(host.swapUsedBytes)),
+                DiagnosticsField(key: "compressed_memory_bytes", value: String(host.compressedMemoryBytes)),
+                DiagnosticsField(key: "thermal_state", value: thermalState),
+                DiagnosticsField(key: "dirty_path_count", value: String(dirtyPathCount)),
+                DiagnosticsField(key: "decision_count", value: String(storageBacklogDecisionCount)),
             ]
         )
     }
