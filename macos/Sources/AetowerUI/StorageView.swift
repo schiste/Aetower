@@ -5562,7 +5562,7 @@ public struct StorageView: View {
                             AetowerStorageStrataMark(
                                 color: storageRepositoryArtifactColor(kind.id)
                             )
-                            VStack(alignment: .leading, spacing: 1) {
+                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                                 Text(kind.label)
                                     .lineLimit(1)
                                 Text("\(kind.artifactCount) artifact\(kind.artifactCount == 1 ? "" : "s")")
@@ -5592,7 +5592,7 @@ public struct StorageView: View {
                         .padding(.top, AetowerDesign.Spacing.xs)
                     } label: {
                         HStack(spacing: AetowerDesign.Spacing.sm) {
-                            VStack(alignment: .leading, spacing: 1) {
+                            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                                 Text(family.label)
                                     .font(AetowerDesign.Typography.metadataStrong)
                                 if family.worktreeBytes > 0 {
@@ -5637,7 +5637,7 @@ public struct StorageView: View {
     ) -> some View {
         HStack(alignment: .center, spacing: AetowerDesign.Spacing.sm) {
             AetowerStorageStrataMark(color: storageRepositoryArtifactColor(artifact.kind))
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
                 HStack(spacing: AetowerDesign.Spacing.xs) {
                     Text(artifact.relativePath)
                         .font(AetowerDesign.Typography.metadataStrong)
@@ -5651,11 +5651,7 @@ public struct StorageView: View {
                 }
                 Text(artifactEvidenceSummary(artifact))
                     .font(AetowerDesign.Typography.metadata)
-                    .foregroundStyle(
-                        artifact.cleanupAllowed
-                            ? AetowerDesign.Ink.tertiary
-                            : AetowerDesign.Status.warning
-                    )
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
                     .lineLimit(1)
             }
             Spacer(minLength: AetowerDesign.Spacing.sm)
