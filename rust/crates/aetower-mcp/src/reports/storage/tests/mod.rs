@@ -7512,6 +7512,69 @@ fn storage_dirty_queue_debounces_noisy_paths_behind_quiet_work() {
 }
 
 #[test]
+fn storage_dirty_queue_rotates_budget_deferred_paths_after_new_events() {
+    let root = test_root("dirty-queue-rotates-budget-deferred");
+    let index_dir = root.join("index");
+    let watched = root.join("watched");
+    let deferred = watched.join("Library/Developer/large-cache");
+    let fresh = watched.join("ordinary-cache");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    store_indexed_directory_for_dirty_queue(&storage_index, &deferred, 64_000_000_000);
+    store_indexed_directory_for_dirty_queue(&storage_index, &fresh, 1_000_000);
+    let now_millis = storage_now_millis();
+    let records = [
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(2_000)),
+            path: Some(deferred.join("changed.bin").display().to_string()),
+            event_id: Some(201),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+            event_count: None,
+        },
+        StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_sub(1_000)),
+            path: Some(fresh.join("changed.bin").display().to_string()),
+            event_id: Some(202),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+            event_count: None,
+        },
+    ];
+    storage_index.record_filesystem_events(&records, std::slice::from_ref(&watched), now_millis);
+    storage_index.mark_dirty_paths_deferred(&[deferred.display().to_string()], now_millis);
+
+    storage_index.record_filesystem_events(
+        &[StorageFilesystemEventRecord {
+            timestamp_millis: Some(now_millis.saturating_add(1)),
+            path: Some(deferred.join("new-change.bin").display().to_string()),
+            event_id: Some(203),
+            flags: Some(0),
+            source: Some("test-fsevents".to_owned()),
+            event_count: None,
+        }],
+        std::slice::from_ref(&watched),
+        now_millis.saturating_add(1),
+    );
+
+    let selected = storage_index
+        .load_dirty_path_records_for_test(std::slice::from_ref(&watched), 1, now_millis + 2)
+        .into_iter()
+        .map(|record| record.path)
+        .collect::<Vec<_>>();
+    assert_eq!(selected, vec![fresh.display().to_string()]);
+
+    storage_index.mark_dirty_paths_deferred(&[fresh.display().to_string()], now_millis + 10);
+    let oldest_deferred = storage_index
+        .load_dirty_path_records_for_test(std::slice::from_ref(&watched), 1, now_millis + 11)
+        .into_iter()
+        .map(|record| record.path)
+        .collect::<Vec<_>>();
+    assert_eq!(oldest_deferred, vec![deferred.display().to_string()]);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_dirty_queue_collapses_chau7_tab_restore_noise() {
     let root = test_root("dirty-queue-collapses-chau7");
     let index_dir = root.join("index");

@@ -311,6 +311,7 @@ pub(super) struct StorageDirtyPathRecord {
     pub(super) first_seen_millis: u64,
     pub(super) last_seen_millis: u64,
     pub(super) event_count: u64,
+    pub(super) deferred_at_millis: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -374,6 +375,7 @@ struct StorageDirtyPathPolicyRecord {
     record: StorageDirtyPathRecord,
     priority_score: f64,
     debounced: bool,
+    deferred_at_millis: Option<u64>,
 }
 
 pub(super) struct StorageSizeIndex {
@@ -663,7 +665,8 @@ impl StorageSizeIndex {
                 last_seen_millis INTEGER NOT NULL,
                 event_count INTEGER NOT NULL DEFAULT 1,
                 status TEXT NOT NULL DEFAULT 'dirty',
-                last_error TEXT
+                last_error TEXT,
+                deferred_at_millis INTEGER
              );
              CREATE INDEX IF NOT EXISTS idx_storage_dirty_path_status
                 ON storage_dirty_path(status, last_seen_millis DESC);
@@ -866,7 +869,8 @@ impl StorageSizeIndex {
                     last_seen_millis INTEGER NOT NULL,
                     event_count INTEGER NOT NULL DEFAULT 1,
                     status TEXT NOT NULL DEFAULT 'dirty',
-                    last_error TEXT
+                    last_error TEXT,
+                    deferred_at_millis INTEGER
                  );
                  CREATE INDEX IF NOT EXISTS idx_storage_dirty_path_status
                     ON storage_dirty_path(status, last_seen_millis DESC);
@@ -1304,6 +1308,20 @@ impl StorageSizeIndex {
                 [],
             ))?;
         }
+        let deferred_exists: i64 = connection.query_row(
+            "SELECT COUNT(*)
+             FROM pragma_table_info('storage_dirty_path')
+             WHERE name = 'deferred_at_millis'",
+            [],
+            |row| row.get(0),
+        )?;
+        if deferred_exists == 0 {
+            tolerate_duplicate_column(connection.execute(
+                "ALTER TABLE storage_dirty_path
+                 ADD COLUMN deferred_at_millis INTEGER",
+                [],
+            ))?;
+        }
         Ok(())
     }
 
@@ -1671,7 +1689,8 @@ impl StorageSizeIndex {
         };
         let limit = limit.clamp(1, 4096);
         let Ok(mut statement) = connection.prepare(
-            "SELECT path, source, flags, first_seen_millis, last_seen_millis, event_count
+            "SELECT path, source, flags, first_seen_millis, last_seen_millis, event_count,
+                    deferred_at_millis
              FROM storage_dirty_path
              WHERE status = 'dirty'
              ORDER BY first_seen_millis ASC, last_seen_millis DESC, path ASC
@@ -1704,8 +1723,11 @@ impl StorageSizeIndex {
             }
         }
         candidates.sort_by(|left, right| {
-            left.debounced
-                .cmp(&right.debounced)
+            left.deferred_at_millis
+                .is_some()
+                .cmp(&right.deferred_at_millis.is_some())
+                .then_with(|| left.deferred_at_millis.cmp(&right.deferred_at_millis))
+                .then_with(|| left.debounced.cmp(&right.debounced))
                 .then_with(|| {
                     right
                         .priority_score
@@ -1748,7 +1770,8 @@ impl StorageSizeIndex {
             return;
         };
         let Ok(mut statement) = connection.prepare(
-            "SELECT path, source, flags, first_seen_millis, last_seen_millis, event_count
+            "SELECT path, source, flags, first_seen_millis, last_seen_millis, event_count,
+                    deferred_at_millis
              FROM storage_dirty_path
              WHERE status = 'dirty'
              ORDER BY first_seen_millis ASC, last_seen_millis DESC, path ASC
@@ -1799,6 +1822,7 @@ impl StorageSizeIndex {
                     first_seen_millis: record.first_seen_millis,
                     last_seen_millis: record.last_seen_millis,
                     event_count: record.event_count,
+                    deferred_at_millis: None,
                 });
         }
         drop(statement);
@@ -1941,6 +1965,22 @@ impl StorageSizeIndex {
         }
     }
 
+    pub(super) fn mark_dirty_paths_deferred(&self, paths: &[String], now_millis: u64) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        let Ok(mut statement) = connection.prepare(
+            "UPDATE storage_dirty_path
+             SET deferred_at_millis = ?2
+             WHERE path = ?1 AND status = 'dirty'",
+        ) else {
+            return;
+        };
+        for path in paths {
+            let _ = statement.execute(params![path, now_millis.min(i64::MAX as u64) as i64]);
+        }
+    }
+
     fn mark_dirty_path_clean(&self, path: &str, now_millis: u64) {
         let Some(connection) = self.connection.as_ref() else {
             return;
@@ -1949,7 +1989,8 @@ impl StorageSizeIndex {
         let _ = connection.execute(
             "UPDATE storage_dirty_path
              SET status = 'clean',
-                 last_seen_millis = MAX(last_seen_millis, ?2)
+                 last_seen_millis = MAX(last_seen_millis, ?2),
+                 deferred_at_millis = NULL
              WHERE path = ?1
                 OR substr(path, 1, ?3) = ?4",
             params![
@@ -1994,6 +2035,7 @@ impl StorageSizeIndex {
         let Some(connection) = self.connection.as_ref() else {
             return StorageDirtyPathPolicyRecord {
                 debounced: dirty_path_record_is_debounced(&record, now_millis),
+                deferred_at_millis: record.deferred_at_millis,
                 priority_score: 0.0,
                 record,
             };
@@ -2016,6 +2058,7 @@ impl StorageSizeIndex {
         let domain_score = dirty_queue_domain_score(&record.path, domain_kind.as_deref());
         StorageDirtyPathPolicyRecord {
             debounced: dirty_path_record_is_debounced(&record, now_millis),
+            deferred_at_millis: record.deferred_at_millis,
             priority_score: domain_score
                 + visible_root_score
                 + size_score
@@ -6457,6 +6500,9 @@ fn dirty_path_record_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<Stora
         first_seen_millis: first_seen_millis.max(0) as u64,
         last_seen_millis: last_seen_millis.max(0) as u64,
         event_count: event_count.max(0) as u64,
+        deferred_at_millis: row
+            .get::<_, Option<i64>>(6)?
+            .map(|value| value.max(0) as u64),
     })
 }
 

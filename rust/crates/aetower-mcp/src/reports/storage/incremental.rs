@@ -171,6 +171,7 @@ pub(super) fn measure_dirty_storage_subtrees_once_with_policy(
     };
     let mut affected_source_roots = BTreeSet::new();
     let mut completed_dirty_paths = Vec::new();
+    let mut deferred_dirty_paths = Vec::new();
     for record in dirty_records {
         let path = PathBuf::from(&record.path);
         let source_root = storage_index.source_root_for_incremental_path(&path, roots);
@@ -224,6 +225,7 @@ pub(super) fn measure_dirty_storage_subtrees_once_with_policy(
         if scan_result.walk_truncated || scan_result.sizing_truncated {
             result.continuation_pending = true;
             result.last_error = Some("incremental_subtree_budget_exhausted".to_owned());
+            deferred_dirty_paths.push(record.path);
         } else {
             completed_dirty_paths.push(record.path);
         }
@@ -233,6 +235,9 @@ pub(super) fn measure_dirty_storage_subtrees_once_with_policy(
     storage_index.refresh_materialized_storage_for_source_roots(&affected_source_roots);
     if !completed_dirty_paths.is_empty() {
         storage_index.mark_dirty_paths_clean(&completed_dirty_paths, storage_now_millis());
+    }
+    if !deferred_dirty_paths.is_empty() {
+        storage_index.mark_dirty_paths_deferred(&deferred_dirty_paths, storage_now_millis());
     }
     result.measured_path_count = metrics.storage_index_writes;
     result.measured_file_count = metrics.sized_entry_count;
