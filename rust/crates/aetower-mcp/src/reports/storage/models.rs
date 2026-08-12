@@ -160,6 +160,11 @@ pub(super) struct StorageOwnershipBreakdown {
     #[serde(default)]
     pub(super) generation_status: String,
     pub(super) buckets: Vec<StorageOwnershipBucket>,
+    /// Durable, artifact-root-level evidence for repository build/test data.
+    /// Kept outside the bucket list so ownership partitioning remains a flat,
+    /// non-overlapping accounting model while the UI can offer a drill-down.
+    #[serde(default)]
+    pub(super) repository_artifacts: Vec<StorageRepositoryArtifact>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -207,6 +212,35 @@ pub(super) struct StorageOwnershipBoundaryRollup {
     pub(super) source: String,
     #[serde(default)]
     pub(super) sub_buckets: Vec<StorageOwnershipSubBucket>,
+    #[serde(default)]
+    pub(super) repository_artifacts: Vec<StorageRepositoryArtifact>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct StorageRepositoryArtifact {
+    pub(super) id: String,
+    pub(super) path: String,
+    pub(super) relative_path: String,
+    pub(super) repository_root: String,
+    pub(super) repository_family_id: String,
+    pub(super) repository_family_root: String,
+    pub(super) repository_family_label: String,
+    pub(super) worktree: bool,
+    pub(super) kind: String,
+    pub(super) label: String,
+    pub(super) physical_bytes: u64,
+    pub(super) file_count: u64,
+    pub(super) newest_modified_millis: Option<u64>,
+    pub(super) evidence: Vec<String>,
+    pub(super) confidence: String,
+    pub(super) git_ignored: bool,
+    pub(super) git_tracked: bool,
+    pub(super) cleanup_tier: String,
+    pub(super) cleanup_allowed: bool,
+    pub(super) cleanup_blockers: Vec<String>,
+    pub(super) default_cleanup_action: String,
+    pub(super) rebuild_instruction: String,
+    pub(super) estimated_rebuild_cost: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

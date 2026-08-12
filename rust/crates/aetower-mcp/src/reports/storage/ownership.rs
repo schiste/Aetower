@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const STORAGE_OWNERSHIP_CLASSIFIER_VERSION: u32 = 1;
+pub(super) const STORAGE_OWNERSHIP_CLASSIFIER_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct StorageOwnershipCategoryDefinition {
@@ -394,21 +394,13 @@ pub(super) fn repository_ownership_boundary_roots(
     let mut boundaries = workspace_roots.iter().cloned().collect::<BTreeSet<_>>();
     for repository_root in repository_roots {
         let repository_root = Path::new(repository_root);
-        let Some(workspace_root) = workspace_roots.iter().find(|workspace_root| {
+        let belongs_to_workspace = workspace_roots.iter().any(|workspace_root| {
             path_is_under_root(&repository_root.display().to_string(), workspace_root)
-        }) else {
+        });
+        if !belongs_to_workspace || !repository_root.is_dir() {
             continue;
-        };
-        let Ok(relative) = repository_root.strip_prefix(workspace_root) else {
-            continue;
-        };
-        let owner = relative.components().next().map_or_else(
-            || workspace_root.clone(),
-            |component| workspace_root.join(component),
-        );
-        if owner.is_dir() {
-            boundaries.insert(owner);
         }
+        boundaries.insert(repository_root.to_path_buf());
     }
     boundaries.into_iter().collect()
 }
@@ -615,15 +607,18 @@ pub(super) fn measure_storage_ownership_boundary(
     let root_is_repository = boundary.category_id == "repositories"
         && (known_repository_roots.contains(&root_key)
             || is_git_repository_root(&boundary.root_path));
-    let mut stack = vec![(boundary.root_path.clone(), root_is_repository)];
+    let root_repository = root_is_repository.then(|| boundary.root_path.clone());
+    let mut stack = vec![(boundary.root_path.clone(), root_repository)];
     let mut seen_hardlinks = BTreeSet::<(u64, u64)>::new();
     let mut logical_bytes = 0u64;
     let mut physical_bytes = 0u64;
     let mut entry_count = 0u64;
     let mut complete = root_metadata.is_some();
     let mut sub_bucket_bytes = BTreeMap::<&'static str, u64>::new();
+    let mut artifact_accumulators =
+        BTreeMap::<String, super::repository_artifacts::RepositoryArtifactAccumulator>::new();
 
-    while let Some((directory, directory_is_repository)) = stack.pop() {
+    while let Some((directory, directory_repository)) = stack.pop() {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) => {
@@ -655,11 +650,15 @@ pub(super) fn measure_storage_ownership_boundary(
             }
             entry_count = entry_count.saturating_add(1);
             let path_key = path.display().to_string();
-            let path_is_repository = directory_is_repository
-                || known_repository_roots.contains(&path_key)
-                || (boundary.category_id == "repositories" && is_git_repository_root(&path));
+            let path_repository = if boundary.category_id == "repositories"
+                && (known_repository_roots.contains(&path_key) || is_git_repository_root(&path))
+            {
+                Some(path.clone())
+            } else {
+                directory_repository.clone()
+            };
             if metadata.is_dir() {
-                stack.push((path, path_is_repository));
+                stack.push((path, path_repository));
                 continue;
             }
             if !metadata.is_file() {
@@ -673,14 +672,31 @@ pub(super) fn measure_storage_ownership_boundary(
             logical_bytes = logical_bytes.saturating_add(logical);
             physical_bytes = physical_bytes.saturating_add(physical);
             if boundary.category_id == "repositories" {
-                let sub_bucket =
-                    super::repo::repository_workspace_bucket(&path, path_is_repository);
-                let total = sub_bucket_bytes.entry(sub_bucket).or_default();
+                let classification = super::repository_artifacts::classify_repository_path(
+                    &path,
+                    path_repository.as_deref(),
+                );
+                let total = sub_bucket_bytes
+                    .entry(classification.bucket_id)
+                    .or_default();
                 *total = total.saturating_add(physical);
+                if let Some(repository_root) = path_repository.as_deref() {
+                    super::repository_artifacts::accumulate_repository_artifact(
+                        &mut artifact_accumulators,
+                        &classification,
+                        repository_root,
+                        &metadata,
+                        physical,
+                    );
+                }
             }
         }
     }
-    let sub_buckets = repository_sub_buckets(&sub_bucket_bytes);
+    let sub_buckets = super::repository_artifacts::repository_sub_buckets(&sub_bucket_bytes);
+    let repository_artifacts = super::repository_artifacts::finalize_repository_artifacts(
+        artifact_accumulators,
+        measured_at_millis,
+    );
     let category = storage_ownership_category(boundary.category_id);
     StorageOwnershipBoundaryRollup {
         boundary_id: boundary.boundary_id.clone(),
@@ -699,30 +715,8 @@ pub(super) fn measure_storage_ownership_boundary(
         confidence: if complete { "measured" } else { "partial" }.to_owned(),
         source: boundary.source.to_owned(),
         sub_buckets,
+        repository_artifacts,
     }
-}
-
-fn repository_sub_buckets(
-    bucket_bytes: &BTreeMap<&'static str, u64>,
-) -> Vec<StorageOwnershipSubBucket> {
-    [
-        ("source", "Source & other"),
-        ("dependencies", "Dependencies"),
-        ("builds", "Build & test"),
-        ("git", "Git data"),
-        ("media", "Media & assets"),
-        ("workspace", "Workspace files"),
-    ]
-    .into_iter()
-    .filter_map(|(id, label)| {
-        let bytes = bucket_bytes.get(id).copied().unwrap_or_default();
-        (bytes > 0).then(|| StorageOwnershipSubBucket {
-            id: id.to_owned(),
-            label: label.to_owned(),
-            bytes,
-        })
-    })
-    .collect()
 }
 
 fn validate_storage_ownership_rollups(

@@ -190,8 +190,10 @@ pub(super) fn measure_repository_workspace(
         .filter(|repo_root| path_is_under_root(repo_root, root))
         .cloned()
         .collect::<BTreeSet<_>>();
-    let root_is_repository = workspace_repository_roots.contains(&root.display().to_string());
-    let mut stack = vec![(root.to_path_buf(), root_is_repository)];
+    let root_repository = workspace_repository_roots
+        .contains(&root.display().to_string())
+        .then(|| root.to_path_buf());
+    let mut stack = vec![(root.to_path_buf(), root_repository)];
     let mut seen_hardlinks = BTreeSet::<(u64, u64)>::new();
     let mut logical_bytes = 0u64;
     let mut physical_bytes = 0u64;
@@ -199,7 +201,7 @@ pub(super) fn measure_repository_workspace(
     let mut complete = true;
     let mut bucket_bytes = BTreeMap::<&'static str, u64>::new();
 
-    while let Some((directory, directory_is_repository)) = stack.pop() {
+    while let Some((directory, directory_repository)) = stack.pop() {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) => {
@@ -228,10 +230,13 @@ pub(super) fn measure_repository_workspace(
             }
             entry_count = entry_count.saturating_add(1);
             let path_key = path.display().to_string();
-            let path_is_repository =
-                directory_is_repository || workspace_repository_roots.contains(&path_key);
+            let path_repository = if workspace_repository_roots.contains(&path_key) {
+                Some(path.clone())
+            } else {
+                directory_repository.clone()
+            };
             if metadata.is_dir() {
-                stack.push((path, path_is_repository));
+                stack.push((path, path_repository));
                 continue;
             }
             if !metadata.is_file() {
@@ -245,31 +250,17 @@ pub(super) fn measure_repository_workspace(
             let physical = metadata.blocks().saturating_mul(512);
             logical_bytes = logical_bytes.saturating_add(logical);
             physical_bytes = physical_bytes.saturating_add(physical);
-            let bucket = repository_workspace_bucket(&path, path_is_repository);
+            let bucket = super::repository_artifacts::classify_repository_path(
+                &path,
+                path_repository.as_deref(),
+            )
+            .bucket_id;
             let bucket_total = bucket_bytes.entry(bucket).or_default();
             *bucket_total = bucket_total.saturating_add(physical);
         }
     }
 
-    let definitions = [
-        ("source", "Source & other"),
-        ("dependencies", "Dependencies"),
-        ("builds", "Build & test"),
-        ("git", "Git data"),
-        ("media", "Media & assets"),
-        ("workspace", "Workspace files"),
-    ];
-    let sub_buckets = definitions
-        .into_iter()
-        .filter_map(|(id, label)| {
-            let bytes = bucket_bytes.get(id).copied().unwrap_or_default();
-            (bytes > 0).then(|| StorageOwnershipSubBucket {
-                id: id.to_owned(),
-                label: label.to_owned(),
-                bytes,
-            })
-        })
-        .collect();
+    let sub_buckets = super::repository_artifacts::repository_sub_buckets(&bucket_bytes);
     StorageRepositoryWorkspaceRollup {
         root_path: root.display().to_string(),
         logical_bytes,
@@ -281,59 +272,6 @@ pub(super) fn measure_repository_workspace(
         complete,
         sub_buckets,
     }
-}
-
-pub(super) fn repository_workspace_bucket(
-    path: &Path,
-    belongs_to_repository: bool,
-) -> &'static str {
-    if !belongs_to_repository {
-        return "workspace";
-    }
-    let components = path
-        .components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .map(str::to_ascii_lowercase)
-        .collect::<Vec<_>>();
-    let has_component = |candidate: &str| components.iter().any(|value| value == candidate);
-    if has_component(".git") {
-        return "git";
-    }
-    if ["node_modules", ".venv", "venv", "vendor", "pods", ".bundle"]
-        .iter()
-        .any(|candidate| has_component(candidate))
-    {
-        return "dependencies";
-    }
-    if [
-        "target",
-        ".build",
-        "build",
-        "dist",
-        ".next",
-        "coverage",
-        "test-results",
-        "out",
-    ]
-    .iter()
-    .any(|candidate| has_component(candidate))
-    {
-        return "builds";
-    }
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if [
-        "7z", "avi", "gif", "gz", "heic", "jpeg", "jpg", "m4v", "mov", "mp4", "png", "tar", "tgz",
-        "webm", "webp", "xz", "zip",
-    ]
-    .contains(&extension.as_str())
-    {
-        return "media";
-    }
-    "source"
 }
 
 pub(super) fn summarize_repo_footprints(items: &[StorageHygieneItem]) -> Vec<StorageRepoFootprint> {
@@ -1506,6 +1444,52 @@ fn resolve_git_dir(repo_root: &Path) -> Option<PathBuf> {
         Some(path)
     } else {
         Some(repo_root.join(path))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RepositoryFamilyIdentity {
+    pub(super) id: String,
+    pub(super) root: PathBuf,
+    pub(super) label: String,
+    pub(super) worktree: bool,
+}
+
+/// Resolve linked Git worktrees to their shared repository family. This uses
+/// the `.git` indirection already present on disk and therefore remains stable
+/// across launches without spawning one Git process per repository.
+pub(super) fn repository_family_identity(repo_root: &Path) -> RepositoryFamilyIdentity {
+    let normalized_repo = fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+    let common_git_dir = resolve_git_dir(repo_root)
+        .map(|git_dir| fs::canonicalize(&git_dir).unwrap_or(git_dir))
+        .and_then(|git_dir| {
+            let worktrees = git_dir.parent()?;
+            if worktrees.file_name().and_then(|name| name.to_str()) == Some("worktrees") {
+                worktrees.parent().map(Path::to_path_buf)
+            } else {
+                Some(git_dir)
+            }
+        });
+    let family_root = common_git_dir
+        .as_ref()
+        .and_then(|git_dir| git_dir.parent())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| normalized_repo.clone());
+    let label = family_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Repository")
+        .to_owned();
+    let identity_path = common_git_dir.as_ref().unwrap_or(&family_root);
+    let id = fs::symlink_metadata(identity_path).map_or_else(
+        |_| identity_path.display().to_string(),
+        |metadata| format!("{}:{}", metadata.dev(), metadata.ino()),
+    );
+    RepositoryFamilyIdentity {
+        id,
+        worktree: normalized_repo != family_root,
+        root: family_root,
+        label,
     }
 }
 

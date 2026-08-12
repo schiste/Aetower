@@ -872,6 +872,31 @@ pub(super) fn summarize_storage_ownership(
         }
     }
 
+    let mut repository_artifacts = active_generation
+        .into_iter()
+        .flat_map(|generation| &generation.rollups)
+        .filter(|rollup| rollup.category_id == "repositories")
+        .flat_map(|rollup| rollup.repository_artifacts.iter().cloned())
+        .collect::<Vec<_>>();
+    repository_artifacts.sort_by(|left, right| {
+        right
+            .physical_bytes
+            .cmp(&left.physical_bytes)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    repository_artifacts.truncate(512);
+    let artifact_reclaimable = repository_artifacts
+        .iter()
+        .filter(|artifact| artifact.cleanup_allowed)
+        .fold(0u64, |total, artifact| {
+            total.saturating_add(artifact.physical_bytes)
+        });
+    if let Some((repository_bytes, repository_reclaimable)) = raw.get_mut("repositories") {
+        *repository_reclaimable = (*repository_reclaimable)
+            .max(artifact_reclaimable)
+            .min(*repository_bytes);
+    }
+
     let known_total = raw
         .values()
         .fold(0u64, |total, (bytes, _)| total.saturating_add(*bytes));
@@ -1042,6 +1067,7 @@ pub(super) fn summarize_storage_ownership(
             |generation| generation.status.clone(),
         ),
         buckets,
+        repository_artifacts,
     }
 }
 

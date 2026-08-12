@@ -1001,6 +1001,65 @@ fn repository_workspace_rollup_classifies_full_physical_tree_once() {
 }
 
 #[test]
+fn repository_artifact_classifier_is_relative_and_precedence_ordered() {
+    let outer = PathBuf::from("/tmp/build/container");
+    let repository = outer.join("project");
+    let source = repository.join("src/main.rs");
+    let target = repository.join("target/debug/app");
+    let dependency_dist = repository.join("node_modules/pkg/dist/index.js");
+    let generated_data = repository.join("data/build/stage/output.parquet");
+
+    let source_classification =
+        repository_artifacts::classify_repository_path(&source, Some(&repository));
+    assert_eq!(source_classification.bucket_id, "source");
+    assert!(source_classification.artifact_root.is_none());
+
+    let target_classification =
+        repository_artifacts::classify_repository_path(&target, Some(&repository));
+    assert_eq!(target_classification.bucket_id, "builds");
+    assert_eq!(target_classification.artifact_kind, Some("rust-build"));
+    assert_eq!(
+        target_classification.artifact_root,
+        Some(repository.join("target"))
+    );
+
+    assert_eq!(
+        repository_artifacts::classify_repository_path(&dependency_dist, Some(&repository),)
+            .bucket_id,
+        "dependencies"
+    );
+    assert_eq!(
+        repository_artifacts::classify_repository_path(&generated_data, Some(&repository),)
+            .artifact_kind,
+        Some("generated-data")
+    );
+}
+
+#[test]
+fn repository_family_groups_linked_worktrees_by_common_git_directory() {
+    let root = test_root("repository-family-worktree");
+    let family = root.join("project");
+    let worktree = root.join("worktrees/feature");
+    let worktree_git_dir = family.join(".git/worktrees/feature");
+    fs::create_dir_all(&worktree_git_dir).expect("create shared Git directory");
+    fs::create_dir_all(&worktree).expect("create linked worktree");
+    fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", worktree_git_dir.display()),
+    )
+    .expect("write linked worktree marker");
+
+    let main_identity = repo::repository_family_identity(&family);
+    let worktree_identity = repo::repository_family_identity(&worktree);
+
+    assert_eq!(main_identity.id, worktree_identity.id);
+    assert_eq!(main_identity.root, worktree_identity.root);
+    assert!(!main_identity.worktree);
+    assert!(worktree_identity.worktree);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn storage_ownership_categories_have_stable_unique_ranks() {
     let ids = STORAGE_OWNERSHIP_CATEGORIES
         .iter()
@@ -1133,7 +1192,7 @@ fn storage_repository_workspace_discovery_is_selective() {
 }
 
 #[test]
-fn storage_repository_ownership_collapses_nested_repositories_to_project_owner() {
+fn storage_repository_ownership_keeps_incremental_repository_boundaries() {
     let workspace = test_root("ownership-project-boundaries");
     let project = workspace.join("Project");
     let nested_repository = project.join("services/api");
@@ -1150,7 +1209,10 @@ fn storage_repository_ownership_collapses_nested_repositories_to_project_owner()
     let boundaries =
         repository_ownership_boundary_roots(std::slice::from_ref(&workspace), &repository_roots);
 
-    assert_eq!(boundaries, vec![workspace.clone(), project, sibling]);
+    assert_eq!(
+        boundaries,
+        vec![workspace.clone(), project, nested_repository, sibling]
+    );
     let _ = fs::remove_dir_all(workspace);
 }
 
@@ -1245,6 +1307,31 @@ fn storage_ownership_generation_activation_is_atomic_and_durable() {
         confidence: "measured".to_owned(),
         source: "test".to_owned(),
         sub_buckets: Vec::new(),
+        repository_artifacts: vec![StorageRepositoryArtifact {
+            id: "family:repo:target".to_owned(),
+            path: guard.directory.join("target").display().to_string(),
+            relative_path: "target".to_owned(),
+            repository_root: guard.directory.display().to_string(),
+            repository_family_id: "family".to_owned(),
+            repository_family_root: guard.directory.display().to_string(),
+            repository_family_label: "fixture".to_owned(),
+            worktree: false,
+            kind: "rust-build".to_owned(),
+            label: "Rust builds".to_owned(),
+            physical_bytes: 128,
+            file_count: 1,
+            newest_modified_millis: Some(1),
+            evidence: vec!["Cargo marker".to_owned()],
+            confidence: "confirmed".to_owned(),
+            git_ignored: true,
+            git_tracked: false,
+            cleanup_tier: "rebuildable".to_owned(),
+            cleanup_allowed: true,
+            cleanup_blockers: Vec::new(),
+            default_cleanup_action: "trash".to_owned(),
+            rebuild_instruction: "Run Cargo build.".to_owned(),
+            estimated_rebuild_cost: "low".to_owned(),
+        }],
     };
     let first = index
         .activate_ownership_generation(1, 10, "complete", std::slice::from_ref(&rollup))
@@ -1260,6 +1347,8 @@ fn storage_ownership_generation_activation_is_atomic_and_durable() {
     assert_eq!(active.generation_id, second.generation_id);
     assert_eq!(active.rollups.len(), 1);
     assert_eq!(active.rollups[0].boundary_id, rollup.boundary_id);
+    assert_eq!(active.rollups[0].repository_artifacts.len(), 1);
+    assert_eq!(active.rollups[0].repository_artifacts[0].kind, "rust-build");
 }
 
 #[cfg(target_os = "macos")]

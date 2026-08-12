@@ -472,6 +472,7 @@ mod ownership;
 mod projection;
 mod repo;
 mod report;
+mod repository_artifacts;
 mod state_store;
 #[cfg(test)]
 mod tests;
@@ -550,14 +551,14 @@ use models::{
     StoragePipelineEventLedgerDebug, StoragePipelineMeasurementDebug,
     StoragePipelineSituationSnapshotDebug, StoragePreventionPolicy, StoragePreventionSuggestion,
     StorageRedundancyGroup, StorageRedundancyItem, StorageRepoArtifactFolder,
-    StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryInventoryItem,
-    StorageRepositoryWorkspaceRefreshResponse, StorageRepositoryWorkspaceRollup,
-    StorageRepositoryWorkspaceRoot, StorageScanDiagnostics, StorageScanDiff, StorageScanDiffEntry,
-    StorageScanMetrics, StorageSimilarityActionProjection, StorageSituationBacklogDrain,
-    StorageSituationDomain, StorageSituationRecoveryPlan, StorageSituationResponse,
-    StorageSituationSummary, StorageSituationTopOffender, StorageSkippedRoot,
-    StorageSourceCoverage, StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState,
-    StorageWriterLedgerRecord,
+    StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryArtifact,
+    StorageRepositoryInventoryItem, StorageRepositoryWorkspaceRefreshResponse,
+    StorageRepositoryWorkspaceRollup, StorageRepositoryWorkspaceRoot, StorageScanDiagnostics,
+    StorageScanDiff, StorageScanDiffEntry, StorageScanMetrics, StorageSimilarityActionProjection,
+    StorageSituationBacklogDrain, StorageSituationDomain, StorageSituationRecoveryPlan,
+    StorageSituationResponse, StorageSituationSummary, StorageSituationTopOffender,
+    StorageSkippedRoot, StorageSourceCoverage, StorageSystemDataBucket, StorageTreemapNode,
+    StorageVolumeState, StorageWriterLedgerRecord,
 };
 pub use ownership::storage_ownership_refresh_json;
 use ownership::{STORAGE_OWNERSHIP_CATEGORIES, STORAGE_OWNERSHIP_CLASSIFIER_VERSION};

@@ -1114,6 +1114,40 @@ impl StorageSizeIndex {
              );
              CREATE INDEX IF NOT EXISTS idx_storage_ownership_rollup_category
                 ON storage_ownership_boundary_rollup(generation_id, rank, category_id, root_path);
+             CREATE TABLE IF NOT EXISTS storage_repository_artifact (
+                generation_id INTEGER NOT NULL,
+                boundary_id TEXT NOT NULL,
+                artifact_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                repository_root TEXT NOT NULL,
+                repository_family_id TEXT NOT NULL,
+                repository_family_root TEXT NOT NULL,
+                repository_family_label TEXT NOT NULL,
+                worktree INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                label TEXT NOT NULL,
+                physical_bytes INTEGER NOT NULL,
+                file_count INTEGER NOT NULL,
+                newest_modified_millis INTEGER,
+                evidence_json TEXT NOT NULL DEFAULT '[]',
+                confidence TEXT NOT NULL,
+                git_ignored INTEGER NOT NULL,
+                git_tracked INTEGER NOT NULL,
+                cleanup_tier TEXT NOT NULL,
+                cleanup_allowed INTEGER NOT NULL,
+                cleanup_blockers_json TEXT NOT NULL DEFAULT '[]',
+                default_cleanup_action TEXT NOT NULL,
+                rebuild_instruction TEXT NOT NULL,
+                estimated_rebuild_cost TEXT NOT NULL,
+                PRIMARY KEY (generation_id, artifact_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_repository_artifact_family
+                ON storage_repository_artifact(
+                    generation_id, repository_family_id, physical_bytes DESC
+                );
+             CREATE INDEX IF NOT EXISTS idx_storage_repository_artifact_path
+                ON storage_repository_artifact(path);
              CREATE TABLE IF NOT EXISTS storage_ownership_state (
                 singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
                 active_generation_id INTEGER NOT NULL
@@ -3495,6 +3529,58 @@ impl StorageSizeIndex {
                     ],
                 )
                 .map_err(|error| format!("ownership_rollup_insert:{error}"))?;
+            for artifact in &rollup.repository_artifacts {
+                let evidence_json = serde_json::to_string(&artifact.evidence)
+                    .map_err(|error| format!("repository_artifact_evidence_encode:{error}"))?;
+                let cleanup_blockers_json = serde_json::to_string(&artifact.cleanup_blockers)
+                    .map_err(|error| format!("repository_artifact_blockers_encode:{error}"))?;
+                transaction
+                    .execute(
+                        "INSERT INTO storage_repository_artifact (
+                            generation_id, boundary_id, artifact_id, path, relative_path,
+                            repository_root, repository_family_id, repository_family_root,
+                            repository_family_label, worktree, kind, label, physical_bytes,
+                            file_count, newest_modified_millis, evidence_json, confidence,
+                            git_ignored, git_tracked, cleanup_tier, cleanup_allowed,
+                            cleanup_blockers_json, default_cleanup_action,
+                            rebuild_instruction, estimated_rebuild_cost
+                         ) VALUES (
+                            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                            ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23,
+                            ?24, ?25
+                         )",
+                        params![
+                            generation_id,
+                            &rollup.boundary_id,
+                            &artifact.id,
+                            &artifact.path,
+                            &artifact.relative_path,
+                            &artifact.repository_root,
+                            &artifact.repository_family_id,
+                            &artifact.repository_family_root,
+                            &artifact.repository_family_label,
+                            i64::from(artifact.worktree),
+                            &artifact.kind,
+                            &artifact.label,
+                            artifact.physical_bytes.min(i64::MAX as u64) as i64,
+                            artifact.file_count.min(i64::MAX as u64) as i64,
+                            artifact
+                                .newest_modified_millis
+                                .map(|millis| millis.min(i64::MAX as u64) as i64),
+                            evidence_json,
+                            &artifact.confidence,
+                            i64::from(artifact.git_ignored),
+                            i64::from(artifact.git_tracked),
+                            &artifact.cleanup_tier,
+                            i64::from(artifact.cleanup_allowed),
+                            cleanup_blockers_json,
+                            &artifact.default_cleanup_action,
+                            &artifact.rebuild_instruction,
+                            &artifact.estimated_rebuild_cost,
+                        ],
+                    )
+                    .map_err(|error| format!("repository_artifact_insert:{error}"))?;
+            }
         }
         transaction
             .execute(
@@ -3518,6 +3604,18 @@ impl StorageSizeIndex {
                 params![generation_id],
             )
             .map_err(|error| format!("ownership_rollup_prune:{error}"))?;
+        transaction
+            .execute(
+                "DELETE FROM storage_repository_artifact
+                 WHERE generation_id NOT IN (
+                    SELECT generation_id
+                    FROM storage_ownership_generation
+                    ORDER BY generation_id DESC
+                    LIMIT 4
+                 )",
+                [],
+            )
+            .map_err(|error| format!("repository_artifact_prune:{error}"))?;
         transaction
             .execute(
                 "DELETE FROM storage_ownership_generation
@@ -3579,11 +3677,81 @@ impl StorageSizeIndex {
                 confidence: row.get(13)?,
                 source: row.get(14)?,
                 sub_buckets: serde_json::from_str(&sub_buckets_json).unwrap_or_default(),
+                repository_artifacts: Vec::new(),
             })
         }) else {
             return Vec::new();
         };
-        rows.flatten().collect()
+        let mut rollups = rows.flatten().collect::<Vec<_>>();
+        drop(statement);
+        let mut artifacts_by_boundary = Self::load_repository_artifacts(connection, generation_id);
+        for rollup in &mut rollups {
+            rollup.repository_artifacts = artifacts_by_boundary
+                .remove(&rollup.boundary_id)
+                .unwrap_or_default();
+        }
+        rollups
+    }
+
+    fn load_repository_artifacts(
+        connection: &Connection,
+        generation_id: i64,
+    ) -> BTreeMap<String, Vec<StorageRepositoryArtifact>> {
+        let Ok(mut statement) = connection.prepare(
+            "SELECT boundary_id, artifact_id, path, relative_path, repository_root,
+                    repository_family_id, repository_family_root, repository_family_label,
+                    worktree, kind, label, physical_bytes, file_count,
+                    newest_modified_millis, evidence_json, confidence, git_ignored,
+                    git_tracked, cleanup_tier, cleanup_allowed, cleanup_blockers_json,
+                    default_cleanup_action, rebuild_instruction, estimated_rebuild_cost
+             FROM storage_repository_artifact
+             WHERE generation_id = ?1
+             ORDER BY physical_bytes DESC, path ASC",
+        ) else {
+            return BTreeMap::new();
+        };
+        let Ok(rows) = statement.query_map(params![generation_id], |row| {
+            let evidence_json: String = row.get(14)?;
+            let cleanup_blockers_json: String = row.get(20)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                StorageRepositoryArtifact {
+                    id: row.get(1)?,
+                    path: row.get(2)?,
+                    relative_path: row.get(3)?,
+                    repository_root: row.get(4)?,
+                    repository_family_id: row.get(5)?,
+                    repository_family_root: row.get(6)?,
+                    repository_family_label: row.get(7)?,
+                    worktree: row.get::<_, i64>(8)? != 0,
+                    kind: row.get(9)?,
+                    label: row.get(10)?,
+                    physical_bytes: row.get::<_, i64>(11)?.max(0) as u64,
+                    file_count: row.get::<_, i64>(12)?.max(0) as u64,
+                    newest_modified_millis: row
+                        .get::<_, Option<i64>>(13)?
+                        .map(|millis| millis.max(0) as u64),
+                    evidence: serde_json::from_str(&evidence_json).unwrap_or_default(),
+                    confidence: row.get(15)?,
+                    git_ignored: row.get::<_, i64>(16)? != 0,
+                    git_tracked: row.get::<_, i64>(17)? != 0,
+                    cleanup_tier: row.get(18)?,
+                    cleanup_allowed: row.get::<_, i64>(19)? != 0,
+                    cleanup_blockers: serde_json::from_str(&cleanup_blockers_json)
+                        .unwrap_or_default(),
+                    default_cleanup_action: row.get(21)?,
+                    rebuild_instruction: row.get(22)?,
+                    estimated_rebuild_cost: row.get(23)?,
+                },
+            ))
+        }) else {
+            return BTreeMap::new();
+        };
+        let mut by_boundary = BTreeMap::<String, Vec<StorageRepositoryArtifact>>::new();
+        for (boundary_id, artifact) in rows.flatten() {
+            by_boundary.entry(boundary_id).or_default().push(artifact);
+        }
+        by_boundary
     }
 
     pub(super) fn latest_dirty_millis_for_root(&self, root: &Path) -> Option<u64> {
