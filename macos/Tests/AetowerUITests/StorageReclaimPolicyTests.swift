@@ -4,6 +4,14 @@ import XCTest
 final class StorageReclaimPolicyTests: XCTestCase {
     private let gigabyte: UInt64 = 1_073_741_824
 
+    func testExistingCleanupPathsDeduplicatesAndRejectsMissingTargets() {
+        let existing = StorageReclaimPolicy.existingCleanupPaths(
+            ["/repo/target", "/repo/missing", "/repo/target"]
+        ) { $0 == "/repo/target" }
+
+        XCTAssertEqual(existing, ["/repo/target"])
+    }
+
     func testPrimaryActionDecisionStagesWhenContentIsNotTrashSafe() {
         XCTAssertEqual(
             StorageReclaimPolicy.primaryActionDecision(

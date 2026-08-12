@@ -391,6 +391,13 @@ enum StorageBulkCleanupScope {
 }
 
 enum StorageReclaimPolicy {
+    static func existingCleanupPaths(
+        _ paths: [String],
+        pathExists: (String) -> Bool
+    ) -> Set<String> {
+        Set(paths.filter(pathExists))
+    }
+
     static func primaryActionDecision(
         hasStageableContent: Bool,
         canMoveToTrash: Bool

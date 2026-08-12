@@ -603,6 +603,7 @@ public final class AppState {
     private(set) var repositoryInventoryRefreshState: RepositoryInventoryRefreshState?
     private(set) var storageOwnershipRefreshIsLoading = false
     private(set) var storageOwnershipRefreshError: String?
+    @ObservationIgnored private var pendingForcedStorageOwnershipRoots: [String]?
     /// Server-paged Storage Explorer table state. The page is fetched on
     /// demand from `storage_hygiene_items_page_json` (index-backed, sorted
     /// server-side); the offset/sort properties record the most recent
@@ -1098,6 +1099,7 @@ public final class AppState {
         storageOwnershipRefreshTask = nil
         storageOwnershipRefreshIsLoading = false
         storageOwnershipRefreshError = nil
+        pendingForcedStorageOwnershipRoots = nil
         repositoryInventoryRefreshState = nil
         storageScanController.stop()
         storageRootChangeMonitor.stop()
@@ -3225,7 +3227,12 @@ public final class AppState {
     /// keeps painting the last atomically activated generation while this
     /// utility-priority task reuses or measures individual boundaries.
     func ensureStorageOwnership(roots: [String], force: Bool = false) {
-        guard storageOwnershipRefreshTask == nil else { return }
+        guard storageOwnershipRefreshTask == nil else {
+            if force {
+                pendingForcedStorageOwnershipRoots = roots
+            }
+            return
+        }
         let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
         let cooldownMillis: UInt64 = 2 * 60 * 1000
         guard force || nowMillis >= lastStorageOwnershipRefreshMillis + cooldownMillis else {
@@ -3271,6 +3278,10 @@ public final class AppState {
         storageOwnershipRefreshError = errorMessage
         if let situation {
             publishStorageSituation(situation, updateEstimate: true)
+        }
+        if let pendingRoots = pendingForcedStorageOwnershipRoots {
+            pendingForcedStorageOwnershipRoots = nil
+            ensureStorageOwnership(roots: pendingRoots, force: true)
         }
     }
 

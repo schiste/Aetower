@@ -145,6 +145,11 @@ private struct StoragePermanentCleanupResult: Sendable {
     let failedPaths: [String: String]
 }
 
+private struct StorageCleanupAvailability: Equatable {
+    let signature: String
+    var existingPaths: Set<String>
+}
+
 private struct StorageCleanupAuditEvent: Codable, Identifiable, Sendable {
     let id: String
     let timestampMillis: UInt64
@@ -323,6 +328,7 @@ public struct StorageView: View {
     @State private var cleanupBasket: [StorageCleanupBasketItem] = []
     @State private var showCleanupBasket = false
     @State private var aggressiveCleanupPreview: StorageBulkCleanupPlan?
+    @State private var cleanupAvailability: StorageCleanupAvailability?
     @State private var directTrashUndo: StorageDirectTrashUndo?
     @State private var directTrashUndoDismissTask: Task<Void, Never>?
     @State private var directTrashInFlightPaths: Set<String> = []
@@ -431,6 +437,9 @@ public struct StorageView: View {
             )
             state.loadStorageForDisplay()
             state.ensureStorageOwnership(roots: settings.repositoryRoots)
+        }
+        .task(id: storageCleanupSourceSignature) {
+            await refreshStorageCleanupAvailability(signature: storageCleanupSourceSignature)
         }
         .sheet(item: $candidateCommandPreviewBundle) { bundle in
             cleanupCommandPreviewSheet(bundle)
@@ -9798,7 +9807,11 @@ public struct StorageView: View {
                     .font(AetowerDesign.Typography.caption.weight(.semibold))
                     .foregroundStyle(AetowerDesign.Ink.primary)
                 if plan.items.isEmpty {
-                    Text("No verified targets in the current snapshot")
+                    Text(
+                        storageCleanupAvailabilityIsCurrent
+                            ? "No verified targets in the current snapshot"
+                            : "Checking current targets…"
+                    )
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.tertiary)
                 } else {
@@ -9843,6 +9856,23 @@ public struct StorageView: View {
     }
 
     private func storageBulkCleanupPlan() -> StorageBulkCleanupPlan {
+        let sourcePlan = storageBulkCleanupSourcePlan()
+        guard let cleanupAvailability,
+              cleanupAvailability.signature == storageCleanupSourceSignature
+        else {
+            return StorageBulkCleanupPlan(safeItems: [], additionalReviewItems: [])
+        }
+        return StorageBulkCleanupPlan(
+            safeItems: sourcePlan.safeItems.filter {
+                cleanupAvailability.existingPaths.contains($0.path)
+            },
+            additionalReviewItems: sourcePlan.additionalReviewItems.filter {
+                cleanupAvailability.existingPaths.contains($0.path)
+            }
+        )
+    }
+
+    private func storageBulkCleanupSourcePlan() -> StorageBulkCleanupPlan {
         let availableItems = state.storageHygieneReport.map {
             visibleStorageItems(from: $0)
         } ?? []
@@ -9857,6 +9887,48 @@ public struct StorageView: View {
             repositoryArtifacts: availableArtifacts.filter {
                 !inFlightPaths.contains($0.path)
             }
+        )
+    }
+
+    private var storageCleanupAvailabilityIsCurrent: Bool {
+        cleanupAvailability?.signature == storageCleanupSourceSignature
+    }
+
+    private var storageCleanupSourceSignature: String {
+        let report = state.storageHygieneReport
+        let breakdown = state.storageSituation?.ownershipBreakdown
+        let artifacts = breakdown?.stableRepositoryArtifacts ?? []
+        let artifactBytes = artifacts.reduce(UInt64(0)) { total, artifact in
+            let sum = total.addingReportingOverflow(artifact.physicalBytes)
+            return sum.overflow ? UInt64.max : sum.partialValue
+        }
+        let reportCapturedAt = String(report?.capturedAtMillis ?? 0)
+        let reportItemCount = String(report?.items.count ?? 0)
+        let generationID = String(breakdown?.generationId ?? 0)
+        let classifierVersion = String(breakdown?.classifierVersion ?? 0)
+        let artifactCount = String(artifacts.count)
+        let artifactByteCount = String(artifactBytes)
+        return [
+            reportCapturedAt,
+            reportItemCount,
+            generationID,
+            classifierVersion,
+            artifactCount,
+            artifactByteCount,
+        ].joined(separator: "|")
+    }
+
+    private func refreshStorageCleanupAvailability(signature: String) async {
+        let paths = storageBulkCleanupSourcePlan().items.map(\.path)
+        let existingPaths = await Task.detached(priority: .utility) {
+            StorageReclaimPolicy.existingCleanupPaths(paths) {
+                FileManager.default.fileExists(atPath: $0)
+            }
+        }.value
+        guard !Task.isCancelled, signature == storageCleanupSourceSignature else { return }
+        cleanupAvailability = StorageCleanupAvailability(
+            signature: signature,
+            existingPaths: existingPaths
         )
     }
 
@@ -11698,6 +11770,11 @@ public struct StorageView: View {
 
         cleanupBasket.removeAll { resolved.contains($0.path) }
         state.markStoragePathsMovedToTrash(Array(resolved), refresh: false)
+        if var availability = cleanupAvailability,
+           availability.signature == storageCleanupSourceSignature {
+            availability.existingPaths.subtract(resolved)
+            cleanupAvailability = availability
+        }
 
         for (path, trashURL) in result.pendingTrashURLs {
             guard let metadata = metadataByPath[path] else { continue }
@@ -11755,6 +11832,7 @@ public struct StorageView: View {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
             state.loadStorageForDisplay()
+            state.ensureStorageOwnership(roots: settings.repositoryRoots, force: true)
         }
     }
 
