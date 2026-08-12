@@ -247,6 +247,33 @@ final class StorageReclaimPolicyTests: XCTestCase {
         XCTAssertEqual(plan.totalBytes, 17 * gigabyte)
     }
 
+    func testBulkCleanupPlanUsesVerifiedCachedRepositoryArtifactsWithoutAHygieneReport() throws {
+        let plan = StorageReclaimPolicy.bulkCleanupPlan(
+            items: [],
+            repositoryArtifacts: [
+                try repositoryArtifact(
+                    path: "/repo/target",
+                    sizeGB: 6
+                ),
+                try repositoryArtifact(
+                    path: "/repo/checked-in-results",
+                    sizeGB: 9,
+                    gitIgnored: false,
+                    gitTracked: true
+                ),
+                try repositoryArtifact(
+                    path: "/repo/blocked-cache",
+                    sizeGB: 5,
+                    cleanupBlockers: ["active-writer"]
+                ),
+            ]
+        )
+
+        XCTAssertEqual(plan.safeItems.map(\.path), ["/repo/target"])
+        XCTAssertTrue(plan.additionalReviewItems.isEmpty)
+        XCTAssertEqual(plan.safeBytes, 6 * gigabyte)
+    }
+
     private func storageItem(
         kind: String,
         path: String,
@@ -298,5 +325,48 @@ final class StorageReclaimPolicyTests: XCTestCase {
 
         let data = try JSONSerialization.data(withJSONObject: payload)
         return try JSONDecoder().decode(StorageHygieneItemModel.self, from: data)
+    }
+
+    private func repositoryArtifact(
+        path: String,
+        sizeGB: UInt64,
+        gitIgnored: Bool = true,
+        gitTracked: Bool = false,
+        cleanupBlockers: [String] = []
+    ) throws -> StorageRepositoryArtifactModel {
+        let payload: [String: Any] = [
+            "id": path,
+            "path": path,
+            "relativePath": URL(fileURLWithPath: path).lastPathComponent,
+            "repositoryRoot": "/repo",
+            "repositoryFamilyId": "/repo",
+            "repositoryFamilyRoot": "/repo",
+            "repositoryFamilyLabel": "repo",
+            "worktree": false,
+            "kind": "rust-build",
+            "label": URL(fileURLWithPath: path).lastPathComponent,
+            "physicalBytes": sizeGB * gigabyte,
+            "fileCount": 100,
+            "newestModifiedMillis": 1_700_000_000_000 as UInt64,
+            "lastActivityMillis": 1_700_000_000_000 as UInt64,
+            "activityBasis": "modified",
+            "inactivityDays": 365,
+            "staleness": "stale",
+            "stalenessScore": 100,
+            "staleCandidate": true,
+            "reclaimPriority": 100,
+            "evidence": ["ignored generated output"],
+            "confidence": "confirmed",
+            "gitIgnored": gitIgnored,
+            "gitTracked": gitTracked,
+            "cleanupTier": "rebuildable",
+            "cleanupAllowed": true,
+            "cleanupBlockers": cleanupBlockers,
+            "defaultCleanupAction": "trash",
+            "rebuildInstruction": "cargo build",
+            "estimatedRebuildCost": "moderate",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        return try JSONDecoder().decode(StorageRepositoryArtifactModel.self, from: data)
     }
 }

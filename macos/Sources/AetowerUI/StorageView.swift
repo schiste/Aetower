@@ -7176,7 +7176,7 @@ public struct StorageView: View {
                 Button("Clean aggressively", role: .destructive) {
                     let items = plan.items
                     aggressiveCleanupPreview = nil
-                    trashStorageItemsDirectly(
+                    trashStorageTargetsDirectly(
                         items,
                         sourceTitle: "Aggressive clean",
                         scope: .aggressive
@@ -7224,11 +7224,10 @@ public struct StorageView: View {
     }
 
     private func aggressiveCleanupItemRow(
-        _ item: StorageHygieneItemModel,
+        _ item: StorageBulkCleanupTarget,
         isSafe: Bool
     ) -> some View {
         let tone = isSafe ? AetowerDesign.Status.ready : AetowerDesign.Status.warning
-        let consequence = item.cleanupConsequence.isEmpty ? item.reason : item.cleanupConsequence
 
         return AetowerOperationalListRow(tone: tone, minHeight: AetowerDesign.Size.minTouchTarget) {
             HStack(alignment: .top, spacing: AetowerDesign.Spacing.sm) {
@@ -7249,7 +7248,7 @@ public struct StorageView: View {
                         .foregroundStyle(AetowerDesign.Ink.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text(consequence)
+                    Text(item.cleanupConsequence)
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.tertiary)
                         .lineLimit(2)
@@ -9792,7 +9791,7 @@ public struct StorageView: View {
                     .font(AetowerDesign.Typography.caption.weight(.semibold))
                     .foregroundStyle(AetowerDesign.Ink.primary)
                 if plan.items.isEmpty {
-                    Text(state.storageHygieneReport == nil ? "Run a scan to prepare verified targets" : "No eligible targets")
+                    Text("No verified targets in the current snapshot")
                         .font(AetowerDesign.Typography.metadata)
                         .foregroundStyle(AetowerDesign.Ink.tertiary)
                 } else {
@@ -9810,7 +9809,7 @@ public struct StorageView: View {
             Spacer(minLength: AetowerDesign.Spacing.md)
 
             Button {
-                trashStorageItemsDirectly(plan.safeItems, sourceTitle: "Safe clean")
+                trashStorageTargetsDirectly(plan.safeItems, sourceTitle: "Safe clean")
             } label: {
                 Label("Clean safely", systemImage: "checkmark.shield.fill")
             }
@@ -9837,13 +9836,21 @@ public struct StorageView: View {
     }
 
     private func storageBulkCleanupPlan() -> StorageBulkCleanupPlan {
-        guard let report = state.storageHygieneReport else {
-            return StorageBulkCleanupPlan(safeItems: [], additionalReviewItems: [])
-        }
-        let availableItems = visibleStorageItems(from: report).filter {
-            !directTrashInFlightPaths.contains($0.path)
-        }
-        return StorageReclaimPolicy.bulkCleanupPlan(items: availableItems)
+        let availableItems = state.storageHygieneReport.map {
+            visibleStorageItems(from: $0)
+        } ?? []
+        let availableArtifacts = state.storageSituation?
+            .ownershipBreakdown?
+            .stableRepositoryArtifacts ?? []
+        let inFlightPaths = directTrashInFlightPaths
+        return StorageReclaimPolicy.bulkCleanupPlan(
+            items: availableItems.filter {
+                !inFlightPaths.contains($0.path)
+            },
+            repositoryArtifacts: availableArtifacts.filter {
+                !inFlightPaths.contains($0.path)
+            }
+        )
     }
 
     private func storageSituationTopOffenderRow(
@@ -11584,6 +11591,34 @@ public struct StorageView: View {
         scope: StorageBulkCleanupScope = .safe
     ) {
         let candidates = directCleanItems(from: items, scope: scope)
+        let plan = StorageReclaimPolicy.bulkCleanupPlan(items: candidates)
+        let targets = switch scope {
+        case .safe: plan.safeItems
+        case .aggressive: plan.items
+        }
+        trashStorageTargetsDirectly(targets, sourceTitle: sourceTitle, scope: scope)
+    }
+
+    private func trashStorageTargetsDirectly(
+        _ targets: [StorageBulkCleanupTarget],
+        sourceTitle: String,
+        scope: StorageBulkCleanupScope = .safe
+    ) {
+        var seenPaths = Set<String>()
+        let candidates = targets.filter { target in
+            guard seenPaths.insert(target.path).inserted,
+                  !directTrashInFlightPaths.contains(target.path),
+                  target.cleanupBlockers.isEmpty
+            else {
+                return false
+            }
+            switch scope {
+            case .safe:
+                return target.safety == "safe"
+            case .aggressive:
+                return target.safety == "safe" || target.safety == "review"
+            }
+        }
         guard !candidates.isEmpty else { return }
 
         let paths = candidates.map(\.path)
@@ -11608,11 +11643,11 @@ public struct StorageView: View {
     }
 
     private func recordDirectTrashResult(
-        items: [StorageHygieneItemModel],
+        items: [StorageBulkCleanupTarget],
         result: StorageCleanupExecutionResult,
         sourceTitle: String
     ) {
-        var metadataByPath: [String: StorageHygieneItemModel] = [:]
+        var metadataByPath: [String: StorageBulkCleanupTarget] = [:]
         for item in items where metadataByPath[item.path] == nil {
             metadataByPath[item.path] = item
         }

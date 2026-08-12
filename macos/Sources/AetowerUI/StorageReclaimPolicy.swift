@@ -337,15 +337,27 @@ struct StorageReclaimPrimaryAction: Identifiable {
     }
 }
 
+struct StorageBulkCleanupTarget: Identifiable, Sendable {
+    let path: String
+    let displayName: String
+    let sizeBytes: UInt64
+    let cleanupTier: String
+    let safety: String
+    let cleanupBlockers: [String]
+    let cleanupConsequence: String
+
+    var id: String { path }
+}
+
 struct StorageBulkCleanupPlan: Identifiable {
-    let safeItems: [StorageHygieneItemModel]
-    let additionalReviewItems: [StorageHygieneItemModel]
+    let safeItems: [StorageBulkCleanupTarget]
+    let additionalReviewItems: [StorageBulkCleanupTarget]
 
     var id: String {
         "\(items.count)|\(totalBytes)|\(items.first?.path ?? "")"
     }
 
-    var items: [StorageHygieneItemModel] {
+    var items: [StorageBulkCleanupTarget] {
         (safeItems + additionalReviewItems).sorted { left, right in
             left.sizeBytes == right.sizeBytes
                 ? left.path < right.path
@@ -365,7 +377,7 @@ struct StorageBulkCleanupPlan: Identifiable {
         Self.sumBytes(items)
     }
 
-    private static func sumBytes(_ items: [StorageHygieneItemModel]) -> UInt64 {
+    private static func sumBytes(_ items: [StorageBulkCleanupTarget]) -> UInt64 {
         items.reduce(UInt64(0)) { total, item in
             let result = total.addingReportingOverflow(item.sizeBytes)
             return result.overflow ? UInt64.max : result.partialValue
@@ -427,17 +439,31 @@ enum StorageReclaimPolicy {
             && !item.hasHardlinks
     }
 
-    static func bulkCleanupPlan(items: [StorageHygieneItemModel]) -> StorageBulkCleanupPlan {
-        let eligible = uniqueStorageItems(items)
+    static func bulkCleanupPlan(
+        items: [StorageHygieneItemModel],
+        repositoryArtifacts: [StorageRepositoryArtifactModel] = []
+    ) -> StorageBulkCleanupPlan {
+        let reportTargets = uniqueStorageItems(items)
             .filter(itemIsAggressiveDirectTrash)
+            .map(bulkCleanupTarget)
+
+        var targetsByPath = Dictionary(
+            uniqueKeysWithValues: reportTargets.map { ($0.path, $0) }
+        )
+        for artifact in repositoryArtifacts where targetsByPath[artifact.path] == nil {
+            guard let target = bulkCleanupTarget(artifact) else { continue }
+            targetsByPath[target.path] = target
+        }
+
+        let eligible = targetsByPath.values
             .sorted { left, right in
                 left.sizeBytes == right.sizeBytes
                     ? left.path < right.path
                     : left.sizeBytes > right.sizeBytes
             }
         return StorageBulkCleanupPlan(
-            safeItems: eligible.filter(itemIsSafeDirectTrash),
-            additionalReviewItems: eligible.filter { !itemIsSafeDirectTrash($0) }
+            safeItems: eligible.filter { $0.safety == "safe" },
+            additionalReviewItems: eligible.filter { $0.safety == "review" }
         )
     }
 
@@ -446,6 +472,47 @@ enum StorageReclaimPolicy {
             && (item.safety == "safe" || item.safety == "review")
             && !item.hasHardlinks
             && !requiresDedicatedReview(item)
+    }
+
+    private static func bulkCleanupTarget(
+        _ item: StorageHygieneItemModel
+    ) -> StorageBulkCleanupTarget {
+        StorageBulkCleanupTarget(
+            path: item.path,
+            displayName: item.displayName,
+            sizeBytes: item.sizeBytes,
+            cleanupTier: item.cleanupTier,
+            safety: itemIsSafeDirectTrash(item) ? "safe" : "review",
+            cleanupBlockers: item.cleanupBlockers,
+            cleanupConsequence: item.cleanupConsequence.isEmpty ? item.reason : item.cleanupConsequence
+        )
+    }
+
+    private static func bulkCleanupTarget(
+        _ artifact: StorageRepositoryArtifactModel
+    ) -> StorageBulkCleanupTarget? {
+        guard artifact.cleanupAllowed,
+              artifact.defaultCleanupAction == "trash",
+              artifact.cleanupBlockers.isEmpty,
+              artifact.gitIgnored,
+              !artifact.gitTracked,
+              artifact.cleanupTier == "safe" || artifact.cleanupTier == "rebuildable",
+              artifact.confidence == "confirmed" || artifact.confidence == "high"
+        else {
+            return nil
+        }
+
+        return StorageBulkCleanupTarget(
+            path: artifact.path,
+            displayName: artifact.label,
+            sizeBytes: artifact.physicalBytes,
+            cleanupTier: artifact.cleanupTier,
+            safety: "safe",
+            cleanupBlockers: artifact.cleanupBlockers,
+            cleanupConsequence: artifact.rebuildInstruction.isEmpty
+                ? "Moves this generated repository artifact to Finder Trash."
+                : "Moves this generated artifact to Trash. Rebuild with: \(artifact.rebuildInstruction)"
+        )
     }
 
     private static func sumItemBytes(_ items: [StorageHygieneItemModel]) -> UInt64 {
