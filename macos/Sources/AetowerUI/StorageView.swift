@@ -138,6 +138,12 @@ private struct StorageCleanupExecutionResult: Sendable {
     var partiallySucceeded: Bool { !movedPaths.isEmpty && !failedPaths.isEmpty }
 }
 
+private struct StoragePermanentCleanupResult: Sendable {
+    let reclaimedPaths: [String]
+    let pendingTrashURLs: [String: URL]
+    let failedPaths: [String: String]
+}
+
 private struct StorageCleanupAuditEvent: Codable, Identifiable, Sendable {
     let id: String
     let timestampMillis: UInt64
@@ -7098,11 +7104,11 @@ public struct StorageView: View {
                     .foregroundStyle(AetowerDesign.Status.warning)
                     .frame(width: AetowerDesign.Size.minTouchTarget)
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    Text("\(formatBytes(plan.totalBytes)) will move to Trash")
+                    Text("\(formatBytes(plan.totalBytes)) will be permanently deleted")
                         .font(AetowerDesign.Typography.metricValue(size: 22, weight: .semibold))
                         .foregroundStyle(AetowerDesign.Ink.primary)
                     Text(
-                        "Review the exact boundary below. Nothing is permanently erased until you empty Finder Trash."
+                        "Review the exact boundary below. Confirming permanently deletes these generated targets and cannot be undone."
                     )
                     .font(AetowerDesign.Typography.caption)
                     .foregroundStyle(AetowerDesign.Ink.secondary)
@@ -7176,7 +7182,7 @@ public struct StorageView: View {
                 Button("Clean aggressively", role: .destructive) {
                     let items = plan.items
                     aggressiveCleanupPreview = nil
-                    trashStorageTargetsDirectly(
+                    cleanStorageTargetsPermanently(
                         items,
                         sourceTitle: "Aggressive clean",
                         scope: .aggressive
@@ -9809,14 +9815,14 @@ public struct StorageView: View {
             Spacer(minLength: AetowerDesign.Spacing.md)
 
             Button {
-                trashStorageTargetsDirectly(plan.safeItems, sourceTitle: "Safe clean")
+                cleanStorageTargetsPermanently(plan.safeItems, sourceTitle: "Safe clean")
             } label: {
                 Label("Clean safely", systemImage: "checkmark.shield.fill")
             }
             .buttonStyle(.borderedProminent)
             .tint(AetowerDesign.Status.ready)
             .disabled(plan.safeItems.isEmpty)
-            .help("One click: move only policy-verified safe and rebuildable data to Finder Trash")
+            .help("One click: permanently delete only policy-verified safe and rebuildable data")
             .accessibilityIdentifier("storage.clean.safe")
 
             Button {
@@ -11604,21 +11610,7 @@ public struct StorageView: View {
         sourceTitle: String,
         scope: StorageBulkCleanupScope = .safe
     ) {
-        var seenPaths = Set<String>()
-        let candidates = targets.filter { target in
-            guard seenPaths.insert(target.path).inserted,
-                  !directTrashInFlightPaths.contains(target.path),
-                  target.cleanupBlockers.isEmpty
-            else {
-                return false
-            }
-            switch scope {
-            case .safe:
-                return target.safety == "safe"
-            case .aggressive:
-                return target.safety == "safe" || target.safety == "review"
-            }
-        }
+        let candidates = directCleanupTargets(targets, scope: scope)
         guard !candidates.isEmpty else { return }
 
         let paths = candidates.map(\.path)
@@ -11639,6 +11631,124 @@ public struct StorageView: View {
                     sourceTitle: sourceTitle
                 )
             }
+        }
+    }
+
+    private func cleanStorageTargetsPermanently(
+        _ targets: [StorageBulkCleanupTarget],
+        sourceTitle: String,
+        scope: StorageBulkCleanupScope = .safe
+    ) {
+        let candidates = directCleanupTargets(targets, scope: scope)
+        guard !candidates.isEmpty else { return }
+
+        let paths = candidates.map(\.path)
+        for path in paths {
+            directTrashInFlightPaths.insert(path)
+        }
+
+        let activeWriterProbe = state.cleanupActiveWriterProbe()
+        Task.detached(priority: .utility) {
+            let result = Self.permanentlyCleanPaths(paths, activeWriterProbe: activeWriterProbe)
+            await MainActor.run {
+                for path in paths {
+                    directTrashInFlightPaths.remove(path)
+                }
+                recordPermanentCleanupResult(
+                    items: candidates,
+                    result: result,
+                    sourceTitle: sourceTitle
+                )
+            }
+        }
+    }
+
+    private func directCleanupTargets(
+        _ targets: [StorageBulkCleanupTarget],
+        scope: StorageBulkCleanupScope
+    ) -> [StorageBulkCleanupTarget] {
+        var seenPaths = Set<String>()
+        return targets.filter { target in
+            guard seenPaths.insert(target.path).inserted,
+                  !directTrashInFlightPaths.contains(target.path),
+                  target.cleanupBlockers.isEmpty
+            else {
+                return false
+            }
+            switch scope {
+            case .safe:
+                return target.safety == "safe"
+            case .aggressive:
+                return target.safety == "safe" || target.safety == "review"
+            }
+        }
+    }
+
+    private func recordPermanentCleanupResult(
+        items: [StorageBulkCleanupTarget],
+        result: StoragePermanentCleanupResult,
+        sourceTitle: String
+    ) {
+        let metadataByPath = Dictionary(uniqueKeysWithValues: items.map { ($0.path, $0) })
+        let reclaimed = Set(result.reclaimedPaths)
+        let pending = Set(result.pendingTrashURLs.keys)
+        let alreadyReclaimed = Set(result.failedPaths.compactMap { path, reason in
+            reason == "Path no longer exists" ? path : nil
+        })
+        let resolved = reclaimed.union(pending).union(alreadyReclaimed)
+
+        cleanupBasket.removeAll { resolved.contains($0.path) }
+        state.markStoragePathsMovedToTrash(Array(resolved), refresh: false)
+
+        for (path, trashURL) in result.pendingTrashURLs {
+            guard let metadata = metadataByPath[path] else { continue }
+            trashedItemURLsByOriginalPath[path] = trashURL
+            StorageTrackedTrashStore.upsert(
+                originalPath: path,
+                trashURL: trashURL,
+                bytes: metadata.sizeBytes
+            )
+        }
+        refreshTrackedTrashState()
+
+        for path in metadataByPath.keys.sorted() {
+            let metadata = metadataByPath[path]
+            let pathReclaimed = reclaimed.contains(path) || alreadyReclaimed.contains(path)
+            appendCleanupAudit(
+                action: pathReclaimed ? "direct-delete" : pending.contains(path) ? "pending-trash" : "failed-direct-delete",
+                path: path,
+                detail: pathReclaimed
+                    ? "\(sourceTitle) permanently reclaimed this verified target."
+                    : (result.failedPaths[path] ?? "Not attempted."),
+                bytes: metadata?.sizeBytes ?? 0,
+                cleanupTier: metadata?.cleanupTier,
+                safety: metadata?.safety,
+                blockers: metadata?.cleanupBlockers ?? [],
+                succeeded: pathReclaimed
+            )
+        }
+
+        let reclaimedBytes = reclaimed.reduce(UInt64(0)) { total, path in
+            let (sum, overflow) = total.addingReportingOverflow(metadataByPath[path]?.sizeBytes ?? 0)
+            return overflow ? UInt64.max : sum
+        }
+        let issueCount = result.failedPaths.filter { !alreadyReclaimed.contains($0.key) }.count
+        presentDirectTrashUndo(
+            StorageDirectTrashUndo(
+                message: reclaimed.isEmpty
+                    ? "\(sourceTitle): no space reclaimed\(issueCount > 0 ? " (\(issueCount) issue\(issueCount == 1 ? "" : "s"))" : "")"
+                    : "\(sourceTitle): reclaimed \(formatBytes(reclaimedBytes)) from \(reclaimed.count) target\(reclaimed.count == 1 ? "" : "s")"
+                        + (pending.isEmpty ? "" : " · \(pending.count) remain in Trash"),
+                originalPath: sourceTitle,
+                trashURL: nil,
+                bytes: reclaimedBytes,
+                succeeded: !reclaimed.isEmpty
+            )
+        )
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            state.loadStorageForDisplay()
         }
     }
 
@@ -12685,6 +12795,25 @@ public struct StorageView: View {
             durationSeconds: Date().timeIntervalSince(started),
             movedPaths: outcome.movedPaths,
             movedTrashURLs: movedTrashURLs,
+            failedPaths: outcome.failedPaths
+        )
+    }
+
+    nonisolated private static func permanentlyCleanPaths(
+        _ paths: [String],
+        activeWriterProbe: TrashService.ActiveWriterProbe?
+    ) -> StoragePermanentCleanupResult {
+        let outcome = TrashService.permanentlyDelete(
+            paths: paths,
+            activeWriterProbe: activeWriterProbe
+        )
+        return StoragePermanentCleanupResult(
+            reclaimedPaths: outcome.reclaimedItems.map(\.originalPath),
+            pendingTrashURLs: Dictionary(
+                uniqueKeysWithValues: outcome.pendingTrashItems.map {
+                    ($0.originalPath, $0.trashURL)
+                }
+            ),
             failedPaths: outcome.failedPaths
         )
     }

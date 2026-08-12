@@ -484,7 +484,9 @@ enum StorageReclaimPolicy {
             cleanupTier: item.cleanupTier,
             safety: itemIsSafeDirectTrash(item) ? "safe" : "review",
             cleanupBlockers: item.cleanupBlockers,
-            cleanupConsequence: item.cleanupConsequence.isEmpty ? item.reason : item.cleanupConsequence
+            cleanupConsequence: item.reason.isEmpty
+                ? "Permanently deletes this generated cleanup target."
+                : item.reason
         )
     }
 
@@ -510,8 +512,8 @@ enum StorageReclaimPolicy {
             safety: "safe",
             cleanupBlockers: artifact.cleanupBlockers,
             cleanupConsequence: artifact.rebuildInstruction.isEmpty
-                ? "Moves this generated repository artifact to Finder Trash."
-                : "Moves this generated artifact to Trash. Rebuild with: \(artifact.rebuildInstruction)"
+                ? "Permanently deletes this generated repository artifact."
+                : "Permanently deletes this generated artifact. Rebuild with: \(artifact.rebuildInstruction)"
         )
     }
 
