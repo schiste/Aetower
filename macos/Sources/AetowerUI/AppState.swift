@@ -2496,7 +2496,10 @@ public final class AppState {
         let reclaimableArtifactBytes = repositoryArtifacts
             .filter(\.cleanupAllowed)
             .reduce(UInt64(0)) { $0 &+ $1.physicalBytes }
-        return "\(breakdown.usedBytes)|\(breakdown.attributedBytes)|\(breakdown.unattributedBytes)|\(breakdown.reclaimableBytes)|\(breakdown.confidence)|\(breakdown.generationId ?? 0)|\(breakdown.classifierVersion ?? 0)|\(breakdown.generationStatus ?? "")|\(buckets)|artifacts:\(repositoryArtifacts.count):\(artifactBytes):\(reclaimableArtifactBytes)"
+        let staleCandidates = repositoryArtifacts.filter(\.effectiveStaleCandidate)
+        let staleCandidateBytes = staleCandidates.reduce(UInt64(0)) { $0 &+ $1.physicalBytes }
+        let topReclaimPriority = staleCandidates.map(\.effectiveReclaimPriority).max() ?? 0
+        return "\(breakdown.usedBytes)|\(breakdown.attributedBytes)|\(breakdown.unattributedBytes)|\(breakdown.reclaimableBytes)|\(breakdown.confidence)|\(breakdown.generationId ?? 0)|\(breakdown.classifierVersion ?? 0)|\(breakdown.generationStatus ?? "")|\(buckets)|artifacts:\(repositoryArtifacts.count):\(artifactBytes):\(reclaimableArtifactBytes):\(staleCandidates.count):\(staleCandidateBytes):\(topReclaimPriority)"
     }
 
     nonisolated private static func storageVolumePublishSignature(

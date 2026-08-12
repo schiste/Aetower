@@ -75,6 +75,14 @@ final class StorageHygieneModelsTests: XCTestCase {
               "physical_bytes": 300,
               "file_count": 10,
               "newest_modified_millis": 1,
+              "newest_accessed_millis": 2,
+              "last_activity_millis": 2,
+              "activity_basis": "accessed",
+              "inactivity_days": 730,
+              "staleness": "archival",
+              "staleness_score": 91,
+              "stale_candidate": true,
+              "reclaim_priority": 100,
               "evidence": ["Cargo marker", "Git ignored"],
               "confidence": "confirmed",
               "git_ignored": true,
@@ -83,6 +91,31 @@ final class StorageHygieneModelsTests: XCTestCase {
               "cleanup_allowed": true,
               "cleanup_blockers": [],
               "default_cleanup_action": "trash",
+              "rebuild_instruction": "Run the owning Cargo workspace build or tests.",
+              "estimated_rebuild_cost": "low"
+            },
+            {
+              "id": "family:main:target",
+              "path": "/Repositories/project/target",
+              "relative_path": "target",
+              "repository_root": "/Repositories/project",
+              "repository_family_id": "family",
+              "repository_family_root": "/Repositories/project",
+              "repository_family_label": "project",
+              "worktree": false,
+              "kind": "rust-build",
+              "label": "Rust builds",
+              "physical_bytes": 600,
+              "file_count": 20,
+              "newest_modified_millis": 3,
+              "evidence": ["Cargo marker"],
+              "confidence": "ambiguous",
+              "git_ignored": false,
+              "git_tracked": true,
+              "cleanup_tier": "review",
+              "cleanup_allowed": false,
+              "cleanup_blockers": ["Contains Git-tracked files."],
+              "default_cleanup_action": "review",
               "rebuild_instruction": "Run the owning Cargo workspace build or tests.",
               "estimated_rebuild_cost": "low"
             }
@@ -108,9 +141,17 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertEqual(breakdown.stableBuckets.first?.subBuckets?.count, 2)
         XCTAssertEqual(breakdown.stableBuckets.first?.subBuckets?.first?.bytes, 300)
         XCTAssertEqual(breakdown.stableRepositoryArtifacts.first?.kind, "rust-build")
-        XCTAssertEqual(breakdown.repositoryArtifactKinds.first?.bytes, 300)
+        XCTAssertEqual(breakdown.stableRepositoryArtifacts.first?.newestAccessedMillis, 2)
+        XCTAssertEqual(breakdown.stableRepositoryArtifacts.first?.activityBasis, "accessed")
+        XCTAssertEqual(breakdown.stableRepositoryArtifacts.first?.inactivityDays, 730)
+        XCTAssertEqual(breakdown.stableRepositoryArtifacts.first?.staleness, "archival")
+        XCTAssertTrue(breakdown.stableRepositoryArtifacts.first?.effectiveStaleCandidate == true)
+        XCTAssertEqual(breakdown.stableRepositoryArtifacts.first?.effectiveReclaimPriority, 100)
+        XCTAssertEqual(breakdown.repositoryArtifactKinds.first?.bytes, 900)
         XCTAssertEqual(breakdown.repositoryArtifactFamilies.first?.worktreeBytes, 300)
         XCTAssertEqual(breakdown.repositoryArtifactFamilies.first?.reclaimableBytes, 300)
+        XCTAssertEqual(breakdown.repositoryArtifactFamilies.first?.bytes, 900)
+        XCTAssertEqual(breakdown.repositoryArtifactFamilies.first?.artifacts.first?.physicalBytes, 300)
     }
 
     @MainActor

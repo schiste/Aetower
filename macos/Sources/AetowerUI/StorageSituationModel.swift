@@ -44,9 +44,7 @@ struct StorageOwnershipBreakdownModel: Decodable, Sendable {
     }
 
     var stableRepositoryArtifacts: [StorageRepositoryArtifactModel] {
-        (repositoryArtifacts ?? []).sorted {
-            ($0.physicalBytes, $1.path) > ($1.physicalBytes, $0.path)
-        }
+        (repositoryArtifacts ?? []).sorted(by: StorageRepositoryArtifactModel.precedes)
     }
 
     var repositoryArtifactKinds: [StorageRepositoryArtifactKindModel] {
@@ -82,9 +80,7 @@ struct StorageOwnershipBreakdownModel: Decodable, Sendable {
                 worktreeBytes: artifacts
                     .filter(\.worktree)
                     .reduce(0) { $0 &+ $1.physicalBytes },
-                artifacts: artifacts.sorted {
-                    ($0.physicalBytes, $1.path) > ($1.physicalBytes, $0.path)
-                }
+                artifacts: artifacts.sorted(by: StorageRepositoryArtifactModel.precedes)
             )
         }
         .sorted { ($0.bytes, $1.id) > ($1.bytes, $0.id) }
@@ -138,6 +134,14 @@ struct StorageRepositoryArtifactModel: Decodable, Identifiable, Sendable {
     let physicalBytes: UInt64
     let fileCount: UInt64
     let newestModifiedMillis: UInt64?
+    let newestAccessedMillis: UInt64?
+    let lastActivityMillis: UInt64?
+    let activityBasis: String?
+    let inactivityDays: UInt64?
+    let staleness: String?
+    let stalenessScore: UInt8?
+    let staleCandidate: Bool?
+    let reclaimPriority: UInt8?
     let evidence: [String]
     let confidence: String
     let gitIgnored: Bool
@@ -148,6 +152,30 @@ struct StorageRepositoryArtifactModel: Decodable, Identifiable, Sendable {
     let defaultCleanupAction: String
     let rebuildInstruction: String
     let estimatedRebuildCost: String
+
+    var effectiveStaleCandidate: Bool {
+        staleCandidate ?? false
+    }
+
+    var effectiveReclaimPriority: UInt8 {
+        reclaimPriority ?? 0
+    }
+
+    static func precedes(
+        _ left: StorageRepositoryArtifactModel,
+        _ right: StorageRepositoryArtifactModel
+    ) -> Bool {
+        if left.effectiveStaleCandidate != right.effectiveStaleCandidate {
+            return left.effectiveStaleCandidate
+        }
+        if left.effectiveReclaimPriority != right.effectiveReclaimPriority {
+            return left.effectiveReclaimPriority > right.effectiveReclaimPriority
+        }
+        if left.physicalBytes != right.physicalBytes {
+            return left.physicalBytes > right.physicalBytes
+        }
+        return left.path < right.path
+    }
 }
 
 struct StorageRepositoryArtifactKindModel: Identifiable, Sendable {

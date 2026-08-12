@@ -5547,6 +5547,8 @@ public struct StorageView: View {
         let reclaimable = artifacts
             .filter(\.cleanupAllowed)
             .reduce(UInt64(0)) { $0 &+ $1.physicalBytes }
+        let staleCandidates = artifacts.filter(\.effectiveStaleCandidate)
+        let staleCandidateBytes = staleCandidates.reduce(UInt64(0)) { $0 &+ $1.physicalBytes }
 
         return DisclosureGroup(isExpanded: $showRepositoryArtifactDetails) {
             VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
@@ -5622,6 +5624,11 @@ public struct StorageView: View {
                 Text("\(artifacts.count) generated roots")
                     .font(AetowerDesign.Typography.metadata)
                     .foregroundStyle(AetowerDesign.Ink.tertiary)
+                if !staleCandidates.isEmpty {
+                    Text("\(staleCandidates.count) stale candidates · \(formatBytes(staleCandidateBytes))")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Status.warning)
+                }
                 Spacer()
                 if reclaimable > 0 {
                     Text("\(formatBytes(reclaimable)) evidenced reclaimable")
@@ -5647,6 +5654,11 @@ public struct StorageView: View {
                         Text("worktree")
                             .font(AetowerDesign.Typography.metadata)
                             .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    }
+                    if artifact.effectiveStaleCandidate {
+                        Text(artifactStalenessLabel(artifact))
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Status.warning)
                     }
                 }
                 Text(artifactEvidenceSummary(artifact))
@@ -5676,10 +5688,27 @@ public struct StorageView: View {
     }
 
     private func artifactEvidenceSummary(_ artifact: StorageRepositoryArtifactModel) -> String {
+        let activity = artifactActivitySummary(artifact)
         if artifact.cleanupAllowed {
-            return "Confirmed generated · Git-ignored · \(artifact.estimatedRebuildCost) rebuild cost"
+            return "\(activity) · Confirmed generated · Git-ignored · \(artifact.estimatedRebuildCost) rebuild cost"
         }
-        return artifact.cleanupBlockers.first ?? "Review classification evidence"
+        let blocker = artifact.cleanupBlockers.first ?? "Review classification evidence"
+        return "\(activity) · \(blocker)"
+    }
+
+    private func artifactActivitySummary(_ artifact: StorageRepositoryArtifactModel) -> String {
+        guard let inactivityDays = artifact.inactivityDays else {
+            return "Activity time unavailable"
+        }
+        let relative = inactivityDays == 0 ? "today" : "\(inactivityDays)d ago"
+        return artifact.activityBasis == "accessed"
+            ? "Last accessed \(relative)"
+            : "Last written \(relative)"
+    }
+
+    private func artifactStalenessLabel(_ artifact: StorageRepositoryArtifactModel) -> String {
+        let label = (artifact.staleness ?? "stale").capitalized
+        return "\(label) · priority \(artifact.effectiveReclaimPriority)"
     }
 
     private func storageRepositoryArtifactColor(_ kind: String) -> Color {
