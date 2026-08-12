@@ -61,6 +61,25 @@ final class TrashServiceTests: XCTestCase {
         }
     }
 
+    func testPermanentDeleteReclaimsOnlyRequestedVerifiedPath() throws {
+        let requested = try makeTemporaryTrashFixture(name: "permanent-requested")
+        let unrelated = try makeTemporaryTrashFixture(name: "permanent-unrelated")
+        defer { try? FileManager.default.removeItem(at: unrelated) }
+
+        let outcome = TrashService.permanentlyDelete(paths: [requested.path]) { _ in
+            .checked([])
+        }
+
+        XCTAssertEqual(outcome.reclaimedItems.map(\.originalPath), [requested.path])
+        XCTAssertTrue(outcome.pendingTrashItems.isEmpty)
+        XCTAssertTrue(outcome.failedPaths.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: requested.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
+        if let trashURL = outcome.reclaimedItems.first?.trashURL {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: trashURL.path))
+        }
+    }
+
     private func makeTemporaryTrashFixture(name: String) throws -> URL {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("aetower-trash-service-tests", isDirectory: true)

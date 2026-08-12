@@ -52,6 +52,12 @@ enum TrashService {
         }
     }
 
+    struct PermanentBatchOutcome: Sendable {
+        let reclaimedItems: [MovedItem]
+        let pendingTrashItems: [MovedItem]
+        let failedPaths: [String: String]
+    }
+
     static func trash(_ path: String, activeWriterProbe: ActiveWriterProbe? = nil) -> SingleOutcome {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return SingleOutcome(trashURL: nil, message: "Empty path") }
@@ -88,6 +94,37 @@ enum TrashService {
             }
         }
         return BatchOutcome(movedItems: movedItems, failedPaths: failedPaths)
+    }
+
+    /// Permanently reclaim verified paths without touching unrelated Trash
+    /// contents. Each path first goes through the normal Trash and active-writer
+    /// protections. Only the resulting URL is then deleted; failures remain in
+    /// Trash and are returned to the caller for tracking and recovery.
+    static func permanentlyDelete(
+        paths: [String],
+        activeWriterProbe: ActiveWriterProbe? = nil
+    ) -> PermanentBatchOutcome {
+        let trashed = trash(paths: paths, activeWriterProbe: activeWriterProbe)
+        var reclaimedItems: [MovedItem] = []
+        var pendingTrashItems: [MovedItem] = []
+        var failedPaths = trashed.failedPaths
+
+        for item in trashed.movedItems {
+            do {
+                try FileManager.default.removeItem(at: item.trashURL)
+                reclaimedItems.append(item)
+            } catch {
+                pendingTrashItems.append(item)
+                failedPaths[item.originalPath] =
+                    "Moved to Trash, but permanent deletion failed: \(error.localizedDescription)"
+            }
+        }
+
+        return PermanentBatchOutcome(
+            reclaimedItems: reclaimedItems,
+            pendingTrashItems: pendingTrashItems,
+            failedPaths: failedPaths
+        )
     }
 
     static func privilegedCleanupBlocker(for path: String) -> String? {
