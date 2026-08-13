@@ -7189,7 +7189,10 @@ public struct StorageView: View {
                 Button("Cancel") {
                     aggressiveCleanupPreview = nil
                 }
-                Button("Clean aggressively", role: .destructive) {
+                Button(
+                    storageCleanupActionTitle(bytes: plan.totalBytes, scope: .aggressive),
+                    role: .destructive
+                ) {
                     let items = plan.items
                     aggressiveCleanupPreview = nil
                     cleanStorageTargetsPermanently(
@@ -9831,7 +9834,10 @@ public struct StorageView: View {
             Button {
                 cleanStorageTargetsPermanently(plan.safeItems, sourceTitle: "Safe clean")
             } label: {
-                Label("Clean safely", systemImage: "checkmark.shield.fill")
+                Label(
+                    storageCleanupActionTitle(bytes: plan.safeBytes, scope: .safe),
+                    systemImage: "checkmark.shield.fill"
+                )
             }
             .buttonStyle(.borderedProminent)
             .tint(AetowerDesign.Status.ready)
@@ -9842,7 +9848,10 @@ public struct StorageView: View {
             Button {
                 aggressiveCleanupPreview = plan
             } label: {
-                Label("Clean aggressively", systemImage: "exclamationmark.triangle.fill")
+                Label(
+                    storageCleanupActionTitle(bytes: plan.totalBytes, scope: .aggressive),
+                    systemImage: "exclamationmark.triangle.fill"
+                )
             }
             .buttonStyle(.bordered)
             .tint(AetowerDesign.Status.warning)
@@ -13049,6 +13058,20 @@ public struct StorageView: View {
 
     private func formatBytes(_ bytes: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
+    private func storageCleanupActionTitle(
+        bytes: UInt64,
+        scope: StorageBulkCleanupScope
+    ) -> String {
+        let qualifier: String
+        switch scope {
+        case .safe:
+            qualifier = "safely"
+        case .aggressive:
+            qualifier = "aggressively"
+        }
+        return "Clean \(formatBytes(bytes)) \(qualifier)"
     }
 
     private func formatPercent(_ value: Double) -> String {
