@@ -592,9 +592,11 @@ public final class AppState {
     @ObservationIgnored private var storageHygieneLoadWatchdogMode = "fast_changed_only"
     @ObservationIgnored private var storageHygieneLoadWatchdogBudgetSeconds: TimeInterval = 30
     private(set) var storageHygieneIsVerifyingCache = false
+    @ObservationIgnored private var storageSituationLiveRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var storageSituationMaintenanceTask: Task<Void, Never>?
     @ObservationIgnored private var storageSituationPublishSignature: String?
     @ObservationIgnored private var storageSituationPollRoots: [String] = []
+    @ObservationIgnored private var lastStorageVolumeCapacityRefreshDate = Date.distantPast
     @ObservationIgnored private var lastStorageBacklogDecisionDiagnosticMillis: UInt64 = 0
     @ObservationIgnored private var lastStorageBacklogDecisionDiagnosticKey: String?
     @ObservationIgnored private var storageBacklogDecisionCount: UInt64 = 0
@@ -1019,6 +1021,7 @@ public final class AppState {
         publishFrontmostState(force: true)
         refresh(force: true)
         updateLagMonitoringState()
+        startStorageSituationLiveRefresh()
         startStorageSituationMaintenance()
         baseRefreshIntervalNanos = UInt64(max(1.0, refreshInterval) * 1_000_000_000)
         refreshTask = Task { [weak self] in
@@ -1076,6 +1079,8 @@ public final class AppState {
         diagnosticsLoadTask = nil
         storageHygieneTask?.cancel()
         storageHygieneTask = nil
+        storageSituationLiveRefreshTask?.cancel()
+        storageSituationLiveRefreshTask = nil
         storageSituationMaintenanceTask?.cancel()
         storageSituationMaintenanceTask = nil
         storageHygieneIsVerifyingCache = false
@@ -2026,6 +2031,7 @@ public final class AppState {
         refreshStartedAt: CFAbsoluteTime,
         force: Bool
     ) {
+        refreshLiveStorageVolumeCapacityIfNeeded(force: force)
         switch result {
         case .noChange:
             completeSnapshotRefresh()
@@ -2198,12 +2204,14 @@ public final class AppState {
     private static let storageEstimateQuietMillis: UInt64 = 45_000
     private static let storageEstimateRefreshCooldownMillis: UInt64 = 120_000
     private static let storageCacheReverifyIntervalMillis: UInt64 = 6 * 60 * 60 * 1000
+    private static let storageSituationLiveRefreshIntervalNanos: UInt64 = 10_000_000_000
     private static let storageSituationMaintenanceInitialDelayNanos: UInt64 = 5_000_000_000
     private static let storageSituationBacklogNormalRetryNanos: UInt64 = 30_000_000_000
     private static let storageSituationBacklogSlowRetryNanos: UInt64 = 75_000_000_000
     private static let storageSituationBacklogPressureRetryNanos: UInt64 = 120_000_000_000
     private static let storageSituationMaintenanceIdleNanos: UInt64 = 45_000_000_000
     private static let storageBacklogDecisionDiagnosticCooldownMillis: UInt64 = 120_000
+    private static let storageVolumeCapacityRefreshInterval: TimeInterval = 5
 
     @discardableResult
     private func startStorageRefreshForDirtyDisplayedReportIfNeeded(
@@ -2449,7 +2457,32 @@ public final class AppState {
         updateStorageEstimateStatus(situation: situation)
     }
 
-    nonisolated private static func storageSituationPublishSignature(
+    private func refreshLiveStorageVolumeCapacityIfNeeded(force: Bool) {
+        let now = Date()
+        guard force
+                || now.timeIntervalSince(lastStorageVolumeCapacityRefreshDate)
+                    >= Self.storageVolumeCapacityRefreshInterval
+        else {
+            return
+        }
+        lastStorageVolumeCapacityRefreshDate = now
+
+        if var situation = storageSituation {
+            situation.volumeStates = StorageVolumeCapacityEnricher.enrich(situation.volumeStates)
+            publishStorageSituation(situation, updateEstimate: false)
+        } else if var report = storageHygieneReport {
+            let refreshedVolumes = StorageVolumeCapacityEnricher.enrich(report.volumeStates)
+            guard Self.storageVolumePublishSignature(report.volumeStates)
+                    != Self.storageVolumePublishSignature(refreshedVolumes)
+            else {
+                return
+            }
+            report.volumeStates = refreshedVolumes
+            storageHygieneReport = report
+        }
+    }
+
+    nonisolated static func storageSituationPublishSignature(
         _ situation: StorageSituationModel
     ) -> String {
         let summary = situation.summary
@@ -2460,6 +2493,7 @@ public final class AppState {
         let volumes = storageVolumePublishSignature(situation.volumeStates)
         let ownership = storageOwnershipPublishSignature(situation.ownershipBreakdown)
         var fields: [String] = [
+            String(situation.capturedAtMillis),
             situation.storageIndexStatus,
             situation.cacheStatus.stale ? "stale" : "fresh",
             situation.cacheStatus.partial ? "partial" : "complete",
@@ -2473,6 +2507,9 @@ public final class AppState {
             String(summary.reviewRequiredBytes),
             String(summary.dangerousUserDataBytes),
             String(dirty.dirtyPathCount),
+            String(dirty.latestDirtyMillis ?? 0),
+            String(dirty.latestEventId ?? 0),
+            dirty.samplePaths.joined(separator: ","),
             dirty.unknownGap ? "gap" : "no-gap",
         ]
         fields.append(topOffenders)
@@ -2630,6 +2667,30 @@ public final class AppState {
         )
     }
 
+    private func startStorageSituationLiveRefresh() {
+        storageSituationLiveRefreshTask?.cancel()
+        let bridge = self.bridge
+        let publisher = StorageHygieneMainActorPublisher(self)
+        let intervalNanos = Self.storageSituationLiveRefreshIntervalNanos
+        storageSituationLiveRefreshTask = Task.detached(priority: .utility) { [bridge, publisher] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: intervalNanos)
+                } catch {
+                    break
+                }
+                guard !Task.isCancelled else { break }
+                let roots = await publisher.storageSituationPollRoots()
+                let result = bridge.storageSituationJSON(roots: roots)
+                guard !Task.isCancelled else { break }
+                guard let situation = Self.decodeStorageSituationForBackground(result) else {
+                    continue
+                }
+                await publisher.publishStorageSituation(situation, updateEstimate: true)
+            }
+        }
+    }
+
     private func startStorageSituationMaintenance() {
         storageSituationMaintenanceTask?.cancel()
         let bridge = self.bridge
@@ -2637,7 +2698,11 @@ public final class AppState {
         let initialDelayNanos = Self.storageSituationMaintenanceInitialDelayNanos
         let idleDelayNanos = Self.storageSituationMaintenanceIdleNanos
         storageSituationMaintenanceTask = Task.detached(priority: .utility) { [bridge, publisher] in
-            try? await Task.sleep(nanoseconds: initialDelayNanos)
+            do {
+                try await Task.sleep(nanoseconds: initialDelayNanos)
+            } catch {
+                return
+            }
             while !Task.isCancelled {
                 let decision = await publisher.storageBacklogDrainDecision()
                 let roots = await publisher.storageSituationPollRoots()
@@ -2652,7 +2717,11 @@ public final class AppState {
                         retryDelayNanos: decision.retryDelayNanos,
                         detail: "The storage maintenance response could not be decoded."
                     )
-                    try? await Task.sleep(nanoseconds: decision.retryDelayNanos)
+                    do {
+                        try await Task.sleep(nanoseconds: decision.retryDelayNanos)
+                    } catch {
+                        break
+                    }
                     continue
                 }
 
@@ -2668,9 +2737,13 @@ public final class AppState {
                         ? "Storage changes remain queued for bounded background measurement."
                         : "No storage changes need background measurement."
                 )
-                try? await Task.sleep(
-                    nanoseconds: queueNeedsWork ? decision.retryDelayNanos : idleDelayNanos
-                )
+                do {
+                    try await Task.sleep(
+                        nanoseconds: queueNeedsWork ? decision.retryDelayNanos : idleDelayNanos
+                    )
+                } catch {
+                    break
+                }
             }
         }
     }

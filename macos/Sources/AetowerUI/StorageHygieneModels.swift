@@ -2457,12 +2457,29 @@ struct StorageColdDataModel: Decodable, Sendable {
 enum StorageVolumeCapacityEnricher {
     static func enrich(_ volumes: [StorageVolumeStateModel]) -> [StorageVolumeStateModel] {
         volumes.map { volume in
-            var enriched = volume
             let url = URL(fileURLWithPath: volume.path, isDirectory: true)
             let values = try? url.resourceValues(forKeys: [
+                .volumeTotalCapacityKey,
+                .volumeAvailableCapacityKey,
                 .volumeAvailableCapacityForImportantUsageKey,
                 .volumeAvailableCapacityForOpportunisticUsageKey,
             ])
+            let totalBytes = values?.volumeTotalCapacity.map { UInt64(max($0, 0)) }
+                ?? volume.totalBytes
+            let availableBytes = values?.volumeAvailableCapacity.map { UInt64(max($0, 0)) }
+                ?? volume.availableBytes
+            var enriched = StorageVolumeStateModel(
+                path: volume.path,
+                deviceId: volume.deviceId,
+                filesystemType: volume.filesystemType,
+                totalBytes: totalBytes,
+                freeNowBytes: availableBytes,
+                availableBytes: availableBytes,
+                purgeableBytesEstimate: volume.purgeableBytesEstimate,
+                importantUsageAvailableBytes: volume.importantUsageAvailableBytes,
+                opportunisticUsageAvailableBytes: volume.opportunisticUsageAvailableBytes,
+                detail: volume.detail
+            )
             if let important = values?.volumeAvailableCapacityForImportantUsage {
                 enriched.importantUsageAvailableBytes = UInt64(max(important, 0))
             }

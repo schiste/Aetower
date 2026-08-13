@@ -2,6 +2,37 @@
 import XCTest
 
 final class StorageHygieneModelsTests: XCTestCase {
+    func testStorageSituationPublicationTracksFreshMeasurementsAndDirtyEvents() throws {
+        let initial = try storageSituation(capturedAtMillis: 10, latestEventId: 20)
+        let remeasured = try storageSituation(capturedAtMillis: 11, latestEventId: 20)
+        let newEvent = try storageSituation(capturedAtMillis: 10, latestEventId: 21)
+
+        let initialSignature = AppState.storageSituationPublishSignature(initial)
+        XCTAssertNotEqual(initialSignature, AppState.storageSituationPublishSignature(remeasured))
+        XCTAssertNotEqual(initialSignature, AppState.storageSituationPublishSignature(newEvent))
+    }
+
+    func testStorageVolumeCapacityEnricherReplacesStaleCapacityFacts() {
+        let stale = StorageVolumeStateModel(
+            path: "/",
+            deviceId: 1,
+            filesystemType: "apfs",
+            totalBytes: 1,
+            freeNowBytes: 1,
+            availableBytes: 1,
+            purgeableBytesEstimate: 0,
+            importantUsageAvailableBytes: nil,
+            opportunisticUsageAvailableBytes: nil,
+            detail: "stale fixture"
+        )
+
+        let refreshed = StorageVolumeCapacityEnricher.enrich([stale])[0]
+
+        XCTAssertGreaterThan(refreshed.totalBytes, 1)
+        XCTAssertGreaterThan(refreshed.availableBytes, 1)
+        XCTAssertEqual(refreshed.freeNowBytes, refreshed.availableBytes)
+    }
+
     func testStorageMaintenanceTracksWorkInsteadOfPermanentCoverageState() throws {
         let summaries = try AetowerJSON.snakeCaseDecoder().decode(
             [StorageDirtyPathSummaryModel].self,
@@ -17,6 +48,45 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertFalse(summaries[0].hasPendingMaintenance)
         XCTAssertTrue(summaries[1].hasPendingMaintenance)
         XCTAssertTrue(summaries[2].hasPendingMaintenance)
+    }
+
+    private func storageSituation(
+        capturedAtMillis: UInt64,
+        latestEventId: UInt64
+    ) throws -> StorageSituationModel {
+        try AetowerJSON.snakeCaseDecoder().decode(
+            StorageSituationModel.self,
+            from: Data("""
+            {
+              "captured_at_millis": \(capturedAtMillis),
+              "snapshot_updated_at_millis": \(capturedAtMillis),
+              "cache_status": {
+                "source": "test", "stale": false, "partial": false,
+                "confidence": "measured", "confidence_score": 100,
+                "message": ""
+              },
+              "storage_index_status": "ready",
+              "roots": [],
+              "dirty_paths": {
+                "dirty_path_count": 1,
+                "latest_dirty_millis": 9,
+                "latest_event_id": \(latestEventId),
+                "sample_paths": ["/tmp/example"],
+                "unknown_gap": false
+              },
+              "summary": {
+                "source_root_count": 0, "item_count": 0,
+                "inventory_size_bytes": 0, "safely_reclaimable_now_bytes": 0,
+                "maybe_reclaimable_bytes": 0, "review_required_bytes": 0,
+                "dangerous_user_data_bytes": 0
+              },
+              "top_offenders": [],
+              "ownership_breakdown": null,
+              "volume_states": [],
+              "caveats": []
+            }
+            """.utf8)
+        )
     }
 
     func testStorageOwnershipBreakdownDecodesSnakeCaseJSON() throws {
