@@ -2494,6 +2494,7 @@ public final class AppState {
         let ownership = storageOwnershipPublishSignature(situation.ownershipBreakdown)
         var fields: [String] = [
             String(situation.capturedAtMillis),
+            String(situation.snapshotUpdatedAtMillis ?? 0),
             situation.storageIndexStatus,
             situation.cacheStatus.stale ? "stale" : "fresh",
             situation.cacheStatus.partial ? "partial" : "complete",

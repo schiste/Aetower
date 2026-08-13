@@ -3,12 +3,30 @@ import XCTest
 
 final class StorageHygieneModelsTests: XCTestCase {
     func testStorageSituationPublicationTracksFreshMeasurementsAndDirtyEvents() throws {
-        let initial = try storageSituation(capturedAtMillis: 10, latestEventId: 20)
-        let remeasured = try storageSituation(capturedAtMillis: 11, latestEventId: 20)
-        let newEvent = try storageSituation(capturedAtMillis: 10, latestEventId: 21)
+        let initial = try storageSituation(
+            capturedAtMillis: 10,
+            snapshotUpdatedAtMillis: 10,
+            latestEventId: 20
+        )
+        let remeasured = try storageSituation(
+            capturedAtMillis: 11,
+            snapshotUpdatedAtMillis: 11,
+            latestEventId: 20
+        )
+        let refreshedOverlay = try storageSituation(
+            capturedAtMillis: 10,
+            snapshotUpdatedAtMillis: 11,
+            latestEventId: 20
+        )
+        let newEvent = try storageSituation(
+            capturedAtMillis: 10,
+            snapshotUpdatedAtMillis: 10,
+            latestEventId: 21
+        )
 
         let initialSignature = AppState.storageSituationPublishSignature(initial)
         XCTAssertNotEqual(initialSignature, AppState.storageSituationPublishSignature(remeasured))
+        XCTAssertNotEqual(initialSignature, AppState.storageSituationPublishSignature(refreshedOverlay))
         XCTAssertNotEqual(initialSignature, AppState.storageSituationPublishSignature(newEvent))
     }
 
@@ -52,6 +70,7 @@ final class StorageHygieneModelsTests: XCTestCase {
 
     private func storageSituation(
         capturedAtMillis: UInt64,
+        snapshotUpdatedAtMillis: UInt64,
         latestEventId: UInt64
     ) throws -> StorageSituationModel {
         try AetowerJSON.snakeCaseDecoder().decode(
@@ -59,7 +78,7 @@ final class StorageHygieneModelsTests: XCTestCase {
             from: Data("""
             {
               "captured_at_millis": \(capturedAtMillis),
-              "snapshot_updated_at_millis": \(capturedAtMillis),
+              "snapshot_updated_at_millis": \(snapshotUpdatedAtMillis),
               "cache_status": {
                 "source": "test", "stale": false, "partial": false,
                 "confidence": "measured", "confidence_score": 100,
