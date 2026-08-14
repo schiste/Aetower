@@ -2792,7 +2792,7 @@ fn collect_host_incidents(snapshot: &SystemSnapshot) -> Vec<HostIncidentSnapshot
                 "Host memory pressure incident snapshot recorded."
             },
             detail: format!(
-                "Memory performance impact reached {:.0}/100: {} paging, {} swap I/O, {} compressor traffic; {:.0}% used.",
+                "Memory performance impact reached {:.0}%: {} paging, {} swap I/O, {} compressor traffic; {:.0}% used.",
                 memory_impact,
                 format_bps(host.memory_pagein_bps.saturating_add(host.memory_pageout_bps)),
                 format_bps(host.memory_swapin_bps.saturating_add(host.memory_swapout_bps)),

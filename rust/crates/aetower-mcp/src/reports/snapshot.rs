@@ -134,7 +134,7 @@ pub(crate) fn build_host_alerts(
             category: "memory-pressure".to_owned(),
             title: "Memory contention is affecting performance".to_owned(),
             detail: format!(
-                "Impact {:.0}/100 with {} paging, {} swap I/O, and {} compressor traffic. Top current groups: {}.",
+                "Impact {:.0}% with {} paging, {} swap I/O, and {} compressor traffic. Top current groups: {}.",
                 memory_impact,
                 format_bps(snapshot.host.memory_pagein_bps.saturating_add(snapshot.host.memory_pageout_bps)),
                 format_bps(snapshot.host.memory_swapin_bps.saturating_add(snapshot.host.memory_swapout_bps)),

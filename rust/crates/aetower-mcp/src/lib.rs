@@ -2229,7 +2229,7 @@ pub(crate) fn memory_pressure_finding(snapshot: &SystemSnapshot) -> Option<TopFi
         severity,
         title: "Memory contention is affecting performance".to_owned(),
         detail: format!(
-            "Impact {:.0}/100: {} paging, {} swap I/O, {} compressor traffic; {} used.",
+            "Impact {:.0}%: {} paging, {} swap I/O, {} compressor traffic; {} used.",
             impact,
             format_bps(
                 snapshot

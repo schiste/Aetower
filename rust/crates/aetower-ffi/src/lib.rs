@@ -2616,10 +2616,10 @@ fn ui_metric_cards_from_snapshot(
         },
         UiMetricCard {
             id: "memory".to_owned(),
-            title: "Memory impact".to_owned(),
+            title: "Memory".to_owned(),
             value: f64::from(memory_impact),
-            unit: "score".to_owned(),
-            display_value: format!("{memory_impact:.0}/100"),
+            unit: "percent".to_owned(),
+            display_value: format!("{memory_impact:.0}%"),
             detail: format!(
                 "paging {} · swap I/O {} · compressor {} · {:.0}% used",
                 format_bps(paging_bps),
@@ -2930,9 +2930,9 @@ mod ui_snapshot_tests {
             .find(|card| card.id == "memory")
             .unwrap_or_else(|| panic!("memory card"));
 
-        assert_eq!(memory.title, "Memory impact");
-        assert_eq!(memory.unit, "score");
-        assert!(memory.display_value.ends_with("/100"));
+        assert_eq!(memory.title, "Memory");
+        assert_eq!(memory.unit, "percent");
+        assert!(memory.display_value.ends_with('%'));
         assert!(memory.detail.contains("swap I/O"));
         assert_eq!(memory.fixed_ceiling, Some(100.0));
     }

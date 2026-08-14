@@ -428,7 +428,7 @@ pub(crate) fn host_memory_pressure_guidance(
     );
     if external_labels.is_empty() {
         format!(
-            "Memory impact is {:.0}/100 with {} paging, {} swap I/O, and {} compressor traffic. No non-Aetower contention leader is visible; inspect system services and only then Aetower self. {}",
+            "Memory impact is {:.0}% with {} paging, {} swap I/O, and {} compressor traffic. No non-Aetower contention leader is visible; inspect system services and only then Aetower self. {}",
             host_memory_performance_impact_score(&snapshot.host),
             format_bps(
                 snapshot
@@ -452,7 +452,7 @@ pub(crate) fn host_memory_pressure_guidance(
         )
     } else {
         format!(
-            "Memory impact is {:.0}/100 with {} paging, {} swap I/O, and {} compressor traffic. Start with active contention leaders: {}. {}",
+            "Memory impact is {:.0}% with {} paging, {} swap I/O, and {} compressor traffic. Start with active contention leaders: {}. {}",
             host_memory_performance_impact_score(&snapshot.host),
             format_bps(
                 snapshot

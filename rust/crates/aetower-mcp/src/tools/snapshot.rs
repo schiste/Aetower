@@ -675,7 +675,7 @@ fn host_pressure_assessment(
     let memory_impact = host_memory_performance_impact_score(&snapshot.host);
     if memory_impact >= MEMORY_IMPACT_ELEVATED_SCORE {
         assessment.push(format!(
-            "Memory performance impact is {:.0}/100: {} paging, {} swap I/O, {} compressor traffic; {:.0}% used.",
+            "Memory performance impact is {:.0}%: {} paging, {} swap I/O, {} compressor traffic; {:.0}% used.",
             memory_impact,
             format_bps(snapshot.host.memory_pagein_bps.saturating_add(snapshot.host.memory_pageout_bps)),
             format_bps(snapshot.host.memory_swapin_bps.saturating_add(snapshot.host.memory_swapout_bps)),

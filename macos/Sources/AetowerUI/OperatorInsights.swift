@@ -101,7 +101,7 @@ func buildHostIncident(
         return HostIncidentSummary(
             severity: memoryBand,
             title: "Memory contention is affecting performance",
-            summary: "Impact \(String(format: "%.0f/100", hostMemoryPerformanceImpactScore(host))): paging \(formatRate(pagingBps)), swap I/O \(formatRate(swapIOBps)), compressor \(formatRate(compressorBps)).",
+            summary: "Impact \(String(format: "%.0f%%", hostMemoryPerformanceImpactScore(host))): paging \(formatRate(pagingBps)), swap I/O \(formatRate(swapIOBps)), compressor \(formatRate(compressorBps)).",
             action: memoryLeaders.isEmpty
                 ? "Reduce the entities actively reading and holding resident memory first."
                 : "Start with the current contention leaders: \(memoryLeaders)."

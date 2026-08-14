@@ -2164,16 +2164,16 @@ public struct MainListView: View {
             ),
             MonitorMetricCardDescriptor(
                 id: .memory,
-                title: "Memory impact",
-                value: String(format: "%.0f/100", memoryImpact),
-                fixedScaleValue: String(format: "%.0f/100", memoryImpact),
+                title: "Memory",
+                value: String(format: "%.0f%%", memoryImpact),
+                fixedScaleValue: String(format: "%.0f%%", memoryImpact),
                 subtitle: "paging \(formatRate(pagingBps)) · swap I/O \(formatRate(swapIOBps)) · compressor \(formatRate(compressorBps)) · \(formatBytes(host.memoryUsedBytes)) used",
                 samples: memorySamples,
                 style: .memory,
                 valueAppearance: monitorMemoryAppearance(host),
-                // Samples are the 0–100 measured performance-impact score.
-                sampleValueFormatter: { String(format: "%.0f/100", $0) },
-                fixedScaleSampleValueFormatter: { String(format: "%.0f/100", $0) },
+                // Samples are a normalized 0–100 measured performance impact.
+                sampleValueFormatter: { String(format: "%.0f%%", $0) },
+                fixedScaleSampleValueFormatter: { String(format: "%.0f%%", $0) },
                 fixedCeiling: MonitorRingCeiling.percent
             ),
             MonitorMetricCardDescriptor(
@@ -2316,7 +2316,7 @@ public struct MainListView: View {
         case "percent":
             return String(format: "%.0f%%", card.value)
         case "score":
-            return String(format: "%.0f/100", card.value)
+            return String(format: "%.0f%%", card.value)
         case "bytes":
             guard focus == .memory, let ceiling = card.fixedCeiling, ceiling > 0 else { return nil }
             return String(format: "%.0f%%", monitorMetricPercent(card.value, ceiling: ceiling))
@@ -2360,7 +2360,7 @@ public struct MainListView: View {
         case "percent":
             return { String(format: "%.0f%%", $0) }
         case "score":
-            return { String(format: "%.0f/100", $0) }
+            return { String(format: "%.0f%%", $0) }
         case "bytes":
             guard focus == .memory, let ceiling = card.fixedCeiling, ceiling > 0 else { return nil }
             return { String(format: "%.0f%%", monitorMetricPercent($0, ceiling: ceiling)) }
