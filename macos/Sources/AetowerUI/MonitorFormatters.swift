@@ -118,12 +118,9 @@ enum HostBand {
 }
 
 func hostPressureBand(_ host: HostSnapshot) -> HostBand {
-    let totalBytes = max(Double(host.memoryTotalBytes), 1)
-    let usedRatio = Double(host.memoryUsedBytes) / totalBytes
-    let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
-    let swapRatio = Double(host.swapUsedBytes) / totalBytes
-    if usedRatio >= 0.88 || compressedRatio >= 0.12 || swapRatio >= 0.08 { return .severe }
-    if usedRatio >= 0.75 || compressedRatio >= 0.05 || swapRatio >= 0.02 { return .elevated }
+    let impact = hostMemoryPerformanceImpactScore(host)
+    if impact >= 65 { return .severe }
+    if impact >= 30 { return .elevated }
     return .nominal
 }
 
@@ -140,12 +137,53 @@ func memoryLoadPercent(bytes: UInt64, totalBytes: UInt64) -> Double {
     return (Double(bytes) / Double(totalBytes)) * 100.0
 }
 
-func hostMemoryPressureScore(_ host: HostSnapshot) -> Double {
-    let totalBytes = max(Double(host.memoryTotalBytes), 1)
-    let usedRatio = Double(host.memoryUsedBytes) / totalBytes
-    let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
-    let swapRatio = Double(host.swapUsedBytes) / totalBytes
-    return min(usedRatio * 55.0 + min(compressedRatio, 1.0) * 25.0 + min(swapRatio, 1.0) * 20.0, 100.0)
+func hostMemoryPerformanceImpactScore(_ host: HostSnapshot) -> Double {
+    memoryPerformanceImpactScore(
+        memoryUsedBytes: host.memoryUsedBytes,
+        memoryTotalBytes: host.memoryTotalBytes,
+        compressedMemoryBytes: host.compressedMemoryBytes,
+        swapUsedBytes: host.swapUsedBytes,
+        pageinBps: host.memoryPageinBps,
+        pageoutBps: host.memoryPageoutBps,
+        swapinBps: host.memorySwapinBps,
+        swapoutBps: host.memorySwapoutBps,
+        compressionBps: host.memoryCompressionBps,
+        decompressionBps: host.memoryDecompressionBps
+    )
+}
+
+func memoryPerformanceImpactScore(
+    memoryUsedBytes: UInt64,
+    memoryTotalBytes: UInt64,
+    compressedMemoryBytes: UInt64,
+    swapUsedBytes: UInt64,
+    pageinBps: UInt64,
+    pageoutBps: UInt64,
+    swapinBps: UInt64,
+    swapoutBps: UInt64,
+    compressionBps: UInt64,
+    decompressionBps: UInt64
+) -> Double {
+    let totalBytes = max(Double(memoryTotalBytes), 1)
+    let usedRatio = Double(memoryUsedBytes) / totalBytes
+    let compressedRatio = Double(compressedMemoryBytes) / totalBytes
+    let swapRatio = Double(swapUsedBytes) / totalBytes
+
+    let usedHeadroom = min(max((usedRatio - 0.70) / 0.25, 0), 1) * 15
+    let retainedCompressed = min(max(compressedRatio / 0.25, 0), 1) * 5
+    let retainedSwap = min(max(swapRatio / 2.0, 0), 1) * 5
+    let mib = 1_048_576.0
+    let pageins = min(Double(pageinBps) / (256 * mib), 1) * 10
+    let pageouts = min(Double(pageoutBps) / (64 * mib), 1) * 10
+    let swapins = min(Double(swapinBps) / (16 * mib), 1) * 20
+    let swapouts = min(Double(swapoutBps) / (16 * mib), 1) * 10
+    let decompressions = min(Double(decompressionBps) / (128 * mib), 1) * 15
+    let compressions = min(Double(compressionBps) / (128 * mib), 1) * 10
+    return min(
+        usedHeadroom + retainedCompressed + retainedSwap
+            + pageins + pageouts + swapins + swapouts + decompressions + compressions,
+        100
+    )
 }
 
 func effectiveMemoryBytes(residentBytes: UInt64, footprintBytes: UInt64) -> UInt64 {

@@ -2118,7 +2118,7 @@ public struct MainListView: View {
         let frictionScore = machineFrictionScore(for: host)
         let frictionSamples = monitorFallbackTrendSamples(frictionScore)
         let cpuSamples = monitorFallbackTrendSamples(Double(host.cpuPercent))
-        let memorySamples = monitorFallbackTrendSamples(hostMemoryPressureScore(host))
+        let memorySamples = monitorFallbackTrendSamples(hostMemoryPerformanceImpactScore(host))
         let diskSamples = monitorFallbackTrendSamples(Double(host.diskReadBps + host.diskWriteBps))
         let networkSamples = monitorFallbackTrendSamples(Double(host.networkReceiveBps + host.networkSendBps))
         let wakeupSamples = monitorFallbackTrendSamples(Double(host.wakeupsPerSecond))
@@ -2130,7 +2130,10 @@ public struct MainListView: View {
         let gpuValue = usingGpuPercent
             ? String(format: "%.0f%%", host.gpuPercent)
             : formatBytes(host.gpuMemoryBytes)
-        let memoryPressure = hostMemoryPressureScore(host)
+        let memoryImpact = hostMemoryPerformanceImpactScore(host)
+        let pagingBps = host.memoryPageinBps + host.memoryPageoutBps
+        let swapIOBps = host.memorySwapinBps + host.memorySwapoutBps
+        let compressorBps = host.memoryCompressionBps + host.memoryDecompressionBps
 
         let cards = [
             MonitorMetricCardDescriptor(
@@ -2161,17 +2164,16 @@ public struct MainListView: View {
             ),
             MonitorMetricCardDescriptor(
                 id: .memory,
-                title: "Memory",
-                value: formatBytes(host.memoryUsedBytes),
-                fixedScaleValue: String(format: "%.0f%%", memoryPressure),
-                subtitle: "\(formatBytes(host.memoryUsedBytes)) used · \(formatBytes(host.compressedMemoryBytes)) compressed · \(formatBytes(host.swapUsedBytes)) swap · pressure trend",
+                title: "Memory impact",
+                value: String(format: "%.0f/100", memoryImpact),
+                fixedScaleValue: String(format: "%.0f/100", memoryImpact),
+                subtitle: "paging \(formatRate(pagingBps)) · swap I/O \(formatRate(swapIOBps)) · compressor \(formatRate(compressorBps)) · \(formatBytes(host.memoryUsedBytes)) used",
                 samples: memorySamples,
                 style: .memory,
                 valueAppearance: monitorMemoryAppearance(host),
-                // Samples are the 0–100 memory pressure score, not bytes — label
-                // the hover stats with /100 so they don't read as bytes/percent.
+                // Samples are the 0–100 measured performance-impact score.
                 sampleValueFormatter: { String(format: "%.0f/100", $0) },
-                fixedScaleSampleValueFormatter: { String(format: "%.0f%%", $0) },
+                fixedScaleSampleValueFormatter: { String(format: "%.0f/100", $0) },
                 fixedCeiling: MonitorRingCeiling.percent
             ),
             MonitorMetricCardDescriptor(
@@ -2314,7 +2316,7 @@ public struct MainListView: View {
         case "percent":
             return String(format: "%.0f%%", card.value)
         case "score":
-            return String(format: "%.0f%%", card.value)
+            return String(format: "%.0f/100", card.value)
         case "bytes":
             guard focus == .memory, let ceiling = card.fixedCeiling, ceiling > 0 else { return nil }
             return String(format: "%.0f%%", monitorMetricPercent(card.value, ceiling: ceiling))
@@ -2358,7 +2360,7 @@ public struct MainListView: View {
         case "percent":
             return { String(format: "%.0f%%", $0) }
         case "score":
-            return { String(format: "%.0f%%", $0) }
+            return { String(format: "%.0f/100", $0) }
         case "bytes":
             guard focus == .memory, let ceiling = card.fixedCeiling, ceiling > 0 else { return nil }
             return { String(format: "%.0f%%", monitorMetricPercent($0, ceiling: ceiling)) }

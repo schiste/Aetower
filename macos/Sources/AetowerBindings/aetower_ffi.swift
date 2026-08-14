@@ -5107,6 +5107,12 @@ public struct HostSnapshot {
     public var memoryTotalBytes: UInt64
     public var swapUsedBytes: UInt64
     public var compressedMemoryBytes: UInt64
+    public var memoryPageinBps: UInt64
+    public var memoryPageoutBps: UInt64
+    public var memorySwapinBps: UInt64
+    public var memorySwapoutBps: UInt64
+    public var memoryCompressionBps: UInt64
+    public var memoryDecompressionBps: UInt64
     public var diskReadBps: UInt64
     public var diskWriteBps: UInt64
     public var networkReceiveBps: UInt64
@@ -5136,12 +5142,18 @@ public struct HostSnapshot {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, bootSession: BootSessionSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot], disks: [DiskHealthSnapshot], bluetoothDevices: [BluetoothDeviceBattery], perCoreCpu: [CoreLoad]) {
+    public init(cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, swapUsedBytes: UInt64, compressedMemoryBytes: UInt64, memoryPageinBps: UInt64, memoryPageoutBps: UInt64, memorySwapinBps: UInt64, memorySwapoutBps: UInt64, memoryCompressionBps: UInt64, memoryDecompressionBps: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, thermalState: ThermalState, onBattery: Bool, batteryChargePercent: UInt8?, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentFriction: Float, aiAgentCount: UInt32, gpuPercent: Float, anePercent: Float, gpuMemoryBytes: UInt64, gpuTemperatureCelsius: Float?, fans: [FanReading], cpuTemperatures: [TemperatureReading], powerReadings: [PowerReading], batteryHealth: BatteryHealthSnapshot?, bootSession: BootSessionSnapshot?, networkInterfaces: [NetworkInterfaceSnapshot], disks: [DiskHealthSnapshot], bluetoothDevices: [BluetoothDeviceBattery], perCoreCpu: [CoreLoad]) {
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
         self.memoryTotalBytes = memoryTotalBytes
         self.swapUsedBytes = swapUsedBytes
         self.compressedMemoryBytes = compressedMemoryBytes
+        self.memoryPageinBps = memoryPageinBps
+        self.memoryPageoutBps = memoryPageoutBps
+        self.memorySwapinBps = memorySwapinBps
+        self.memorySwapoutBps = memorySwapoutBps
+        self.memoryCompressionBps = memoryCompressionBps
+        self.memoryDecompressionBps = memoryDecompressionBps
         self.diskReadBps = diskReadBps
         self.diskWriteBps = diskWriteBps
         self.networkReceiveBps = networkReceiveBps
@@ -5191,6 +5203,24 @@ extension HostSnapshot: Equatable, Hashable {
             return false
         }
         if lhs.compressedMemoryBytes != rhs.compressedMemoryBytes {
+            return false
+        }
+        if lhs.memoryPageinBps != rhs.memoryPageinBps {
+            return false
+        }
+        if lhs.memoryPageoutBps != rhs.memoryPageoutBps {
+            return false
+        }
+        if lhs.memorySwapinBps != rhs.memorySwapinBps {
+            return false
+        }
+        if lhs.memorySwapoutBps != rhs.memorySwapoutBps {
+            return false
+        }
+        if lhs.memoryCompressionBps != rhs.memoryCompressionBps {
+            return false
+        }
+        if lhs.memoryDecompressionBps != rhs.memoryDecompressionBps {
             return false
         }
         if lhs.diskReadBps != rhs.diskReadBps {
@@ -5280,6 +5310,12 @@ extension HostSnapshot: Equatable, Hashable {
         hasher.combine(memoryTotalBytes)
         hasher.combine(swapUsedBytes)
         hasher.combine(compressedMemoryBytes)
+        hasher.combine(memoryPageinBps)
+        hasher.combine(memoryPageoutBps)
+        hasher.combine(memorySwapinBps)
+        hasher.combine(memorySwapoutBps)
+        hasher.combine(memoryCompressionBps)
+        hasher.combine(memoryDecompressionBps)
         hasher.combine(diskReadBps)
         hasher.combine(diskWriteBps)
         hasher.combine(networkReceiveBps)
@@ -5323,6 +5359,12 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
                 memoryTotalBytes: FfiConverterUInt64.read(from: &buf),
                 swapUsedBytes: FfiConverterUInt64.read(from: &buf),
                 compressedMemoryBytes: FfiConverterUInt64.read(from: &buf),
+                memoryPageinBps: FfiConverterUInt64.read(from: &buf),
+                memoryPageoutBps: FfiConverterUInt64.read(from: &buf),
+                memorySwapinBps: FfiConverterUInt64.read(from: &buf),
+                memorySwapoutBps: FfiConverterUInt64.read(from: &buf),
+                memoryCompressionBps: FfiConverterUInt64.read(from: &buf),
+                memoryDecompressionBps: FfiConverterUInt64.read(from: &buf),
                 diskReadBps: FfiConverterUInt64.read(from: &buf),
                 diskWriteBps: FfiConverterUInt64.read(from: &buf),
                 networkReceiveBps: FfiConverterUInt64.read(from: &buf),
@@ -5358,6 +5400,12 @@ public struct FfiConverterTypeHostSnapshot: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.memoryTotalBytes, into: &buf)
         FfiConverterUInt64.write(value.swapUsedBytes, into: &buf)
         FfiConverterUInt64.write(value.compressedMemoryBytes, into: &buf)
+        FfiConverterUInt64.write(value.memoryPageinBps, into: &buf)
+        FfiConverterUInt64.write(value.memoryPageoutBps, into: &buf)
+        FfiConverterUInt64.write(value.memorySwapinBps, into: &buf)
+        FfiConverterUInt64.write(value.memorySwapoutBps, into: &buf)
+        FfiConverterUInt64.write(value.memoryCompressionBps, into: &buf)
+        FfiConverterUInt64.write(value.memoryDecompressionBps, into: &buf)
         FfiConverterUInt64.write(value.diskReadBps, into: &buf)
         FfiConverterUInt64.write(value.diskWriteBps, into: &buf)
         FfiConverterUInt64.write(value.networkReceiveBps, into: &buf)

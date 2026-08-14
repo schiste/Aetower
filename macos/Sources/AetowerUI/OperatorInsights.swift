@@ -83,17 +83,28 @@ func buildHostIncident(
 
     if memoryBand >= wakeupBand && memoryBand >= storeBand {
         let memoryLeaders = snapshot.entities
-            .sorted { entityEffectiveMemoryBytes($0) > entityEffectiveMemoryBytes($1) }
+            .sorted {
+                if $0.friction.pressureScore != $1.friction.pressureScore {
+                    return $0.friction.pressureScore > $1.friction.pressureScore
+                }
+                if $0.metrics.diskReadBps != $1.metrics.diskReadBps {
+                    return $0.metrics.diskReadBps > $1.metrics.diskReadBps
+                }
+                return $0.metrics.memoryResidentBytes > $1.metrics.memoryResidentBytes
+            }
             .prefix(3)
             .map(\.displayName)
             .joined(separator: ", ")
+        let pagingBps = host.memoryPageinBps + host.memoryPageoutBps
+        let swapIOBps = host.memorySwapinBps + host.memorySwapoutBps
+        let compressorBps = host.memoryCompressionBps + host.memoryDecompressionBps
         return HostIncidentSummary(
             severity: memoryBand,
-            title: "Machine under memory pressure",
-            summary: "\(formatBytes(host.memoryUsedBytes)) used of \(formatBytes(host.memoryTotalBytes)), \(formatBytes(host.compressedMemoryBytes)) compressed, \(formatBytes(host.swapUsedBytes)) swap.",
+            title: "Memory contention is affecting performance",
+            summary: "Impact \(String(format: "%.0f/100", hostMemoryPerformanceImpactScore(host))): paging \(formatRate(pagingBps)), swap I/O \(formatRate(swapIOBps)), compressor \(formatRate(compressorBps)).",
             action: memoryLeaders.isEmpty
-                ? "Reduce the top memory-heavy groups first."
-                : "Reduce the top memory-heavy groups first: \(memoryLeaders)."
+                ? "Reduce the entities actively reading and holding resident memory first."
+                : "Start with the current contention leaders: \(memoryLeaders)."
         )
     }
 
@@ -501,17 +512,14 @@ private func capabilityHealthDetail(_ capabilities: [CapabilitySnapshot]) -> Str
 }
 
 private func operatorHostPressureBand(_ host: HostSnapshot) -> OperatorSeverity {
-    let totalBytes = max(Double(host.memoryTotalBytes), 1)
-    let usedRatio = Double(host.memoryUsedBytes) / totalBytes
-    let compressedRatio = Double(host.compressedMemoryBytes) / totalBytes
-    let swapRatio = Double(host.swapUsedBytes) / totalBytes
-    if usedRatio >= 0.88 || compressedRatio >= 0.12 || swapRatio >= 0.08 {
+    switch hostPressureBand(host) {
+    case .severe:
         return .critical
-    }
-    if usedRatio >= 0.75 || compressedRatio >= 0.05 || swapRatio >= 0.02 {
+    case .elevated:
         return .warning
+    case .nominal:
+        return .info
     }
-    return .info
 }
 
 private func operatorWakeupBand(_ wakeupsPerSecond: Float) -> OperatorSeverity {

@@ -2578,6 +2578,19 @@ fn ui_metric_cards_from_snapshot(
     } else {
         snapshot.host.memory_used_bytes as f64 / snapshot.host.memory_total_bytes as f64
     };
+    let memory_impact = model::host_memory_performance_impact_score(&snapshot.host);
+    let paging_bps = snapshot
+        .host
+        .memory_pagein_bps
+        .saturating_add(snapshot.host.memory_pageout_bps);
+    let swap_io_bps = snapshot
+        .host
+        .memory_swapin_bps
+        .saturating_add(snapshot.host.memory_swapout_bps);
+    let compressor_bps = snapshot
+        .host
+        .memory_compression_bps
+        .saturating_add(snapshot.host.memory_decompression_bps);
     vec![
         UiMetricCard {
             id: "friction".to_owned(),
@@ -2603,19 +2616,24 @@ fn ui_metric_cards_from_snapshot(
         },
         UiMetricCard {
             id: "memory".to_owned(),
-            title: "Memory".to_owned(),
-            value: snapshot.host.memory_used_bytes as f64,
-            unit: "bytes".to_owned(),
-            display_value: format_bytes(snapshot.host.memory_used_bytes),
+            title: "Memory impact".to_owned(),
+            value: f64::from(memory_impact),
+            unit: "score".to_owned(),
+            display_value: format!("{memory_impact:.0}/100"),
             detail: format!(
-                "{:.0}% of {}",
+                "paging {} · swap I/O {} · compressor {} · {:.0}% used",
+                format_bps(paging_bps),
+                format_bps(swap_io_bps),
+                format_bps(compressor_bps),
                 memory_ratio * 100.0,
-                format_bytes(snapshot.host.memory_total_bytes)
             ),
-            severity: severity_for_percent(memory_ratio * 100.0, 75.0, 90.0),
-            samples: resample_u64_to_f64(&snapshot.host_trend.memory_used_bytes, trend_points),
-            fixed_ceiling: (snapshot.host.memory_total_bytes > 0)
-                .then_some(snapshot.host.memory_total_bytes as f64),
+            severity: severity_for_percent(
+                f64::from(memory_impact),
+                f64::from(model::MEMORY_IMPACT_ELEVATED_SCORE),
+                f64::from(model::MEMORY_IMPACT_SEVERE_SCORE),
+            ),
+            samples: resample_f32_to_f64(&snapshot.host_trend.memory_pressure_score, trend_points),
+            fixed_ceiling: Some(100.0),
         },
         UiMetricCard {
             id: "disk".to_owned(),
@@ -2889,6 +2907,34 @@ mod ui_snapshot_tests {
         assert_eq!(ui_snapshot.total_entity_count, 3);
         assert_eq!(ui_snapshot.returned_entity_count, 2);
         assert_eq!(ui_snapshot.total_process_count, 6);
+    }
+
+    #[test]
+    fn memory_card_reports_live_impact_instead_of_used_capacity() {
+        let snapshot = model::SystemSnapshot {
+            host: model::HostSnapshot {
+                memory_total_bytes: 16 * 1_073_741_824,
+                memory_used_bytes: 14 * 1_073_741_824,
+                compressed_memory_bytes: 7 * 1_073_741_824,
+                swap_used_bytes: 20 * 1_073_741_824,
+                memory_swapin_bps: 16 * 1_048_576,
+                memory_decompression_bps: 128 * 1_048_576,
+                ..model::HostSnapshot::default()
+            },
+            ..model::SystemSnapshot::default()
+        };
+
+        let cards = ui_metric_cards_from_snapshot(&snapshot, 0.0, 16);
+        let memory = cards
+            .iter()
+            .find(|card| card.id == "memory")
+            .unwrap_or_else(|| panic!("memory card"));
+
+        assert_eq!(memory.title, "Memory impact");
+        assert_eq!(memory.unit, "score");
+        assert!(memory.display_value.ends_with("/100"));
+        assert!(memory.detail.contains("swap I/O"));
+        assert_eq!(memory.fixed_ceiling, Some(100.0));
     }
 
     #[test]
