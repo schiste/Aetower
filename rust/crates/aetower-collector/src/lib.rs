@@ -134,6 +134,18 @@ pub struct RawHostSample {
     pub swap_used_bytes: u64,
     #[serde(default)]
     pub compressed_memory_bytes: u64,
+    #[serde(default)]
+    pub memory_pagein_bps: u64,
+    #[serde(default)]
+    pub memory_pageout_bps: u64,
+    #[serde(default)]
+    pub memory_swapin_bps: u64,
+    #[serde(default)]
+    pub memory_swapout_bps: u64,
+    #[serde(default)]
+    pub memory_compression_bps: u64,
+    #[serde(default)]
+    pub memory_decompression_bps: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,
@@ -226,6 +238,39 @@ struct ProcessCounterSample {
     counters_sampled_at: Option<std::time::Instant>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct HostVmRates {
+    pagein_bps: u64,
+    pageout_bps: u64,
+    swapin_bps: u64,
+    swapout_bps: u64,
+    compression_bps: u64,
+    decompression_bps: u64,
+}
+
+impl HostVmRates {
+    fn between(
+        current: platform::HostVmCounters,
+        previous: platform::HostVmCounters,
+        elapsed_seconds: f64,
+    ) -> Self {
+        let rate = |current_pages: u64, previous_pages: u64| {
+            let bytes = current_pages
+                .saturating_sub(previous_pages)
+                .saturating_mul(current.page_size_bytes);
+            (bytes as f64 / elapsed_seconds.max(0.001)) as u64
+        };
+        Self {
+            pagein_bps: rate(current.pageins, previous.pageins),
+            pageout_bps: rate(current.pageouts, previous.pageouts),
+            swapin_bps: rate(current.swapins, previous.swapins),
+            swapout_bps: rate(current.swapouts, previous.swapouts),
+            compression_bps: rate(current.compressions, previous.compressions),
+            decompression_bps: rate(current.decompressions, previous.decompressions),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ProcessIdentitySample {
     start_time_millis: u64,
@@ -313,6 +358,9 @@ pub struct Collector {
     /// Cumulative per-core CPU ticks from the previous sample, used to derive
     /// per-core load deltas. Empty until the first `host_processor_info` call.
     previous_core_ticks: Vec<platform::CoreTicks>,
+    /// Cumulative host VM counters from the previous tick. Deltas reveal live
+    /// paging/compressor churn; absolute swap allocation cannot do that.
+    previous_vm_counters: Option<platform::HostVmCounters>,
     /// Cached (performance, efficiency) logical-core counts from sysctl. `(0,0)`
     /// when unavailable (Intel) — cores are then reported as `Unknown`.
     core_perflevels: Option<(usize, usize)>,
@@ -347,6 +395,7 @@ impl Collector {
             first_network_tick: true,
             last_collect_at: None,
             previous_core_ticks: Vec::new(),
+            previous_vm_counters: None,
             core_perflevels: None,
         }
     }
@@ -772,7 +821,17 @@ impl Collector {
             )
         };
 
-        let compressed_memory_bytes = platform::compressed_memory_bytes().unwrap_or(0);
+        let current_vm_counters = platform::memory_counters();
+        let vm_rates = current_vm_counters
+            .zip(self.previous_vm_counters)
+            .map(|(current, previous)| HostVmRates::between(current, previous, elapsed_seconds))
+            .unwrap_or_default();
+        if current_vm_counters.is_some() {
+            self.previous_vm_counters = current_vm_counters;
+        }
+        let compressed_memory_bytes = current_vm_counters
+            .map(|sample| sample.compressed_memory_bytes)
+            .unwrap_or(0);
         let host_wakeups_per_second = processes
             .iter()
             .fold(0.0f32, |total, process| total + process.wakeups_per_second);
@@ -784,6 +843,12 @@ impl Collector {
             memory_total_bytes: self.system.total_memory(),
             swap_used_bytes: self.system.used_swap(),
             compressed_memory_bytes,
+            memory_pagein_bps: vm_rates.pagein_bps,
+            memory_pageout_bps: vm_rates.pageout_bps,
+            memory_swapin_bps: vm_rates.swapin_bps,
+            memory_swapout_bps: vm_rates.swapout_bps,
+            memory_compression_bps: vm_rates.compression_bps,
+            memory_decompression_bps: vm_rates.decompression_bps,
             disk_read_bps: host_disk_read_bps,
             disk_write_bps: host_disk_write_bps,
             network_receive_bps: host_network_receive_bps,
@@ -1204,6 +1269,18 @@ mod platform {
         pub physical_footprint_bytes: u64,
     }
 
+    #[derive(Clone, Copy)]
+    pub struct HostVmCounters {
+        pub compressed_memory_bytes: u64,
+        pub page_size_bytes: u64,
+        pub pageins: u64,
+        pub pageouts: u64,
+        pub swapins: u64,
+        pub swapouts: u64,
+        pub compressions: u64,
+        pub decompressions: u64,
+    }
+
     /// Read wakeup count and cumulative energy (nanojoules) for a
     /// process in a single `proc_pid_rusage` call.
     ///
@@ -1312,7 +1389,10 @@ mod platform {
         }
     }
 
-    pub fn compressed_memory_bytes() -> Option<u64> {
+    /// Read one coherent VM counter sample. Keeping the cumulative counters
+    /// from the same `host_statistics64` call avoids mixing slightly different
+    /// instants when deriving traffic rates in the collector.
+    pub fn memory_counters() -> Option<HostVmCounters> {
         unsafe {
             let host = mach_host_self();
             let mut page_size = 0u32;
@@ -1328,8 +1408,17 @@ mod platform {
                 &mut stats as *mut VmStatistics64 as *mut i32,
                 &mut count as *mut u32,
             );
-            (result == KERN_SUCCESS)
-                .then_some((stats.compressor_page_count as u64).saturating_mul(page_size as u64))
+            (result == KERN_SUCCESS).then_some(HostVmCounters {
+                compressed_memory_bytes: (stats.compressor_page_count as u64)
+                    .saturating_mul(page_size as u64),
+                page_size_bytes: page_size as u64,
+                pageins: stats.pageins,
+                pageouts: stats.pageouts,
+                swapins: stats.swapins,
+                swapouts: stats.swapouts,
+                compressions: stats.compressions,
+                decompressions: stats.decompressions,
+            })
         }
     }
 
@@ -2872,6 +2961,18 @@ mod platform {
         pub physical_footprint_bytes: u64,
     }
 
+    #[derive(Clone, Copy)]
+    pub struct HostVmCounters {
+        pub compressed_memory_bytes: u64,
+        pub page_size_bytes: u64,
+        pub pageins: u64,
+        pub pageouts: u64,
+        pub swapins: u64,
+        pub swapouts: u64,
+        pub compressions: u64,
+        pub decompressions: u64,
+    }
+
     pub fn process_counters(_pid: u32) -> Option<ProcessRusageCounters> {
         None
     }
@@ -2901,7 +3002,7 @@ mod platform {
         None
     }
 
-    pub fn compressed_memory_bytes() -> Option<u64> {
+    pub fn memory_counters() -> Option<HostVmCounters> {
         None
     }
 
@@ -2917,9 +3018,41 @@ mod platform {
 #[cfg(test)]
 mod top_level_tests {
     use super::{
-        NetworkInterfaceIdentitySample, build_network_interface_snapshots, process_refresh_kind,
+        HostVmRates, NetworkInterfaceIdentitySample, build_network_interface_snapshots, platform,
+        process_refresh_kind,
     };
     use sysinfo::{Networks, UpdateKind};
+
+    #[test]
+    fn vm_counter_deltas_become_byte_rates() {
+        let previous = platform::HostVmCounters {
+            compressed_memory_bytes: 0,
+            page_size_bytes: 16_384,
+            pageins: 100,
+            pageouts: 200,
+            swapins: 300,
+            swapouts: 400,
+            compressions: 500,
+            decompressions: 600,
+        };
+        let current = platform::HostVmCounters {
+            pageins: 104,
+            pageouts: 202,
+            swapins: 301,
+            swapouts: 403,
+            compressions: 505,
+            decompressions: 608,
+            ..previous
+        };
+
+        let rates = HostVmRates::between(current, previous, 2.0);
+        assert_eq!(rates.pagein_bps, 32_768);
+        assert_eq!(rates.pageout_bps, 16_384);
+        assert_eq!(rates.swapin_bps, 8_192);
+        assert_eq!(rates.swapout_bps, 24_576);
+        assert_eq!(rates.compression_bps, 40_960);
+        assert_eq!(rates.decompression_bps, 65_536);
+    }
 
     /// Regression: the first `collect()` call on a freshly-constructed
     /// `Collector` must not report non-zero per-interface bps. Before

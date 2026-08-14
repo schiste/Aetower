@@ -226,6 +226,21 @@ pub struct HostSnapshot {
     pub swap_used_bytes: u64,
     #[serde(default)]
     pub compressed_memory_bytes: u64,
+    /// Live virtual-memory traffic, derived from macOS host VM counter deltas.
+    /// Unlike `swap_used_bytes`, these rates describe work happening now and
+    /// therefore correlate with interactive stalls.
+    #[serde(default)]
+    pub memory_pagein_bps: u64,
+    #[serde(default)]
+    pub memory_pageout_bps: u64,
+    #[serde(default)]
+    pub memory_swapin_bps: u64,
+    #[serde(default)]
+    pub memory_swapout_bps: u64,
+    #[serde(default)]
+    pub memory_compression_bps: u64,
+    #[serde(default)]
+    pub memory_decompression_bps: u64,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,
@@ -344,7 +359,15 @@ pub fn host_memory_used_ratio(host: &HostSnapshot) -> f32 {
     }
 }
 
-pub fn host_memory_pressure_score(host: &HostSnapshot) -> f32 {
+/// A 0-100 estimate of the memory subsystem's impact on responsiveness now.
+///
+/// Most of the score comes from live paging and compressor traffic. Retained
+/// memory, compressed memory, and allocated swap are deliberately weak context
+/// signals: they can remain high long after the workload that created them has
+/// stopped affecting interactivity.
+pub fn host_memory_performance_impact_score(host: &HostSnapshot) -> f32 {
+    const MIB: f32 = 1_048_576.0;
+
     let used_ratio = host_memory_used_ratio(host).min(1.0);
     let compressed_ratio = if host.memory_total_bytes == 0 {
         0.0
@@ -357,23 +380,38 @@ pub fn host_memory_pressure_score(host: &HostSnapshot) -> f32 {
         host.swap_used_bytes as f32 / host.memory_total_bytes as f32
     };
 
-    (used_ratio * 55.0 + compressed_ratio.min(1.0) * 25.0 + swap_ratio.min(1.0) * 20.0).min(100.0)
+    let used_headroom = ((used_ratio - 0.70) / 0.25).clamp(0.0, 1.0) * 15.0;
+    let retained_compressed = (compressed_ratio / 0.25).clamp(0.0, 1.0) * 5.0;
+    let retained_swap = (swap_ratio / 2.0).clamp(0.0, 1.0) * 5.0;
+
+    let pageins = (host.memory_pagein_bps as f32 / (256.0 * MIB)).min(1.0) * 10.0;
+    let pageouts = (host.memory_pageout_bps as f32 / (64.0 * MIB)).min(1.0) * 10.0;
+    let swapins = (host.memory_swapin_bps as f32 / (16.0 * MIB)).min(1.0) * 20.0;
+    let swapouts = (host.memory_swapout_bps as f32 / (16.0 * MIB)).min(1.0) * 10.0;
+    let decompressions = (host.memory_decompression_bps as f32 / (128.0 * MIB)).min(1.0) * 15.0;
+    let compressions = (host.memory_compression_bps as f32 / (128.0 * MIB)).min(1.0) * 10.0;
+
+    (used_headroom
+        + retained_compressed
+        + retained_swap
+        + pageins
+        + pageouts
+        + swapins
+        + swapouts
+        + decompressions
+        + compressions)
+        .min(100.0)
+}
+
+/// Compatibility name retained for persisted trend fields and existing API
+/// consumers. The value now represents measured performance impact, not a
+/// synthetic occupancy percentage.
+pub fn host_memory_pressure_score(host: &HostSnapshot) -> f32 {
+    host_memory_performance_impact_score(host)
 }
 
 pub fn host_memory_pressure_factor(host: &HostSnapshot) -> f32 {
-    let used_ratio = host_memory_used_ratio(host);
-    let compressed_ratio = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        host.compressed_memory_bytes as f32 / host.memory_total_bytes as f32
-    };
-    let swap_ratio = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        host.swap_used_bytes as f32 / host.memory_total_bytes as f32
-    };
-
-    (used_ratio * 0.7 + compressed_ratio * 1.5 + swap_ratio * 2.0).min(1.0)
+    host_memory_performance_impact_score(host) / 100.0
 }
 
 pub fn machine_friction_score(host: &HostSnapshot) -> f32 {
@@ -1338,5 +1376,38 @@ mod tests {
     #[test]
     fn reputation_verdict_defaults_to_unknown() {
         assert_eq!(ReputationVerdict::default(), ReputationVerdict::Unknown);
+    }
+
+    #[test]
+    fn memory_impact_is_low_for_retained_but_idle_memory() {
+        let host = HostSnapshot {
+            memory_total_bytes: 16 * 1_073_741_824,
+            memory_used_bytes: 14 * 1_073_741_824,
+            compressed_memory_bytes: 7 * 1_073_741_824,
+            swap_used_bytes: 20 * 1_073_741_824,
+            ..HostSnapshot::default()
+        };
+
+        let score = host_memory_performance_impact_score(&host);
+        assert!(score < 25.0, "idle retained memory scored {score}");
+    }
+
+    #[test]
+    fn memory_impact_tracks_live_vm_churn() {
+        let host = HostSnapshot {
+            memory_total_bytes: 16 * 1_073_741_824,
+            memory_used_bytes: 14 * 1_073_741_824,
+            compressed_memory_bytes: 7 * 1_073_741_824,
+            swap_used_bytes: 20 * 1_073_741_824,
+            memory_swapin_bps: 16 * 1_048_576,
+            memory_swapout_bps: 8 * 1_048_576,
+            memory_decompression_bps: 128 * 1_048_576,
+            memory_compression_bps: 64 * 1_048_576,
+            ..HostSnapshot::default()
+        };
+
+        let score = host_memory_performance_impact_score(&host);
+        assert!(score >= 60.0, "active VM churn only scored {score}");
+        assert_eq!(host_memory_pressure_factor(&host), score / 100.0);
     }
 }
