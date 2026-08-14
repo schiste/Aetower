@@ -11,17 +11,26 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         .network_receive_bps
         .saturating_add(host.network_send_bps)
         .max(1) as f32;
+    let host_disk_read_bps = host.disk_read_bps.max(1) as f32;
     let host_pressure_factor = pressure_factor(host);
     let thermal_multiplier = thermal_multiplier(host.thermal_state);
     let battery_multiplier = if host.on_battery { 1.08 } else { 1.0 };
 
     for entity in entities.iter_mut() {
+        let resident_memory_bytes = entity.metrics.memory_resident_bytes as f32;
         let effective_memory_bytes = entity_effective_memory_bytes(&entity.metrics) as f32;
+        let retained_memory_bytes = (effective_memory_bytes - resident_memory_bytes).max(0.0);
+        let resident_memory_share = (resident_memory_bytes / total_memory).min(1.0);
+        let retained_memory_share = (retained_memory_bytes / total_memory).min(1.0);
         let cpu_score = (entity.metrics.cpu_percent / 100.0).min(2.0) * 36.0;
-        let memory_score = (effective_memory_bytes / total_memory).min(1.0) * 26.0;
+        // Resident memory is the entity's live working set. Charged footprint
+        // above that remains useful context, but receives much less weight
+        // because it can be compressed or swapped out and completely idle.
+        let memory_score = resident_memory_share * 20.0 + retained_memory_share * 6.0;
         let disk_mib =
             (entity.metrics.disk_read_bps + entity.metrics.disk_write_bps) as f32 / 1_048_576.0;
         let disk_score = disk_mib.min(20.0) * 1.2;
+        let disk_read_share = (entity.metrics.disk_read_bps as f32 / host_disk_read_bps).min(1.0);
 
         let network_bps = entity
             .metrics
@@ -32,7 +41,13 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         let network_score = ((network_mib / 8.0).min(1.0) * 10.0) + (network_share * 8.0);
 
         let wakeups_score = (entity.metrics.wakeups_per_second / 500.0).min(1.0) * 8.0;
-        let pressure_score = host_pressure_factor * (effective_memory_bytes / total_memory) * 20.0;
+        // macOS exposes host-wide VM traffic, not per-process swap counters.
+        // During real host churn, current disk reads are the best causal proxy;
+        // resident memory comes next, while dormant charged footprint is only a
+        // weak tie-breaker. With no live host impact this term becomes zero.
+        let contention_share =
+            disk_read_share * 0.65 + resident_memory_share * 0.25 + retained_memory_share * 0.10;
+        let pressure_score = host_pressure_factor * contention_share.min(1.0) * 40.0;
         let foreground_bonus = if entity.metrics.is_foreground {
             10.0
         } else {
@@ -66,16 +81,16 @@ pub fn apply(host: &HostSnapshot, entities: &mut [EntitySnapshot]) {
         if cpu_score > 14.0 {
             reasons.push(format!("high CPU {:.1}%", entity.metrics.cpu_percent));
         }
-        if memory_score > 8.0 {
+        if resident_memory_share >= 0.10 {
             reasons.push(format!(
-                "high memory {:.1} MB",
-                effective_memory_bytes / 1_048_576.0
+                "large resident working set {:.1} GB",
+                resident_memory_bytes / 1_073_741_824.0
             ));
         }
         if pressure_score > 4.0 && host_pressure_factor > 0.15 {
             reasons.push(format!(
-                "memory pressure with {:.1} GB compressed",
-                host.compressed_memory_bytes as f32 / 1_073_741_824.0
+                "active memory contention: {:.1} MiB/s reads while host VM churns",
+                entity.metrics.disk_read_bps as f32 / 1_048_576.0
             ));
         }
         if disk_score > 7.0 {
@@ -202,30 +217,30 @@ fn friction_contributors(
     if memory_score > 0.0 {
         contributors.push(FrictionContributor {
             key: "memory".to_owned(),
-            label: "Memory footprint".to_owned(),
+            label: "Memory working set".to_owned(),
             score: memory_score,
             detail: format!(
-                "{:.1} MB charged memory, {:.1}% of host memory",
-                entity_effective_memory_bytes(&entity.metrics) as f32 / 1_048_576.0,
-                if host.memory_total_bytes == 0 {
-                    0.0
-                } else {
-                    (entity_effective_memory_bytes(&entity.metrics) as f32
-                        / host.memory_total_bytes as f32)
-                        * 100.0
-                }
+                "{:.1} GB resident now; {:.1} GB total charged footprint",
+                entity.metrics.memory_resident_bytes as f32 / 1_073_741_824.0,
+                entity_effective_memory_bytes(&entity.metrics) as f32 / 1_073_741_824.0,
             ),
         });
     }
     if pressure_score > 0.0 {
         contributors.push(FrictionContributor {
             key: "pressure".to_owned(),
-            label: "Memory pressure".to_owned(),
+            label: "Memory contention".to_owned(),
             score: pressure_score,
             detail: format!(
-                "{:.1} GB compressed, {:.1} GB swap in use on the host",
-                host.compressed_memory_bytes as f32 / 1_073_741_824.0,
-                host.swap_used_bytes as f32 / 1_073_741_824.0
+                "Host paging {:.1} MiB/s, swapping {:.1} MiB/s, compressor {:.1} MiB/s; entity reads {:.1} MiB/s",
+                host.memory_pagein_bps.saturating_add(host.memory_pageout_bps) as f32
+                    / 1_048_576.0,
+                host.memory_swapin_bps.saturating_add(host.memory_swapout_bps) as f32
+                    / 1_048_576.0,
+                host.memory_compression_bps
+                    .saturating_add(host.memory_decompression_bps) as f32
+                    / 1_048_576.0,
+                entity.metrics.disk_read_bps as f32 / 1_048_576.0,
             ),
         });
     }
@@ -315,12 +330,23 @@ fn recommendations_for_entity(
     }
 
     if entity.friction.pressure_score > 4.0 || entity.friction.memory_score > 8.0 {
+        let paging_mib = host
+            .memory_pagein_bps
+            .saturating_add(host.memory_pageout_bps)
+            .saturating_add(host.memory_swapin_bps)
+            .saturating_add(host.memory_swapout_bps) as f32
+            / 1_048_576.0;
+        let compressor_mib = host
+            .memory_compression_bps
+            .saturating_add(host.memory_decompression_bps) as f32
+            / 1_048_576.0;
         recommendations.push(Recommendation {
-            title: "Relieve memory pressure".to_owned(),
+            title: "Reduce active memory contention".to_owned(),
             detail: format!(
-                "This entity is a meaningful share of memory while the Mac is carrying {:.1} GB compressed and {:.1} GB swap. Close heavy tabs, large workspaces, or restart the app if memory keeps climbing.",
-                host.compressed_memory_bytes as f32 / 1_073_741_824.0,
-                host.swap_used_bytes as f32 / 1_073_741_824.0
+                "The host is moving {:.1} MiB/s through paging/swap and {:.1} MiB/s through the compressor while this entity reads {:.1} MiB/s. Reduce its busiest component first; retained swap alone is not treated as proof of current impact.",
+                paging_mib,
+                compressor_mib,
+                entity.metrics.disk_read_bps as f32 / 1_048_576.0,
             ),
             ..Default::default()
         });
@@ -546,6 +572,9 @@ mod tests {
             memory_total_bytes: 8 * 1024 * 1024 * 1024,
             compressed_memory_bytes: 4 * 1024 * 1024 * 1024,
             swap_used_bytes: 2 * 1024 * 1024 * 1024,
+            memory_swapin_bps: 16 * 1024 * 1024,
+            memory_decompression_bps: 128 * 1024 * 1024,
+            disk_read_bps: 20 * 1024 * 1024,
             network_receive_bps: 20 * 1024 * 1024,
             network_send_bps: 2 * 1024 * 1024,
             ..HostSnapshot::default()
@@ -579,14 +608,14 @@ mod tests {
                 .friction
                 .reasons
                 .iter()
-                .any(|reason| reason.contains("high memory"))
+                .any(|reason| reason.contains("resident working set"))
         );
         assert!(
             entities[0]
                 .friction
                 .reasons
                 .iter()
-                .any(|reason| reason.contains("memory pressure"))
+                .any(|reason| reason.contains("active memory contention"))
         );
         assert!(
             entities[0]
@@ -626,6 +655,46 @@ mod tests {
                 .any(|contributor| contributor.key == "network")
         );
         assert!(!entities[0].recommendations.is_empty());
+    }
+
+    #[test]
+    fn active_reader_outranks_large_dormant_footprint_during_vm_churn() {
+        let host = HostSnapshot {
+            memory_total_bytes: 16 * 1024 * 1024 * 1024,
+            memory_used_bytes: 14 * 1024 * 1024 * 1024,
+            compressed_memory_bytes: 6 * 1024 * 1024 * 1024,
+            swap_used_bytes: 18 * 1024 * 1024 * 1024,
+            memory_swapin_bps: 16 * 1024 * 1024,
+            memory_decompression_bps: 128 * 1024 * 1024,
+            disk_read_bps: 40 * 1024 * 1024,
+            ..HostSnapshot::default()
+        };
+        let dormant = entity(
+            "dormant",
+            "Dormant footprint",
+            AggregateMetrics {
+                memory_resident_bytes: 512 * 1024 * 1024,
+                memory_physical_footprint_bytes: 12 * 1024 * 1024 * 1024,
+                ..AggregateMetrics::default()
+            },
+        );
+        let active = entity(
+            "active",
+            "Active reader",
+            AggregateMetrics {
+                memory_resident_bytes: 2 * 1024 * 1024 * 1024,
+                memory_physical_footprint_bytes: 3 * 1024 * 1024 * 1024,
+                disk_read_bps: 40 * 1024 * 1024,
+                ..AggregateMetrics::default()
+            },
+        );
+        let mut entities = vec![dormant, active];
+
+        apply(&host, &mut entities);
+
+        assert_eq!(entities[0].entity_id, "active");
+        assert!(entities[0].friction.pressure_score > entities[1].friction.pressure_score);
+        assert!(entities[1].friction.memory_score < 6.0);
     }
 
     /// Regression: when the kernel reports real per-process energy
