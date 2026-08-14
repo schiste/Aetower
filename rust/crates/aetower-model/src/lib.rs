@@ -359,6 +359,9 @@ pub fn host_memory_used_ratio(host: &HostSnapshot) -> f32 {
     }
 }
 
+pub const MEMORY_IMPACT_ELEVATED_SCORE: f32 = 30.0;
+pub const MEMORY_IMPACT_SEVERE_SCORE: f32 = 65.0;
+
 /// A 0-100 estimate of the memory subsystem's impact on responsiveness now.
 ///
 /// Most of the score comes from live paging and compressor traffic. Retained
@@ -416,17 +419,7 @@ pub fn host_memory_pressure_factor(host: &HostSnapshot) -> f32 {
 
 pub fn machine_friction_score(host: &HostSnapshot) -> f32 {
     let cpu_score = host.cpu_percent.min(100.0) * 0.5;
-    let memory_score = host_memory_used_ratio(host).min(1.0) * 35.0;
-    let swap_score = if host.swap_used_bytes == 0 {
-        0.0
-    } else {
-        ((host.swap_used_bytes as f32 / 1_073_741_824.0).min(8.0) / 8.0) * 15.0
-    };
-    let compressed_score = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        ((host.compressed_memory_bytes as f32 / host.memory_total_bytes as f32).min(1.0)) * 12.0
-    };
+    let memory_score = host_memory_performance_impact_score(host) * 0.35;
     let network_score = ((host
         .network_receive_bps
         .saturating_add(host.network_send_bps)) as f32
@@ -434,26 +427,14 @@ pub fn machine_friction_score(host: &HostSnapshot) -> f32 {
         .min(1.0)
         * 10.0;
     let wakeups_score = (host.wakeups_per_second / 500.0).min(1.0) * 8.0;
-    (cpu_score + memory_score + swap_score + compressed_score + network_score + wakeups_score)
-        .min(100.0)
+    (cpu_score + memory_score + network_score + wakeups_score).min(100.0)
 }
 
 pub fn host_pressure_band(host: &HostSnapshot) -> HostPressureBand {
-    let used_ratio = host_memory_used_ratio(host);
-    let compressed_ratio = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        host.compressed_memory_bytes as f32 / host.memory_total_bytes as f32
-    };
-    let swap_ratio = if host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        host.swap_used_bytes as f32 / host.memory_total_bytes as f32
-    };
-
-    if used_ratio >= 0.88 || compressed_ratio >= 0.12 || swap_ratio >= 0.08 {
+    let impact = host_memory_performance_impact_score(host);
+    if impact >= MEMORY_IMPACT_SEVERE_SCORE {
         HostPressureBand::Severe
-    } else if used_ratio >= 0.75 || compressed_ratio >= 0.05 || swap_ratio >= 0.02 {
+    } else if impact >= MEMORY_IMPACT_ELEVATED_SCORE {
         HostPressureBand::Elevated
     } else {
         HostPressureBand::Nominal

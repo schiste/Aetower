@@ -14,6 +14,7 @@ struct PressureEntity {
     friction: f32,
     cpu_percent: f32,
     memory_bytes: u64,
+    disk_read_bps: u64,
     wakeups_per_second: f32,
     badges: Vec<String>,
 }
@@ -629,6 +630,7 @@ fn pressure_entities(
             friction: entity.friction.total_score,
             cpu_percent: entity.metrics.cpu_percent,
             memory_bytes: entity.metrics.memory_resident_bytes,
+            disk_read_bps: entity.metrics.disk_read_bps,
             wakeups_per_second: entity.metrics.wakeups_per_second,
             badges: entity.badges.clone(),
         })
@@ -670,22 +672,23 @@ fn host_pressure_assessment(
     external_wakeup_leaders: &[PressureEntity],
 ) -> Vec<String> {
     let mut assessment = Vec::new();
-    if memory_used_ratio >= MEMORY_PRESSURE_WARNING_RATIO
-        || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_WARNING_BYTES
-        || snapshot.host.swap_used_bytes >= SWAP_WARNING_BYTES
-    {
+    let memory_impact = host_memory_performance_impact_score(&snapshot.host);
+    if memory_impact >= MEMORY_IMPACT_ELEVATED_SCORE {
         assessment.push(format!(
-            "Host memory pressure is active: {:.0}% used, {} compressed, {} swap.",
+            "Memory performance impact is {:.0}/100: {} paging, {} swap I/O, {} compressor traffic; {:.0}% used.",
+            memory_impact,
+            format_bps(snapshot.host.memory_pagein_bps.saturating_add(snapshot.host.memory_pageout_bps)),
+            format_bps(snapshot.host.memory_swapin_bps.saturating_add(snapshot.host.memory_swapout_bps)),
+            format_bps(snapshot.host.memory_compression_bps.saturating_add(snapshot.host.memory_decompression_bps)),
             memory_used_ratio * 100.0,
-            format_bytes(snapshot.host.compressed_memory_bytes),
-            format_bytes(snapshot.host.swap_used_bytes)
         ));
     }
     if let Some(leader) = external_memory_leaders.first() {
         assessment.push(format!(
-            "Top external memory leader is {} at {} resident.",
+            "Top active memory-contention leader is {} at {} resident and {} reads.",
             leader.display_name,
-            format_bytes(leader.memory_bytes)
+            format_bytes(leader.memory_bytes),
+            format_bps(leader.disk_read_bps),
         ));
     }
     if let Some(leader) = external_cpu_leaders.first()

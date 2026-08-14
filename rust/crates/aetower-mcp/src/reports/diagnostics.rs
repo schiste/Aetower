@@ -414,7 +414,11 @@ pub(crate) fn host_memory_pressure_guidance(
 ) -> String {
     let external = top_external_memory_entities(snapshot, 4);
     let external_labels = format_entity_burden_labels(&external, |entity| {
-        format_bytes(entity.metrics.memory_resident_bytes)
+        format!(
+            "{} resident, {} reads",
+            format_bytes(entity.metrics.memory_resident_bytes),
+            format_bps(entity.metrics.disk_read_bps)
+        )
     });
     let observer_context = format!(
         "Aetower self is CPU {:.1}%, memory {}, wakeups {:.0}/s.",
@@ -424,16 +428,50 @@ pub(crate) fn host_memory_pressure_guidance(
     );
     if external_labels.is_empty() {
         format!(
-            "Compression ({}) and swap ({}) are elevated. No non-Aetower memory leader is visible in the current snapshot; inspect host-level pressure and only then Aetower self. {}",
-            format_bytes(snapshot.host.compressed_memory_bytes),
-            format_bytes(snapshot.host.swap_used_bytes),
+            "Memory impact is {:.0}/100 with {} paging, {} swap I/O, and {} compressor traffic. No non-Aetower contention leader is visible; inspect system services and only then Aetower self. {}",
+            host_memory_performance_impact_score(&snapshot.host),
+            format_bps(
+                snapshot
+                    .host
+                    .memory_pagein_bps
+                    .saturating_add(snapshot.host.memory_pageout_bps)
+            ),
+            format_bps(
+                snapshot
+                    .host
+                    .memory_swapin_bps
+                    .saturating_add(snapshot.host.memory_swapout_bps)
+            ),
+            format_bps(
+                snapshot
+                    .host
+                    .memory_compression_bps
+                    .saturating_add(snapshot.host.memory_decompression_bps)
+            ),
             observer_context
         )
     } else {
         format!(
-            "Compression ({}) and swap ({}) are elevated. Start with external memory leaders: {}. {}",
-            format_bytes(snapshot.host.compressed_memory_bytes),
-            format_bytes(snapshot.host.swap_used_bytes),
+            "Memory impact is {:.0}/100 with {} paging, {} swap I/O, and {} compressor traffic. Start with active contention leaders: {}. {}",
+            host_memory_performance_impact_score(&snapshot.host),
+            format_bps(
+                snapshot
+                    .host
+                    .memory_pagein_bps
+                    .saturating_add(snapshot.host.memory_pageout_bps)
+            ),
+            format_bps(
+                snapshot
+                    .host
+                    .memory_swapin_bps
+                    .saturating_add(snapshot.host.memory_swapout_bps)
+            ),
+            format_bps(
+                snapshot
+                    .host
+                    .memory_compression_bps
+                    .saturating_add(snapshot.host.memory_decompression_bps)
+            ),
             external_labels,
             observer_context
         )

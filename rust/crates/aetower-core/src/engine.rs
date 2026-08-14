@@ -16,14 +16,11 @@ use aetower_diagnostics::{
 };
 use aetower_model::{
     AiRepoSummary, CapabilityKind, CapabilitySnapshot, CapabilityState, Chau7SessionSummary,
-    EntitySnapshot, FrontmostAppState, HostSnapshot, HostTrend, ResourceCostRollup,
-    ResourceCostScope, RuntimeLagMetrics, SystemSnapshot, ThermalState,
+    EntitySnapshot, FrontmostAppState, HostSnapshot, HostTrend, MEMORY_IMPACT_ELEVATED_SCORE,
+    MEMORY_IMPACT_SEVERE_SCORE, ResourceCostRollup, ResourceCostScope, RuntimeLagMetrics,
+    SystemSnapshot, ThermalState, host_memory_performance_impact_score,
 };
-use aetower_policy::{
-    COMPRESSED_MEMORY_CRITICAL_BYTES, COMPRESSED_MEMORY_WARNING_BYTES,
-    MEMORY_PRESSURE_CRITICAL_RATIO, MEMORY_PRESSURE_WARNING_RATIO, SWAP_CRITICAL_BYTES,
-    SWAP_WARNING_BYTES, WAKEUPS_CRITICAL, WAKEUPS_WARNING,
-};
+use aetower_policy::{WAKEUPS_CRITICAL, WAKEUPS_WARNING};
 use aetower_telemetry::{OtlpConfig, TelemetryExporter};
 use aetower_time::{self as aet_time, ADAPTER_TICK, FAST_TICK};
 use parking_lot::Mutex;
@@ -2777,15 +2774,10 @@ fn collect_host_incidents(snapshot: &SystemSnapshot) -> Vec<HostIncidentSnapshot
     let mut incidents = Vec::new();
     let host = &snapshot.host;
     let memory_ratio = host_memory_pressure_ratio(host);
-    let memory_severity = if memory_ratio >= MEMORY_PRESSURE_CRITICAL_RATIO
-        || host.swap_used_bytes >= SWAP_CRITICAL_BYTES
-        || host.compressed_memory_bytes >= COMPRESSED_MEMORY_CRITICAL_BYTES
-    {
+    let memory_impact = host_memory_performance_impact_score(host);
+    let memory_severity = if memory_impact >= MEMORY_IMPACT_SEVERE_SCORE {
         Some(DiagnosticsLevel::Error)
-    } else if memory_ratio >= MEMORY_PRESSURE_WARNING_RATIO
-        || host.swap_used_bytes >= SWAP_WARNING_BYTES
-        || host.compressed_memory_bytes >= COMPRESSED_MEMORY_WARNING_BYTES
-    {
+    } else if memory_impact >= MEMORY_IMPACT_ELEVATED_SCORE {
         Some(DiagnosticsLevel::Warn)
     } else {
         None
@@ -2800,14 +2792,23 @@ fn collect_host_incidents(snapshot: &SystemSnapshot) -> Vec<HostIncidentSnapshot
                 "Host memory pressure incident snapshot recorded."
             },
             detail: format!(
-                "Memory pressure reached {:.0}% used with {} compressed and {} swap in use.",
+                "Memory performance impact reached {:.0}/100: {} paging, {} swap I/O, {} compressor traffic; {:.0}% used.",
+                memory_impact,
+                format_bps(host.memory_pagein_bps.saturating_add(host.memory_pageout_bps)),
+                format_bps(host.memory_swapin_bps.saturating_add(host.memory_swapout_bps)),
+                format_bps(host.memory_compression_bps.saturating_add(host.memory_decompression_bps)),
                 memory_ratio * 100.0,
-                format_bytes(host.compressed_memory_bytes),
-                format_bytes(host.swap_used_bytes)
             ),
             fields: vec![
                 ("memory_used_bytes", host.memory_used_bytes.to_string()),
                 ("memory_total_bytes", host.memory_total_bytes.to_string()),
+                ("memory_impact_score", format!("{memory_impact:.1}")),
+                ("memory_pagein_bps", host.memory_pagein_bps.to_string()),
+                ("memory_pageout_bps", host.memory_pageout_bps.to_string()),
+                ("memory_swapin_bps", host.memory_swapin_bps.to_string()),
+                ("memory_swapout_bps", host.memory_swapout_bps.to_string()),
+                ("memory_compression_bps", host.memory_compression_bps.to_string()),
+                ("memory_decompression_bps", host.memory_decompression_bps.to_string()),
                 (
                     "compressed_memory_bytes",
                     host.compressed_memory_bytes.to_string(),
@@ -2931,10 +2932,7 @@ fn emit_operator_safe_cadence_if_needed(
 }
 
 fn host_pressure_safe_mode_reason(host: &HostSnapshot) -> Option<&'static str> {
-    if host_memory_pressure_ratio(host) >= MEMORY_PRESSURE_CRITICAL_RATIO
-        || host.swap_used_bytes >= SWAP_CRITICAL_BYTES
-        || host.compressed_memory_bytes >= COMPRESSED_MEMORY_CRITICAL_BYTES
-    {
+    if host_memory_performance_impact_score(host) >= MEMORY_IMPACT_SEVERE_SCORE {
         return Some("host-memory-pressure");
     }
     if host.wakeups_per_second >= WAKEUPS_CRITICAL {
@@ -3271,6 +3269,10 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{bytes} B")
     }
+}
+
+fn format_bps(bytes_per_second: u64) -> String {
+    format!("{}/s", format_bytes(bytes_per_second))
 }
 
 #[cfg(test)]
@@ -3621,6 +3623,10 @@ mod tests {
             host: HostSnapshot {
                 memory_used_bytes: 15 * 1024 * 1024 * 1024,
                 memory_total_bytes: 16 * 1024 * 1024 * 1024,
+                memory_swapin_bps: 16 * 1024 * 1024,
+                memory_swapout_bps: 16 * 1024 * 1024,
+                memory_compression_bps: 128 * 1024 * 1024,
+                memory_decompression_bps: 128 * 1024 * 1024,
                 ..HostSnapshot::default()
             },
             ..SystemSnapshot::default()
@@ -3928,6 +3934,9 @@ mod tests {
                 memory_total_bytes: 16 * 1024 * 1024 * 1024,
                 compressed_memory_bytes: 7 * 1024 * 1024 * 1024,
                 swap_used_bytes: 20 * 1024 * 1024 * 1024,
+                memory_swapin_bps: 16 * 1024 * 1024,
+                memory_compression_bps: 128 * 1024 * 1024,
+                memory_decompression_bps: 128 * 1024 * 1024,
                 ..HostSnapshot::default()
             },
             ..SystemSnapshot::default()
@@ -3952,6 +3961,9 @@ mod tests {
                 memory_total_bytes: 16 * 1024 * 1024 * 1024,
                 compressed_memory_bytes: 7 * 1024 * 1024 * 1024,
                 swap_used_bytes: 20 * 1024 * 1024 * 1024,
+                memory_swapin_bps: 16 * 1024 * 1024,
+                memory_compression_bps: 128 * 1024 * 1024,
+                memory_decompression_bps: 128 * 1024 * 1024,
                 ..HostSnapshot::default()
             },
             ..SystemSnapshot::default()

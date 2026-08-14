@@ -10,12 +10,11 @@ use std::{
 use aetower_diagnostics::{
     DiagnosticsEvent, DiagnosticsLevel, DiagnosticsOverview, DiagnosticsQuery, DiagnosticsSubsystem,
 };
-use aetower_model::{RuntimeLagMetrics, SystemSnapshot};
-pub(crate) use aetower_policy::{
-    COMPRESSED_MEMORY_CRITICAL_BYTES, COMPRESSED_MEMORY_WARNING_BYTES,
-    MEMORY_PRESSURE_CRITICAL_RATIO, MEMORY_PRESSURE_WARNING_RATIO, SWAP_CRITICAL_BYTES,
-    SWAP_WARNING_BYTES, SeverityBand, WAKEUPS_CRITICAL, WAKEUPS_WARNING,
+use aetower_model::{
+    MEMORY_IMPACT_ELEVATED_SCORE, MEMORY_IMPACT_SEVERE_SCORE, RuntimeLagMetrics, SystemSnapshot,
+    host_memory_performance_impact_score,
 };
+pub(crate) use aetower_policy::{SeverityBand, WAKEUPS_CRITICAL, WAKEUPS_WARNING};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -1562,13 +1561,22 @@ pub(crate) fn top_memory_entities(
     let mut entities = snapshot
         .entities
         .iter()
-        .filter(|entity| entity.metrics.memory_resident_bytes > 0)
+        .filter(|entity| {
+            entity.metrics.memory_resident_bytes > 0 || entity.metrics.disk_read_bps > 0
+        })
         .collect::<Vec<_>>();
     entities.sort_by(|left, right| {
         right
-            .metrics
-            .memory_resident_bytes
-            .cmp(&left.metrics.memory_resident_bytes)
+            .friction
+            .pressure_score
+            .total_cmp(&left.friction.pressure_score)
+            .then_with(|| right.metrics.disk_read_bps.cmp(&left.metrics.disk_read_bps))
+            .then_with(|| {
+                right
+                    .metrics
+                    .memory_resident_bytes
+                    .cmp(&left.metrics.memory_resident_bytes)
+            })
     });
     entities.truncate(limit.max(1));
     entities
@@ -1581,12 +1589,19 @@ pub(crate) fn top_external_memory_entities(
     top_external_entities(
         snapshot,
         limit,
-        |entity| entity.metrics.memory_resident_bytes > 0,
+        |entity| entity.metrics.memory_resident_bytes > 0 || entity.metrics.disk_read_bps > 0,
         |left, right| {
             right
-                .metrics
-                .memory_resident_bytes
-                .cmp(&left.metrics.memory_resident_bytes)
+                .friction
+                .pressure_score
+                .total_cmp(&left.friction.pressure_score)
+                .then_with(|| right.metrics.disk_read_bps.cmp(&left.metrics.disk_read_bps))
+                .then_with(|| {
+                    right
+                        .metrics
+                        .memory_resident_bytes
+                        .cmp(&left.metrics.memory_resident_bytes)
+                })
         },
     )
 }
@@ -2185,46 +2200,56 @@ fn format_energy(nj_per_s: f64) -> String {
 }
 
 pub(crate) fn memory_pressure_finding(snapshot: &SystemSnapshot) -> Option<TopFinding> {
-    let used_ratio = if snapshot.host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        snapshot.host.memory_used_bytes as f64 / snapshot.host.memory_total_bytes as f64
-    };
-    if used_ratio < MEMORY_PRESSURE_WARNING_RATIO
-        && snapshot.host.compressed_memory_bytes < COMPRESSED_MEMORY_WARNING_BYTES
-        && snapshot.host.swap_used_bytes < SWAP_WARNING_BYTES
-    {
+    let impact = host_memory_performance_impact_score(&snapshot.host);
+    if impact < MEMORY_IMPACT_ELEVATED_SCORE {
         return None;
     }
-    let severity = if used_ratio >= MEMORY_PRESSURE_CRITICAL_RATIO
-        || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_CRITICAL_BYTES
-        || snapshot.host.swap_used_bytes >= SWAP_CRITICAL_BYTES
-    {
+    let severity = if impact >= MEMORY_IMPACT_SEVERE_SCORE {
         SeverityBand::Critical
     } else {
         SeverityBand::Warning
     };
     let external = top_external_memory_entities(snapshot, 3);
     let external_labels = format_entity_burden_labels(&external, |entity| {
-        format_bytes(entity.metrics.memory_resident_bytes)
+        format!(
+            "{} resident, {} reads",
+            format_bytes(entity.metrics.memory_resident_bytes),
+            format_bps(entity.metrics.disk_read_bps)
+        )
     });
     let recommendation = if external_labels.is_empty() {
-        "No non-Aetower memory leader is visible; inspect host pressure and Aetower self telemetry only after checking system services.".to_owned()
+        "No non-Aetower contention leader is visible; inspect system services and Aetower self telemetry next.".to_owned()
     } else {
         format!(
-            "Start with external memory leaders: {external_labels}. Then verify Aetower self telemetry if pressure remains unexplained."
+            "Start with active contention leaders: {external_labels}. Then verify Aetower self telemetry if impact remains unexplained."
         )
     };
     Some(TopFinding {
         id: "host-memory-pressure".to_owned(),
         severity,
-        title: "Memory pressure is elevated".to_owned(),
+        title: "Memory contention is affecting performance".to_owned(),
         detail: format!(
-            "{} used of {}, {} compressed, {} swap.",
+            "Impact {:.0}/100: {} paging, {} swap I/O, {} compressor traffic; {} used.",
+            impact,
+            format_bps(
+                snapshot
+                    .host
+                    .memory_pagein_bps
+                    .saturating_add(snapshot.host.memory_pageout_bps)
+            ),
+            format_bps(
+                snapshot
+                    .host
+                    .memory_swapin_bps
+                    .saturating_add(snapshot.host.memory_swapout_bps)
+            ),
+            format_bps(
+                snapshot
+                    .host
+                    .memory_compression_bps
+                    .saturating_add(snapshot.host.memory_decompression_bps)
+            ),
             format_bytes(snapshot.host.memory_used_bytes),
-            format_bytes(snapshot.host.memory_total_bytes),
-            format_bytes(snapshot.host.compressed_memory_bytes),
-            format_bytes(snapshot.host.swap_used_bytes)
         ),
         source: "host".to_owned(),
         entity_ids: if external.is_empty() {
@@ -2937,6 +2962,10 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{value:.2} {}", UNITS[unit])
     }
+}
+
+pub(crate) fn format_bps(bytes_per_second: u64) -> String {
+    format!("{}/s", format_bytes(bytes_per_second))
 }
 
 fn format_duration_millis(millis: u64) -> String {
@@ -4314,6 +4343,10 @@ mod tests {
                 memory_total_bytes: 16 * 1024 * 1024 * 1024,
                 compressed_memory_bytes: 7 * 1024 * 1024 * 1024,
                 swap_used_bytes: 18 * 1024 * 1024 * 1024,
+                memory_swapin_bps: 16 * 1024 * 1024,
+                memory_swapout_bps: 16 * 1024 * 1024,
+                memory_compression_bps: 128 * 1024 * 1024,
+                memory_decompression_bps: 128 * 1024 * 1024,
                 wakeups_per_second: 31_000.0,
                 ..aetower_model::HostSnapshot::default()
             },
@@ -4333,7 +4366,7 @@ mod tests {
         let wakeups = wakeup_finding(&snapshot).unwrap_or_else(|| panic!("wakeup finding"));
 
         assert!(memory.recommendation.as_deref().is_some_and(|value| {
-            value.contains("external memory leaders: Chau7") && value.contains("Aetower self")
+            value.contains("active contention leaders: Chau7") && value.contains("Aetower self")
         }));
         assert!(wakeups.recommendation.as_deref().is_some_and(|value| {
             value.contains("external wakeup leaders: Chau7") && value.contains("Aetower self")

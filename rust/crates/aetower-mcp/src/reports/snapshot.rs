@@ -11,14 +11,14 @@ use aetower_model::SystemSnapshot;
 use serde_json::json;
 
 use crate::{
-    COMPRESSED_MEMORY_CRITICAL_BYTES, COMPRESSED_MEMORY_WARNING_BYTES, CapabilityStatusItem,
-    HistorySummaryResponse, HostAlert, MEMORY_PRESSURE_CRITICAL_RATIO,
-    MEMORY_PRESSURE_WARNING_RATIO, RecentChangeItem, SWAP_CRITICAL_BYTES, SWAP_WARNING_BYTES,
-    SeverityBand, TopFinding, WAKEUPS_CRITICAL, WAKEUPS_WARNING, capability_action_label,
-    capability_operator_label, capability_severity, diagnostics_finding, format_bytes,
-    format_entity_burden_labels, history_store_finding, is_aetower_entity, memory_pressure_finding,
-    recent_change_from_timeline_event, top_entities, top_external_memory_entities,
-    top_external_wakeup_entities, top_memory_entities, top_wakeup_entities, wakeup_finding,
+    CapabilityStatusItem, HistorySummaryResponse, HostAlert, MEMORY_IMPACT_ELEVATED_SCORE,
+    MEMORY_IMPACT_SEVERE_SCORE, RecentChangeItem, SeverityBand, TopFinding, WAKEUPS_CRITICAL,
+    WAKEUPS_WARNING, capability_action_label, capability_operator_label, capability_severity,
+    diagnostics_finding, format_bps, format_bytes, format_entity_burden_labels,
+    history_store_finding, host_memory_performance_impact_score, is_aetower_entity,
+    memory_pressure_finding, recent_change_from_timeline_event, top_entities,
+    top_external_memory_entities, top_external_wakeup_entities, top_memory_entities,
+    top_wakeup_entities, wakeup_finding,
 };
 
 pub(crate) fn build_top_findings(
@@ -84,11 +84,6 @@ pub(crate) fn build_host_alerts(
     top_entity_limit: usize,
 ) -> Vec<HostAlert> {
     let mut alerts = Vec::new();
-    let used_ratio = if snapshot.host.memory_total_bytes == 0 {
-        0.0
-    } else {
-        snapshot.host.memory_used_bytes as f64 / snapshot.host.memory_total_bytes as f64
-    };
     let top_memory_entities = top_memory_entities(snapshot, top_entity_limit);
     let top_external_memory = top_external_memory_entities(snapshot, top_entity_limit);
     let top_memory_entity_labels = if top_external_memory.is_empty() {
@@ -100,14 +95,9 @@ pub(crate) fn build_host_alerts(
             format_bytes(entity.metrics.memory_resident_bytes)
         })
     };
-    if used_ratio >= MEMORY_PRESSURE_WARNING_RATIO
-        || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_WARNING_BYTES
-        || snapshot.host.swap_used_bytes >= SWAP_WARNING_BYTES
-    {
-        let severity = if used_ratio >= MEMORY_PRESSURE_CRITICAL_RATIO
-            || snapshot.host.compressed_memory_bytes >= COMPRESSED_MEMORY_CRITICAL_BYTES
-            || snapshot.host.swap_used_bytes >= SWAP_CRITICAL_BYTES
-        {
+    let memory_impact = host_memory_performance_impact_score(&snapshot.host);
+    if memory_impact >= MEMORY_IMPACT_ELEVATED_SCORE {
+        let severity = if memory_impact >= MEMORY_IMPACT_SEVERE_SCORE {
             SeverityBand::Critical
         } else {
             SeverityBand::Warning
@@ -129,17 +119,26 @@ pub(crate) fn build_host_alerts(
             "swap_used_bytes".to_owned(),
             json!(snapshot.host.swap_used_bytes),
         );
+        metrics.insert("memory_impact_score".to_owned(), json!(memory_impact));
+        metrics.insert(
+            "memory_swapin_bps".to_owned(),
+            json!(snapshot.host.memory_swapin_bps),
+        );
+        metrics.insert(
+            "memory_swapout_bps".to_owned(),
+            json!(snapshot.host.memory_swapout_bps),
+        );
         alerts.push(HostAlert {
             id: "host-memory-pressure".to_owned(),
             severity,
             category: "memory-pressure".to_owned(),
-            title: "Host memory pressure is elevated".to_owned(),
+            title: "Memory contention is affecting performance".to_owned(),
             detail: format!(
-                "{} used of {}, {} compressed, {} swap. Top current groups: {}.",
-                format_bytes(snapshot.host.memory_used_bytes),
-                format_bytes(snapshot.host.memory_total_bytes),
-                format_bytes(snapshot.host.compressed_memory_bytes),
-                format_bytes(snapshot.host.swap_used_bytes),
+                "Impact {:.0}/100 with {} paging, {} swap I/O, and {} compressor traffic. Top current groups: {}.",
+                memory_impact,
+                format_bps(snapshot.host.memory_pagein_bps.saturating_add(snapshot.host.memory_pageout_bps)),
+                format_bps(snapshot.host.memory_swapin_bps.saturating_add(snapshot.host.memory_swapout_bps)),
+                format_bps(snapshot.host.memory_compression_bps.saturating_add(snapshot.host.memory_decompression_bps)),
                 if top_memory_entity_labels.is_empty() {
                     "none".to_owned()
                 } else if top_external_memory.is_empty() {
