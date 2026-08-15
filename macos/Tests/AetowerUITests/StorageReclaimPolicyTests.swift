@@ -282,6 +282,80 @@ final class StorageReclaimPolicyTests: XCTestCase {
         XCTAssertEqual(plan.safeBytes, 6 * gigabyte)
     }
 
+    func testBulkCleanupPlanSurfacesBoundedRepositoryReviewCandidatesOnlyAggressively() throws {
+        let missingMarker = try repositoryArtifact(
+            path: "/repo/old-target",
+            sizeGB: 7,
+            confidence: "likely",
+            cleanupTier: "review",
+            cleanupAllowed: false,
+            defaultCleanupAction: "review",
+            cleanupBlockers: ["No build-tool marker confirms this artifact type."]
+        )
+        let recentBuild = try repositoryArtifact(
+            path: "/repo/recent-dist",
+            sizeGB: 3,
+            cleanupTier: "review",
+            cleanupAllowed: false,
+            defaultCleanupAction: "review",
+            cleanupBlockers: ["Modified within the last hour; it may belong to active work."]
+        )
+        let unknownBlocker = try repositoryArtifact(
+            path: "/repo/unsafe-target",
+            sizeGB: 11,
+            confidence: "likely",
+            cleanupTier: "review",
+            cleanupAllowed: false,
+            defaultCleanupAction: "review",
+            cleanupBlockers: ["Active writer could not be ruled out."]
+        )
+
+        let plan = StorageReclaimPolicy.bulkCleanupPlan(
+            items: [],
+            repositoryArtifacts: [missingMarker, recentBuild, unknownBlocker]
+        )
+
+        XCTAssertTrue(plan.safeItems.isEmpty)
+        XCTAssertEqual(
+            plan.additionalReviewItems.map(\.path),
+            ["/repo/old-target", "/repo/recent-dist"]
+        )
+        XCTAssertEqual(plan.additionalReviewBytes, 10 * gigabyte)
+        XCTAssertTrue(
+            plan.additionalReviewItems[0].cleanupConsequence.contains("No build-tool marker")
+        )
+    }
+
+    func testBulkCleanupPlanNeverReviewsTrackedOrUnignoredRepositoryArtifacts() throws {
+        let tracked = try repositoryArtifact(
+            path: "/repo/tracked-target",
+            sizeGB: 7,
+            gitTracked: true,
+            confidence: "likely",
+            cleanupTier: "review",
+            cleanupAllowed: false,
+            defaultCleanupAction: "review",
+            cleanupBlockers: ["No build-tool marker confirms this artifact type."]
+        )
+        let unignored = try repositoryArtifact(
+            path: "/repo/unignored-target",
+            sizeGB: 8,
+            gitIgnored: false,
+            confidence: "likely",
+            cleanupTier: "review",
+            cleanupAllowed: false,
+            defaultCleanupAction: "review",
+            cleanupBlockers: ["No build-tool marker confirms this artifact type."]
+        )
+
+        let plan = StorageReclaimPolicy.bulkCleanupPlan(
+            items: [],
+            repositoryArtifacts: [tracked, unignored]
+        )
+
+        XCTAssertTrue(plan.items.isEmpty)
+    }
+
     private func storageItem(
         kind: String,
         path: String,
@@ -340,6 +414,10 @@ final class StorageReclaimPolicyTests: XCTestCase {
         sizeGB: UInt64,
         gitIgnored: Bool = true,
         gitTracked: Bool = false,
+        confidence: String = "confirmed",
+        cleanupTier: String = "rebuildable",
+        cleanupAllowed: Bool = true,
+        defaultCleanupAction: String = "trash",
         cleanupBlockers: [String] = []
     ) throws -> StorageRepositoryArtifactModel {
         let payload: [String: Any] = [
@@ -364,13 +442,13 @@ final class StorageReclaimPolicyTests: XCTestCase {
             "staleCandidate": true,
             "reclaimPriority": 100,
             "evidence": ["ignored generated output"],
-            "confidence": "confirmed",
+            "confidence": confidence,
             "gitIgnored": gitIgnored,
             "gitTracked": gitTracked,
-            "cleanupTier": "rebuildable",
-            "cleanupAllowed": true,
+            "cleanupTier": cleanupTier,
+            "cleanupAllowed": cleanupAllowed,
             "cleanupBlockers": cleanupBlockers,
-            "defaultCleanupAction": "trash",
+            "defaultCleanupAction": defaultCleanupAction,
             "rebuildInstruction": "cargo build",
             "estimatedRebuildCost": "moderate",
         ]

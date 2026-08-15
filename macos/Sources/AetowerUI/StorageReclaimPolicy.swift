@@ -500,28 +500,71 @@ enum StorageReclaimPolicy {
     private static func bulkCleanupTarget(
         _ artifact: StorageRepositoryArtifactModel
     ) -> StorageBulkCleanupTarget? {
-        guard artifact.cleanupAllowed,
-              artifact.defaultCleanupAction == "trash",
-              artifact.cleanupBlockers.isEmpty,
-              artifact.gitIgnored,
-              !artifact.gitTracked,
-              artifact.cleanupTier == "safe" || artifact.cleanupTier == "rebuildable",
-              artifact.confidence == "confirmed" || artifact.confidence == "high"
-        else {
-            return nil
+        let verifiedSafe = artifact.cleanupAllowed
+            && artifact.defaultCleanupAction == "trash"
+            && artifact.cleanupBlockers.isEmpty
+            && artifact.gitIgnored
+            && !artifact.gitTracked
+            && (artifact.cleanupTier == "safe" || artifact.cleanupTier == "rebuildable")
+            && (artifact.confidence == "confirmed" || artifact.confidence == "high")
+
+        if verifiedSafe {
+            return StorageBulkCleanupTarget(
+                path: artifact.path,
+                displayName: artifact.label,
+                sizeBytes: artifact.physicalBytes,
+                cleanupTier: artifact.cleanupTier,
+                safety: "safe",
+                cleanupBlockers: [],
+                cleanupConsequence: repositoryArtifactCleanupConsequence(artifact)
+            )
         }
 
+        guard repositoryArtifactIsAggressiveReviewCandidate(artifact) else { return nil }
         return StorageBulkCleanupTarget(
             path: artifact.path,
             displayName: artifact.label,
             sizeBytes: artifact.physicalBytes,
             cleanupTier: artifact.cleanupTier,
-            safety: "safe",
-            cleanupBlockers: artifact.cleanupBlockers,
-            cleanupConsequence: artifact.rebuildInstruction.isEmpty
-                ? "Permanently deletes this generated repository artifact."
-                : "Permanently deletes this generated artifact. Rebuild with: \(artifact.rebuildInstruction)"
+            safety: "review",
+            // Review reasons belong in the two-click explanation. Keeping them
+            // out of execution blockers lets aggressive cleanup proceed only
+            // after confirmation; active-writer protection still runs at the
+            // deletion boundary.
+            cleanupBlockers: [],
+            cleanupConsequence: (
+                artifact.cleanupBlockers.joined(separator: " ")
+                    + " "
+                    + repositoryArtifactCleanupConsequence(artifact)
+            ).trimmingCharacters(in: .whitespaces)
         )
+    }
+
+    private static func repositoryArtifactIsAggressiveReviewCandidate(
+        _ artifact: StorageRepositoryArtifactModel
+    ) -> Bool {
+        let reviewableReasons: Set = [
+            "No build-tool marker confirms this artifact type.",
+            "Modified within the last hour; it may belong to active work.",
+        ]
+        return artifact.gitIgnored
+            && !artifact.gitTracked
+            && (artifact.confidence == "confirmed" || artifact.confidence == "likely")
+            && (artifact.cleanupTier == "safe"
+                || artifact.cleanupTier == "rebuildable"
+                || artifact.cleanupTier == "review")
+            && (artifact.defaultCleanupAction == "trash"
+                || artifact.defaultCleanupAction == "review")
+            && !artifact.cleanupBlockers.isEmpty
+            && artifact.cleanupBlockers.allSatisfy(reviewableReasons.contains)
+    }
+
+    private static func repositoryArtifactCleanupConsequence(
+        _ artifact: StorageRepositoryArtifactModel
+    ) -> String {
+        artifact.rebuildInstruction.isEmpty
+            ? "Permanently deletes this generated repository artifact."
+            : "Permanently deletes this generated artifact. Rebuild with: \(artifact.rebuildInstruction)"
     }
 
     private static func sumItemBytes(_ items: [StorageHygieneItemModel]) -> UInt64 {
