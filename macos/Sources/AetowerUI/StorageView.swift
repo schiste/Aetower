@@ -104,7 +104,9 @@ private struct StorageCleanupExecutionRequest: Identifiable, Sendable {
     let requiresReview: Bool
     let prerequisites: [String]
 
-    var targetPath: String? { targetPaths.first }
+    var targetPath: String? {
+        targetPaths.first
+    }
 }
 
 private struct StorageCleanupBasketItem: Identifiable, Sendable {
@@ -134,8 +136,13 @@ private struct StorageCleanupExecutionResult: Sendable {
     let movedTrashURLs: [String: URL]
     let failedPaths: [String: String]
 
-    var succeeded: Bool { exitCode == 0 }
-    var partiallySucceeded: Bool { !movedPaths.isEmpty && !failedPaths.isEmpty }
+    var succeeded: Bool {
+        exitCode == 0
+    }
+
+    var partiallySucceeded: Bool {
+        !movedPaths.isEmpty && !failedPaths.isEmpty
+    }
 }
 
 private struct StoragePermanentCleanupResult: Sendable {
@@ -168,12 +175,12 @@ private enum StorageCleanupAuditLog {
 
     static func append(_ event: StorageCleanupAuditEvent) -> Bool {
         guard let url = auditURL(createDirectory: true),
-            let data = try? JSONEncoder().encode(event)
+              let data = try? JSONEncoder().encode(event)
         else { return false }
         var line = data
         line.append(0x0A)
         if FileManager.default.fileExists(atPath: url.path),
-            let handle = try? FileHandle(forWritingTo: url)
+           let handle = try? FileHandle(forWritingTo: url)
         {
             do {
                 try handle.seekToEnd()
@@ -196,7 +203,7 @@ private enum StorageCleanupAuditLog {
 
     static func loadRecent(limit: Int = 40) -> [StorageCleanupAuditEvent] {
         guard let url = auditURL(createDirectory: false),
-            let text = try? String(contentsOf: url, encoding: .utf8)
+              let text = try? String(contentsOf: url, encoding: .utf8)
         else { return [] }
         let decoder = JSONDecoder()
         return text
@@ -225,8 +232,8 @@ private enum StorageTrackedTrashStore {
 
     static func loadItems(pruneMissing: Bool = true) -> [String: StorageTrackedTrashItem] {
         guard let url = storeURL(createDirectory: false),
-            let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode([StorageTrackedTrashItem].self, from: data)
+              let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([StorageTrackedTrashItem].self, from: data)
         else { return [:] }
         let items = Dictionary(uniqueKeysWithValues: decoded.map { ($0.originalPath, $0) })
         guard pruneMissing else { return items }
@@ -360,6 +367,10 @@ public struct StorageView: View {
     @State private var expandedSimilarityGroupKeys: Set<String> = []
     @State private var similarityTelemetryViewedGroupKeys: Set<String> = []
     @State private var similarityTelemetryViewedSurfaceKeys: Set<String> = []
+    @State private var runtimeStorageInventory: StorageRuntimeInventory?
+    @State private var runtimeCleanupIsRunning = false
+    @State private var runtimeCleanupResult: StorageRuntimeCleanupResult?
+    @State private var confirmRuntimeAggressiveCleanup = false
 
     public init(state: AppState, settings: SettingsStore) {
         self.state = state
@@ -410,6 +421,18 @@ public struct StorageView: View {
         } message: {
             Text("This permanently deletes only items Aetower moved to the Trash and still tracks. Unrelated Finder Trash contents are left alone.")
         }
+        .confirmationDialog(
+            "Prune unused anonymous Docker volumes?",
+            isPresented: $confirmRuntimeAggressiveCleanup,
+            titleVisibility: .visible
+        ) {
+            Button("Prune volumes and Docker cache", role: .destructive) {
+                runRuntimeCleanup(scope: .aggressive)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes only Docker resources not attached to active containers. Named volumes remain protected. Images and build cache may need to be rebuilt.")
+        }
         .overlay(alignment: .bottom) {
             // Floating stack: transient undo toast above the persistent
             // cleanup pill. Both hover over content rather than reserving a
@@ -440,6 +463,9 @@ public struct StorageView: View {
         }
         .task(id: storageCleanupSourceSignature) {
             await refreshStorageCleanupAvailability(signature: storageCleanupSourceSignature)
+        }
+        .task(id: state.storageSituation?.capturedAtMillis) {
+            runtimeStorageInventory = await StorageRuntimeStorageService.probe()
         }
         .sheet(item: $candidateCommandPreviewBundle) { bundle in
             cleanupCommandPreviewSheet(bundle)
@@ -613,28 +639,28 @@ public struct StorageView: View {
     private var storageHeaderBadges: [AetowerToolBadgeItem] {
         [
             AetowerToolBadgeItem(
-                    "Free",
-                    value: storageVolumeFreeLabel,
-                    systemImage: "internaldrive.fill",
-                    tone: storageVolumeTone
+                "Free",
+                value: storageVolumeFreeLabel,
+                systemImage: "internaldrive.fill",
+                tone: storageVolumeTone
             ),
             AetowerToolBadgeItem(
-                    "Safe Now",
-                    value: storageReclaimableLabel,
-                    systemImage: "checkmark.shield",
-                    tone: AetowerDesign.Status.ready
+                "Safe Now",
+                value: storageReclaimableLabel,
+                systemImage: "checkmark.shield",
+                tone: AetowerDesign.Status.ready
             ),
             AetowerToolBadgeItem(
-                    "Items",
-                    value: storageItemCountLabel,
-                    systemImage: "shippingbox",
-                    tone: AetowerDesign.Tone.memory
+                "Items",
+                value: storageItemCountLabel,
+                systemImage: "shippingbox",
+                tone: AetowerDesign.Tone.memory
             ),
             AetowerToolBadgeItem(
-                    "Estimate",
-                    value: storageEstimateLabel,
-                    systemImage: storageEstimateSystemImage,
-                    tone: storageEstimateTone
+                "Estimate",
+                value: storageEstimateLabel,
+                systemImage: storageEstimateSystemImage,
+                tone: storageEstimateTone
             ),
         ]
     }
@@ -710,7 +736,7 @@ public struct StorageView: View {
         Stepper(
             "Depth \(Int(maxDepth))",
             value: $maxDepth,
-            in: 1...12,
+            in: 1 ... 12,
             step: 1
         )
         .font(AetowerDesign.Typography.caption)
@@ -896,7 +922,9 @@ public struct StorageView: View {
                     return "Cached"
                 }
             }
-            if state.storageHygieneIsVerifyingCache { return "Verifying" }
+            if state.storageHygieneIsVerifyingCache {
+                return "Verifying"
+            }
             return state.storageHygieneIsLoading ? "Scanning" : "No scan"
         }
         switch section {
@@ -938,7 +966,9 @@ public struct StorageView: View {
                     return storageSituationTone(situation)
                 }
             }
-            if state.storageHygieneIsVerifyingCache { return AetowerDesign.Tone.disk }
+            if state.storageHygieneIsVerifyingCache {
+                return AetowerDesign.Tone.disk
+            }
             return state.storageHygieneIsLoading ? AetowerDesign.Tone.disk : AetowerDesign.Status.neutral
         }
         switch section {
@@ -955,7 +985,8 @@ public struct StorageView: View {
                 : AetowerDesign.Status.neutral
         case .insights:
             if !report.budgetGuardrails.violations.isEmpty
-                || report.growthDeltas.contains(where: { $0.deltaBytes > 0 }) {
+                || report.growthDeltas.contains(where: { $0.deltaBytes > 0 })
+            {
                 return AetowerDesign.Status.warning
             }
             return AetowerDesign.Status.neutral
@@ -1525,13 +1556,13 @@ public struct StorageView: View {
     }
 
     private func storageScanFreshnessLabel(_ report: StorageHygieneReportModel) -> String {
-        let capturedAt = Date(timeIntervalSince1970: Double(report.capturedAtMillis) / 1_000)
+        let capturedAt = Date(timeIntervalSince1970: Double(report.capturedAtMillis) / 1000)
         return storageRelativeTimeLabel(capturedAt)
     }
 
     private func storageSituationFreshnessLabel(_ situation: StorageSituationModel) -> String {
         let timestamp = situation.cacheStatus.latestScanMillis ?? situation.capturedAtMillis
-        let capturedAt = Date(timeIntervalSince1970: Double(timestamp) / 1_000)
+        let capturedAt = Date(timeIntervalSince1970: Double(timestamp) / 1000)
         return storageRelativeTimeLabel(capturedAt)
     }
 
@@ -1694,10 +1725,12 @@ public struct StorageView: View {
         visibleFolders: [StorageReclaimFolderRow]
     ) -> some View {
         if let selectedReclaimFilePath,
-           let item = visibleItems.first(where: { $0.path == selectedReclaimFilePath }) {
+           let item = visibleItems.first(where: { $0.path == selectedReclaimFilePath })
+        {
             storageReclaimFileInspector(item)
         } else if let selectedReclaimFolderPath,
-                  let folder = visibleFolders.first(where: { $0.path == selectedReclaimFolderPath }) {
+                  let folder = visibleFolders.first(where: { $0.path == selectedReclaimFolderPath })
+        {
             storageReclaimFolderInspector(folder)
         }
     }
@@ -2000,10 +2033,18 @@ public struct StorageView: View {
 
     private func strongestCleanupTier(in items: [StorageHygieneItemModel]) -> String {
         let tiers = Set(items.map(\.cleanupTier))
-        if tiers.contains("risky") { return "risky" }
-        if tiers.contains("expensive") { return "expensive" }
-        if tiers.contains("rebuildable") { return "rebuildable" }
-        if tiers.contains("safe") { return "safe" }
+        if tiers.contains("risky") {
+            return "risky"
+        }
+        if tiers.contains("expensive") {
+            return "expensive"
+        }
+        if tiers.contains("rebuildable") {
+            return "rebuildable"
+        }
+        if tiers.contains("safe") {
+            return "safe"
+        }
         return items.first?.cleanupTier ?? "review"
     }
 
@@ -2185,7 +2226,7 @@ public struct StorageView: View {
                     )
                 }
 
-                Stepper(value: $screenshotQuickWinAgeDays, in: 1...365, step: 1) {
+                Stepper(value: $screenshotQuickWinAgeDays, in: 1 ... 365, step: 1) {
                     Text("Older than \(screenshotQuickWinAgeDays)d")
                         .font(AetowerDesign.Typography.caption.weight(.semibold))
                 }
@@ -2710,7 +2751,7 @@ public struct StorageView: View {
     }
 
     private func storageItemLooksLikeScreenshot(_ item: StorageHygieneItemModel) -> Bool {
-        let imageExtensions: Set<String> = ["gif", "heic", "jpeg", "jpg", "png", "tif", "tiff", "webp"]
+        let imageExtensions: Set = ["gif", "heic", "jpeg", "jpg", "png", "tif", "tiff", "webp"]
         let fileExtension = URL(fileURLWithPath: item.path).pathExtension.lowercased()
         let isImage = imageExtensions.contains(fileExtension) || item.kind.lowercased().contains("image")
         guard isImage else { return false }
@@ -2736,7 +2777,7 @@ public struct StorageView: View {
         }
         if let modifiedMillis = item.modifiedMillis {
             let modified = Date(timeIntervalSince1970: Double(modifiedMillis) / 1000.0)
-            return Date().timeIntervalSince(modified) >= Double(minimumDays) * 86_400
+            return Date().timeIntervalSince(modified) >= Double(minimumDays) * 86400
         }
         return false
     }
@@ -3816,7 +3857,8 @@ public struct StorageView: View {
 
     private func duplicateGroupCanonicalItem(_ group: StorageDuplicateGroupModel) -> StorageDuplicateItemModel? {
         if let path = duplicateCanonicalPathByGroupID[group.id],
-           let item = group.paths.first(where: { $0.path == path }) {
+           let item = group.paths.first(where: { $0.path == path })
+        {
             return item
         }
         return group.paths.first
@@ -3845,7 +3887,8 @@ public struct StorageView: View {
     private func duplicateGroupReviewOnlyReason(_ group: StorageDuplicateGroupModel) -> String {
         if !group.actions.canStageCleanup,
            let blockReason = group.actions.blockReason,
-           !blockReason.isEmpty {
+           !blockReason.isEmpty
+        {
             return "Review-only: \(blockReason)"
         }
         switch group.detectorKind {
@@ -3910,7 +3953,7 @@ public struct StorageView: View {
                 blockers: [],
                 prerequisites: [
                     "Quick Look the canonical file and each staged duplicate before moving the basket to Trash.",
-                    "Confirm no application or workflow depends on the duplicate path."
+                    "Confirm no application or workflow depends on the duplicate path.",
                 ]
             )
             if stageBasketItem(basketItem) {
@@ -5178,8 +5221,12 @@ public struct StorageView: View {
         let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
         guard volume.totalBytes > 0 else { return AetowerDesign.Status.neutral }
         let freeRatio = Double(free) / Double(volume.totalBytes)
-        if freeRatio < 0.05 { return AetowerDesign.Status.error }
-        if freeRatio < 0.12 { return AetowerDesign.Status.warning }
+        if freeRatio < 0.05 {
+            return AetowerDesign.Status.error
+        }
+        if freeRatio < 0.12 {
+            return AetowerDesign.Status.warning
+        }
         return AetowerDesign.Status.ready
     }
 
@@ -5187,8 +5234,12 @@ public struct StorageView: View {
         let free = volume.availableBytes > 0 ? volume.availableBytes : volume.freeNowBytes
         guard volume.totalBytes > 0 else { return "Unknown" }
         let freeRatio = Double(free) / Double(volume.totalBytes)
-        if freeRatio < 0.05 { return "Critically low space" }
-        if freeRatio < 0.12 { return "Low space" }
+        if freeRatio < 0.05 {
+            return "Critically low space"
+        }
+        if freeRatio < 0.12 {
+            return "Low space"
+        }
         return "Healthy"
     }
 
@@ -5218,8 +5269,8 @@ public struct StorageView: View {
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(tone.opacity(0.14), in: Capsule())
                     Spacer()
-                    (Text(formatBytes(free)).font(.system(size: 26, weight: .bold, design: .rounded))
-                        + Text("  free").font(.callout).foregroundColor(.secondary))
+                    Text(formatBytes(free)).font(.system(size: 26, weight: .bold, design: .rounded))
+                        + Text("  free").font(.callout).foregroundColor(.secondary)
                 }
 
                 diskCapacityBar(total: volume.totalBytes, free: free, reclaimable: cappedActionable, tone: tone)
@@ -5271,14 +5322,16 @@ public struct StorageView: View {
     }
 
     private func volumeDisplayName(_ volume: StorageVolumeStateModel) -> String {
-        if volume.path == "/" { return "Macintosh HD" }
+        if volume.path == "/" {
+            return "Macintosh HD"
+        }
         let last = (volume.path as NSString).lastPathComponent
         return last.isEmpty ? volume.path : last
     }
 
     /// Three-segment capacity bar: used (neutral) · reclaimable (disk-tinted,
     /// the recoverable slice) · free (track). Proportional to total bytes.
-    private func diskCapacityBar(total: UInt64, free: UInt64, reclaimable: UInt64, tone: Color) -> some View {
+    private func diskCapacityBar(total: UInt64, free: UInt64, reclaimable: UInt64, tone _: Color) -> some View {
         GeometryReader { geo in
             let width = geo.size.width
             let usedBytes = total - free
@@ -5409,7 +5462,8 @@ public struct StorageView: View {
         if let repository = breakdown.stableBuckets.first(where: { $0.id == "repositories" }),
            let unorderedBuckets = repository.subBuckets,
            !unorderedBuckets.isEmpty,
-           repository.bytes > 0 {
+           repository.bytes > 0
+        {
             let order = ["source", "dependencies", "builds", "git", "media", "workspace"]
             let buckets = unorderedBuckets.sorted { left, right in
                 (order.firstIndex(of: left.id) ?? order.count)
@@ -5744,11 +5798,15 @@ public struct StorageView: View {
         }
         let ageSeconds = max(
             0,
-            Date().timeIntervalSince1970 - Double(measuredAtMillis) / 1_000
+            Date().timeIntervalSince1970 - Double(measuredAtMillis) / 1000
         )
-        if ageSeconds < 60 { return "measured now" }
-        if ageSeconds < 3_600 { return "measured \(Int(ageSeconds / 60))m ago" }
-        return "measured \(Int(ageSeconds / 3_600))h ago"
+        if ageSeconds < 60 {
+            return "measured now"
+        }
+        if ageSeconds < 3600 {
+            return "measured \(Int(ageSeconds / 60))m ago"
+        }
+        return "measured \(Int(ageSeconds / 3600))h ago"
     }
 
     private func storageOwnershipDisplayLabel(_ bucket: StorageOwnershipBucketModel) -> String {
@@ -7362,16 +7420,16 @@ public struct StorageView: View {
                                 result.succeeded
                                     ? "Result: \(result.movedPaths.count) moved to Trash"
                                     : result.partiallySucceeded
-                                        ? "Result: \(result.movedPaths.count) moved to Trash · \(result.failedPaths.count) failed"
-                                        : "Result: needs attention"
+                                    ? "Result: \(result.movedPaths.count) moved to Trash · \(result.failedPaths.count) failed"
+                                    : "Result: needs attention"
                             )
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(
                                 result.succeeded
                                     ? AetowerDesign.Status.ready
                                     : result.partiallySucceeded
-                                        ? AetowerDesign.Status.warning
-                                        : AetowerDesign.Status.error
+                                    ? AetowerDesign.Status.warning
+                                    : AetowerDesign.Status.error
                             )
                             Text(result.output.isEmpty ? "Cleanup completed with no output." : result.output)
                                 .font(.system(size: 11, design: .monospaced))
@@ -8499,7 +8557,7 @@ public struct StorageView: View {
                         Canvas { context, _ in
                             for bin in bins {
                                 let color = storageTreemapColor(bin.node.colorKey)
-                                for index in bin.startIndex..<bin.endIndex {
+                                for index in bin.startIndex ..< bin.endIndex {
                                     let rect = storageCubeRect(index: index, layout: layout)
                                     guard rect.width > 0, rect.height > 0 else { continue }
                                     context.fill(
@@ -8764,7 +8822,7 @@ public struct StorageView: View {
             guard cubeCount > 0, size.width > 0, size.height > 0 else { return }
             let layout = storageCubeGridLayout(cubeCount: cubeCount, in: size)
             guard layout.cubeSize > 0 else { return }
-            for index in 0..<cubeCount {
+            for index in 0 ..< cubeCount {
                 var rect = storageCubeRect(index: index, layout: layout)
                 rect = rect.insetBy(dx: max(0, min(0.35, rect.width * 0.08)), dy: max(0, min(0.35, rect.height * 0.08)))
                 guard rect.width > 0, rect.height > 0 else { continue }
@@ -8840,19 +8898,19 @@ public struct StorageView: View {
                     left.sizeBytes == right.sizeBytes ? left.label < right.label : left.sizeBytes > right.sizeBytes
                 }
                 .map { StorageCubeProjectionInput(id: $0.id, sizeBytes: $0.sizeBytes) },
-            maxCubes: 2_400,
+            maxCubes: 2400,
             preferredUnitBytes: preferredUnitBytes
         )
     }
 
     private func storageCubePreferredUnitBytes(for selectedNode: StorageTreemapNodeModel?) -> UInt64 {
-        let mib = UInt64(1_024 * 1_024)
+        let mib = UInt64(1024 * 1024)
         guard let selectedNode else { return 50 * mib }
         switch selectedNode.depth {
         case 0: return 10 * mib
         case 1: return 5 * mib
         case 2: return 1 * mib
-        default: return 256 * 1_024
+        default: return 256 * 1024
         }
     }
 
@@ -9382,8 +9440,12 @@ public struct StorageView: View {
     }
 
     private func storageTreemapIcon(_ node: StorageTreemapNodeModel) -> String {
-        if node.nodeType == "root" { return "externaldrive" }
-        if !node.children.isEmpty { return "folder" }
+        if node.nodeType == "root" {
+            return "externaldrive"
+        }
+        if !node.children.isEmpty {
+            return "folder"
+        }
         switch node.colorKey {
         case "xcode": return "hammer"
         case "rust": return "gearshape.2"
@@ -9767,6 +9829,7 @@ public struct StorageView: View {
                     )
                     storageRepositoryStrata(breakdown)
                     storageBulkCleanupControls()
+                    storageRuntimeCleanupControls()
                     storageOwnershipLegend(breakdown)
                 } else {
                     diskCapacityBar(
@@ -9776,6 +9839,7 @@ public struct StorageView: View {
                         tone: tone
                     )
                     storageBulkCleanupControls()
+                    storageRuntimeCleanupControls()
                 }
                 HStack(spacing: AetowerDesign.Spacing.md) {
                     Text("\(formatBytes(volume.totalBytes - free)) used")
@@ -9815,8 +9879,8 @@ public struct StorageView: View {
                             ? "No verified targets in the current snapshot"
                             : "Checking current targets…"
                     )
-                        .font(AetowerDesign.Typography.metadata)
-                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
                 } else {
                     Text(
                         "\(formatBytes(plan.safeBytes)) verified safe"
@@ -9862,6 +9926,92 @@ public struct StorageView: View {
         .controlSize(.regular)
         .padding(.top, AetowerDesign.Spacing.xs)
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private func storageRuntimeCleanupControls() -> some View {
+        if let inventory = runtimeStorageInventory {
+            switch inventory.availability {
+            case let .unavailable(detail):
+                AetowerOperationalListRow(tone: AetowerDesign.Status.neutral, minHeight: 48) {
+                    Label("Docker storage unavailable", systemImage: "shippingbox")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .help(detail)
+                }
+            case .available:
+                AetowerOperationalListRow(tone: AetowerDesign.Tone.disk, minHeight: 58) {
+                    HStack(spacing: AetowerDesign.Spacing.sm) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Docker / Colima", systemImage: "shippingbox.fill")
+                                .font(AetowerDesign.Typography.caption.weight(.semibold))
+                            Text(
+                                "\(inventory.activeContainerCount) active containers · "
+                                    + "\(inventory.anonymousDanglingVolumeCount) anonymous volumes · "
+                                    + "\(inventory.danglingVolumeCount) dangling total"
+                                    + (inventory.staleDanglingVolumeCount > 0
+                                        ? " · \(inventory.staleDanglingVolumeCount) older than 90 days"
+                                        : "")
+                            )
+                            .font(AetowerDesign.Typography.metadata)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                        }
+                        Spacer(minLength: AetowerDesign.Spacing.sm)
+                        if runtimeCleanupIsRunning {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button {
+                                runRuntimeCleanup(scope: .safe)
+                            } label: {
+                                Label(
+                                    storageCleanupActionTitle(bytes: inventory.safeReclaimableBytes ?? 0, scope: .safe),
+                                    systemImage: "checkmark.shield.fill"
+                                )
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(AetowerDesign.Status.ready)
+                            .disabled(inventory.safeReclaimableBytes == nil)
+
+                            Button {
+                                confirmRuntimeAggressiveCleanup = true
+                            } label: {
+                                Label(
+                                    storageCleanupActionTitle(bytes: inventory.aggressiveReclaimableBytes ?? 0, scope: .aggressive),
+                                    systemImage: "exclamationmark.triangle.fill"
+                                )
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(AetowerDesign.Status.warning)
+                            .disabled(inventory.aggressiveReclaimableBytes == nil)
+                        }
+                    }
+                    .font(AetowerDesign.Typography.metadata)
+                }
+                if let result = runtimeCleanupResult {
+                    Text(
+                        result.succeeded
+                            ? "Docker cleanup completed; host free space will update after verification."
+                            : "Docker cleanup did not complete: \(result.output.prefix(160))"
+                    )
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(result.succeeded ? AetowerDesign.Status.ready : AetowerDesign.Status.error)
+                }
+            }
+        }
+    }
+
+    private func runRuntimeCleanup(scope: StorageRuntimeCleanupScope) {
+        guard !runtimeCleanupIsRunning else { return }
+        runtimeCleanupIsRunning = true
+        runtimeCleanupResult = nil
+        Task { @MainActor in
+            let result = await StorageRuntimeStorageService.clean(scope: scope)
+            runtimeCleanupResult = result
+            runtimeCleanupIsRunning = false
+            runtimeStorageInventory = await StorageRuntimeStorageService.probe()
+            state.loadStorageForDisplay()
+            state.ensureStorageOwnership(roots: settings.repositoryRoots, force: true)
+        }
     }
 
     private func storageBulkCleanupPlan() -> StorageBulkCleanupPlan {
@@ -9988,22 +10138,38 @@ public struct StorageView: View {
     }
 
     private func storageSituationStatusLabel(_ situation: StorageSituationModel) -> String {
-        if !situation.hasCachedFacts { return "Scan Needed" }
-        if situation.cacheStatus.partial { return "Partial" }
-        if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 { return "Stale" }
+        if !situation.hasCachedFacts {
+            return "Scan Needed"
+        }
+        if situation.cacheStatus.partial {
+            return "Partial"
+        }
+        if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 {
+            return "Stale"
+        }
         return "Cached"
     }
 
     private func storageSituationStatusImage(_ situation: StorageSituationModel) -> String {
-        if !situation.hasCachedFacts { return "exclamationmark.triangle" }
-        if situation.cacheStatus.partial { return "exclamationmark.triangle" }
-        if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 { return "eye" }
+        if !situation.hasCachedFacts {
+            return "exclamationmark.triangle"
+        }
+        if situation.cacheStatus.partial {
+            return "exclamationmark.triangle"
+        }
+        if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 {
+            return "eye"
+        }
         return "bolt"
     }
 
     private func storageSituationTone(_ situation: StorageSituationModel) -> Color {
-        if !situation.hasCachedFacts { return AetowerDesign.Status.warning }
-        if situation.cacheStatus.partial { return AetowerDesign.Status.warning }
+        if !situation.hasCachedFacts {
+            return AetowerDesign.Status.warning
+        }
+        if situation.cacheStatus.partial {
+            return AetowerDesign.Status.warning
+        }
         if situation.cacheStatus.stale || situation.dirtyPaths.dirtyPathCount > 0 {
             return AetowerDesign.Status.warning
         }
@@ -10452,7 +10618,9 @@ public struct StorageView: View {
     ) -> String {
         let items = stageItems.isEmpty ? fallbackItems : stageItems
         guard !items.isEmpty else { return "No action" }
-        if stageItems.isEmpty { return "Review" }
+        if stageItems.isEmpty {
+            return "Review"
+        }
         if stageItems.allSatisfy({ $0.cleanupTier == "safe" || $0.cleanupTier == "rebuildable" }) {
             return "Trash-ready"
         }
@@ -10615,21 +10783,43 @@ public struct StorageView: View {
     }
 
     private func sourceIcon(_ source: StorageSourceCoverageModel) -> String {
-        if source.permissionState == "needs_full_disk_access" { return "lock.trianglebadge.exclamationmark" }
-        if source.protected { return "shield.lefthalf.filled" }
-        if source.cloudPlaceholder || source.kind == "cloud" { return "icloud" }
-        if source.network { return "externaldrive.connected.to.line.below" }
-        if source.kind == "applications" { return "app.dashed" }
-        if source.kind == "package-cache" { return "shippingbox" }
-        if source.kind == "docker" { return "square.stack.3d.up" }
+        if source.permissionState == "needs_full_disk_access" {
+            return "lock.trianglebadge.exclamationmark"
+        }
+        if source.protected {
+            return "shield.lefthalf.filled"
+        }
+        if source.cloudPlaceholder || source.kind == "cloud" {
+            return "icloud"
+        }
+        if source.network {
+            return "externaldrive.connected.to.line.below"
+        }
+        if source.kind == "applications" {
+            return "app.dashed"
+        }
+        if source.kind == "package-cache" {
+            return "shippingbox"
+        }
+        if source.kind == "docker" {
+            return "square.stack.3d.up"
+        }
         return source.scanned ? "checkmark.circle" : "folder.badge.questionmark"
     }
 
     private func sourceTone(_ source: StorageSourceCoverageModel) -> Color {
-        if source.permissionState == "needs_full_disk_access" { return AetowerDesign.Status.warning }
-        if source.status == "unavailable" || source.status == "skipped" { return AetowerDesign.Status.error }
-        if source.status == "partial" { return AetowerDesign.Status.warning }
-        if source.protected || source.gapKind == "protected" { return AetowerDesign.Status.warning }
+        if source.permissionState == "needs_full_disk_access" {
+            return AetowerDesign.Status.warning
+        }
+        if source.status == "unavailable" || source.status == "skipped" {
+            return AetowerDesign.Status.error
+        }
+        if source.status == "partial" {
+            return AetowerDesign.Status.warning
+        }
+        if source.protected || source.gapKind == "protected" {
+            return AetowerDesign.Status.warning
+        }
         return AetowerDesign.Status.ready
     }
 
@@ -10678,7 +10868,9 @@ public struct StorageView: View {
 
     private func storageShortPath(_ path: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        if path == home { return "~" }
+        if path == home {
+            return "~"
+        }
         if path.hasPrefix(home + "/") {
             return "~/" + String(path.dropFirst(home.count + 1))
         }
@@ -10930,7 +11122,7 @@ public struct StorageView: View {
         } else {
             return []
         }
-        let minimumDeltaBytes: Int64 = 8 * 1_024 * 1_024
+        let minimumDeltaBytes: Int64 = 8 * 1024 * 1024
         return visibleStorageItems(from: report).compactMap { item in
             let previousBytes = previousItemsByID[item.id] ?? 0
             let delta = Int64(clamping: item.sizeBytes) - Int64(clamping: previousBytes)
@@ -11780,7 +11972,8 @@ public struct StorageView: View {
         cleanupBasket.removeAll { resolved.contains($0.path) }
         state.markStoragePathsMovedToTrash(Array(resolved), refresh: false)
         if var availability = cleanupAvailability,
-           availability.signature == storageCleanupSourceSignature {
+           availability.signature == storageCleanupSourceSignature
+        {
             availability.existingPaths.subtract(resolved)
             cleanupAvailability = availability
         }
@@ -11804,13 +11997,13 @@ public struct StorageView: View {
                 action: pathReclaimed
                     ? "direct-delete"
                     : pathAlreadyMissing
-                        ? "already-reclaimed"
-                        : pending.contains(path) ? "pending-trash" : "failed-direct-delete",
+                    ? "already-reclaimed"
+                    : pending.contains(path) ? "pending-trash" : "failed-direct-delete",
                 path: path,
                 detail: pathReclaimed
                     ? "\(sourceTitle) permanently reclaimed this verified target."
                     : pathAlreadyMissing
-                        ? "Path was already absent; no additional space was reclaimed."
+                    ? "Path was already absent; no additional space was reclaimed."
                     : (result.failedPaths[path] ?? "Not attempted."),
                 bytes: pathReclaimed ? metadata?.sizeBytes ?? 0 : 0,
                 cleanupTier: metadata?.cleanupTier,
@@ -11830,7 +12023,7 @@ public struct StorageView: View {
                 message: reclaimed.isEmpty
                     ? "\(sourceTitle): no space reclaimed\(issueCount > 0 ? " (\(issueCount) issue\(issueCount == 1 ? "" : "s"))" : "")"
                     : "\(sourceTitle): reclaimed \(formatBytes(reclaimedBytes)) from \(reclaimed.count) target\(reclaimed.count == 1 ? "" : "s")"
-                        + (pending.isEmpty ? "" : " · \(pending.count) remain in Trash"),
+                    + (pending.isEmpty ? "" : " · \(pending.count) remain in Trash"),
                 originalPath: sourceTitle,
                 trashURL: nil,
                 bytes: reclaimedBytes,
@@ -11888,8 +12081,8 @@ public struct StorageView: View {
                 detail: pathSucceeded
                     ? "One-click Clean moved \(sourceTitle) target to Finder Trash."
                     : pathAlreadyReclaimed
-                        ? "Path no longer exists; treating it as already reclaimed."
-                        : (result.failedPaths[path] ?? "Not attempted."),
+                    ? "Path no longer exists; treating it as already reclaimed."
+                    : (result.failedPaths[path] ?? "Not attempted."),
                 bytes: metadata?.sizeBytes ?? 0,
                 cleanupTier: metadata?.cleanupTier,
                 safety: metadata?.safety,
@@ -12552,7 +12745,7 @@ public struct StorageView: View {
         }
     }
 
-    nonisolated private static func trashSingleItem(
+    private nonisolated static func trashSingleItem(
         _ path: String,
         activeWriterProbe: TrashService.ActiveWriterProbe?
     ) -> (trashURL: URL?, message: String) {
@@ -12689,7 +12882,7 @@ public struct StorageView: View {
         }
     }
 
-    nonisolated private static func emptyTrackedTrashItems(
+    private nonisolated static func emptyTrackedTrashItems(
         _ urls: [URL]
     ) -> (removed: Int, missing: Int, failed: Int, firstError: String?) {
         let outcome = TrashService.emptyTrashItems(urls)
@@ -12823,8 +13016,8 @@ public struct StorageView: View {
                 path: path,
                 detail: pathSucceeded ? "Moved to Finder Trash."
                     : pathAlreadyReclaimed
-                        ? "Path no longer exists; treating it as already reclaimed."
-                        : (result.failedPaths[path] ?? "Not attempted."),
+                    ? "Path no longer exists; treating it as already reclaimed."
+                    : (result.failedPaths[path] ?? "Not attempted."),
                 bytes: bytesByPath[path] ?? fallbackBytes,
                 cleanupTier: metadata?.cleanupTier,
                 safety: metadata?.safety,
@@ -12871,7 +13064,7 @@ public struct StorageView: View {
         cleanupAuditEvents = StorageCleanupAuditLog.loadRecent()
     }
 
-    nonisolated private static func movePathsToTrash(
+    private nonisolated static func movePathsToTrash(
         _ paths: [String],
         activeWriterProbe: TrashService.ActiveWriterProbe?
     ) -> StorageCleanupExecutionResult {
@@ -12892,7 +13085,7 @@ public struct StorageView: View {
         )
     }
 
-    nonisolated private static func permanentlyCleanPaths(
+    private nonisolated static func permanentlyCleanPaths(
         _ paths: [String],
         activeWriterProbe: TrashService.ActiveWriterProbe?
     ) -> StoragePermanentCleanupResult {
@@ -13181,7 +13374,9 @@ private enum StorageSimilarityFilter: String, CaseIterable, Identifiable {
     case similarBinaries
     case otherRedundancy
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var label: String {
         switch self {
@@ -13239,7 +13434,9 @@ private enum StorageSection: String, CaseIterable, Identifiable {
     case audit
     case insights
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var label: String {
         switch self {
@@ -13293,7 +13490,9 @@ private enum StorageExplorePane: String, CaseIterable, Identifiable {
     case cold
     case raw
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var label: String {
         switch self {
@@ -13322,17 +13521,30 @@ private struct StorageTreemapLayout: Identifiable {
     let node: StorageTreemapNodeModel
     let rect: CGRect
 
-    var id: String { node.id }
+    var id: String {
+        node.id
+    }
 }
 
 private struct StorageCubeNodeBin: Identifiable {
     let node: StorageTreemapNodeModel
     let bin: StorageCubeProjectionBin
 
-    var id: String { node.id }
-    var cubeCount: Int { bin.cubeCount }
-    var startIndex: Int { bin.startIndex }
-    var endIndex: Int { bin.endIndex }
+    var id: String {
+        node.id
+    }
+
+    var cubeCount: Int {
+        bin.cubeCount
+    }
+
+    var startIndex: Int {
+        bin.startIndex
+    }
+
+    var endIndex: Int {
+        bin.endIndex
+    }
 
     func contains(_ index: Int) -> Bool {
         index >= startIndex && index < endIndex
@@ -13353,7 +13565,9 @@ private enum StorageVisualExplorerMode: String, CaseIterable, Identifiable {
     case treemap
     case table
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var label: String {
         switch self {
@@ -13373,7 +13587,9 @@ private enum StorageArtifactScope: String, CaseIterable, Identifiable {
     case agentLinked
     case partial
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var label: String {
         switch self {
@@ -13411,7 +13627,9 @@ private enum StorageColdDataSort: String, CaseIterable, Identifiable {
     case recommended
     case largest
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var label: String {
         switch self {
@@ -13445,7 +13663,9 @@ private enum StorageArtifactSort: String, CaseIterable, Identifiable {
     case path
     case tier
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var label: String {
         switch self {
@@ -13502,7 +13722,9 @@ private enum StorageFilter: String, CaseIterable, Identifiable {
     case risky
     case all
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var label: String {
         switch self {
