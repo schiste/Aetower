@@ -364,7 +364,7 @@ fn build_storage_situation_response(
     ];
     if dirty_summary.unknown_gap {
         caveats.push(
-            "Native FSEvents reported an unknown gap; affected roots need a verifying refresh before cleanup actions are trusted."
+            "Native FSEvents reported an unknown gap; affected roots need a verifying refresh before indexed-path cleanup actions are trusted. Runtime-owned Docker/Colima data is measured through its own live control plane."
                 .to_owned(),
         );
     }
@@ -496,7 +496,7 @@ fn storage_situation_recovery_plan(
             state: "verification-required".to_owned(),
             reason: "unknown-fsevents-gap".to_owned(),
             roots: dirty_summary.unknown_gap_roots.clone(),
-            next_step: "Run a resumable verifying refresh for the affected roots when host pressure allows it; cached facts remain displayable, but cleanup stays blocked until verification clears the gap."
+            next_step: "Run a resumable verifying refresh for the affected roots when host pressure allows it; cached path facts remain displayable and indexed-path cleanup stays blocked until verification clears the gap. Runtime-owned Docker/Colima cleanup remains independently available when its live probe succeeds."
                 .to_owned(),
             cleanup_blocked: true,
             automatic: true,
@@ -508,9 +508,7 @@ fn storage_situation_recovery_plan(
             state: "incremental-refresh-pending".to_owned(),
             reason: "dirty-paths-queued".to_owned(),
             roots: Vec::new(),
-            next_step:
-                "Continue changed-path measurement when the app scheduler allows storage work."
-                    .to_owned(),
+            next_step: "Continue changed-path measurement when the app scheduler allows storage work; indexed-path cleanup waits for verification, while runtime-owned Docker/Colima cleanup remains independently available when its live probe succeeds.".to_owned(),
             cleanup_blocked: true,
             automatic: true,
             source: "storage_index".to_owned(),
