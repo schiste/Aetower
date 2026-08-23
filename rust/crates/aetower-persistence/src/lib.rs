@@ -1,4 +1,5 @@
 use std::{
+    ffi::CString,
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -9,6 +10,25 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+#[cfg(unix)]
+fn available_bytes(path: &Path) -> Option<u64> {
+    let path = CString::new(path.to_string_lossy().as_bytes()).ok()?;
+    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `path` is a NUL-terminated path and `stats` points to writable
+    // storage owned by this function. libc fills the structure atomically.
+    let result = unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) };
+    if result != 0 {
+        return None;
+    }
+    let stats = unsafe { stats.assume_init() };
+    (stats.f_bavail as u64).checked_mul(stats.f_frsize)
+}
+
+#[cfg(not(unix))]
+fn available_bytes(_path: &Path) -> Option<u64> {
+    None
+}
 
 use aetower_diagnostics::{
     DiagnosticsEvent, DiagnosticsLevel, DiagnosticsStore, DiagnosticsSubsystem,
@@ -38,6 +58,11 @@ const ENTITY_WAKEUP_BUCKET_PER_SECOND: f32 = 25.0;
 const HISTORY_PERSISTED_ENTITY_LIMIT: usize = 64;
 const HISTORY_PERSISTED_TREND_LIMIT: usize = 12;
 const HISTORY_PERSISTED_TIMELINE_LIMIT: usize = 128;
+/// Keep a reserve so Aetower does not turn a low-disk condition into a
+/// SQLite write failure loop. The history view remains readable while writes
+/// are paused and maintenance can still reclaim rows.
+const HISTORY_MIN_FREE_BYTES: u64 = 512 * 1024 * 1024;
+const HISTORY_DISK_PRESSURE_DIAGNOSTIC_INTERVAL_MILLIS: u64 = 5 * 60 * 1000;
 const HISTORY_PERSISTED_RECOMMENDATION_LIMIT: usize = 3;
 const HISTORY_PERSISTED_SESSION_MARKER_LIMIT: usize = 8;
 const HISTORY_PERSISTED_HOST_VECTOR_LIMIT: usize = 16;
@@ -457,6 +482,7 @@ pub struct HistoryStore {
     /// emitted exactly once per process, *after* the sink is wired up
     /// (the migration itself runs before the engine plumbs diagnostics).
     pending_migration_event: Option<AutoVacuumMigrationOutcome>,
+    last_disk_pressure_diagnostic_millis: u64,
 }
 
 struct HistoryWriter {
@@ -503,6 +529,7 @@ impl HistoryStore {
             last_persisted_millis: None,
             coalesced_write_count: 0,
             pending_migration_event,
+            last_disk_pressure_diagnostic_millis: 0,
         })
     }
 
@@ -541,6 +568,9 @@ impl HistoryStore {
             return;
         }
         self.write_counter = 0;
+        if self.disk_write_paused(snapshot.captured_at_millis) {
+            return;
+        }
         let Some(signature) = self.prepare_store(snapshot, "interval") else {
             return;
         };
@@ -554,12 +584,43 @@ impl HistoryStore {
     /// contention, so maintenance windows do not permanently drop the newest
     /// history point.
     pub fn store_immediately(&mut self, snapshot: &SystemSnapshot) {
+        if self.disk_write_paused(snapshot.captured_at_millis) {
+            return;
+        }
         let Some(signature) = self.prepare_store(snapshot, "immediate") else {
             return;
         };
         if self.enqueue_store(snapshot, "history-deferred-write-backpressure") {
             self.mark_snapshot_persisted(snapshot, signature);
         }
+    }
+
+    fn disk_write_paused(&mut self, now_millis: u64) -> bool {
+        let Some(available_bytes) = available_bytes(&self.db_path) else {
+            return false;
+        };
+        if available_bytes >= HISTORY_MIN_FREE_BYTES {
+            return false;
+        }
+        if now_millis.saturating_sub(self.last_disk_pressure_diagnostic_millis)
+            >= HISTORY_DISK_PRESSURE_DIAGNOSTIC_INTERVAL_MILLIS
+        {
+            if let Some(diagnostics) = self.diagnostics.as_ref() {
+                diagnostics.emit(
+                    DiagnosticsEvent::builder(
+                        DiagnosticsLevel::Error,
+                        DiagnosticsSubsystem::Persistence,
+                        "history-write-paused-disk-pressure",
+                        "Paused persisted history writes because the volume is critically low on free space.",
+                    )
+                    .field("available_bytes", available_bytes)
+                    .field("reserve_bytes", HISTORY_MIN_FREE_BYTES)
+                    .build(),
+                );
+            }
+            self.last_disk_pressure_diagnostic_millis = now_millis;
+        }
+        true
     }
 
     fn prepare_store(
