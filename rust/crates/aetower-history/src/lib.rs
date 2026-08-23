@@ -2237,8 +2237,11 @@ mod tests {
 
         let pressured_host = HostSnapshot {
             memory_total_bytes: 16 * 1024 * 1024 * 1024,
+            memory_used_bytes: 15 * 1024 * 1024 * 1024,
             compressed_memory_bytes: 3 * 1024 * 1024 * 1024,
             swap_used_bytes: 2 * 1024 * 1024 * 1024,
+            memory_swapin_bps: 16 * 1024 * 1024,
+            memory_swapout_bps: 16 * 1024 * 1024,
             ..HostSnapshot::default()
         };
         history.update(10_000, &pressured_host, &mut entities);

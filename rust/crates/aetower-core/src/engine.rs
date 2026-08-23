@@ -165,6 +165,14 @@ impl RuntimeCollectionConfig {
         if host.on_battery || host.low_power_mode {
             return self.low_power_tick;
         }
+        // During severe, measured memory impact, collecting less often is
+        // materially better for interactive latency than merely switching to
+        // the normal low-power cadence. Keep the UI alive, but give the host
+        // 15 seconds between expensive process refreshes while paging and
+        // compression are actively hurting responsiveness.
+        if host_memory_performance_impact_score(host) >= MEMORY_IMPACT_SEVERE_SCORE {
+            return self.low_power_tick.max(Duration::from_secs(15));
+        }
         if host_pressure_safe_mode_reason(host).is_some() {
             return self.low_power_tick;
         }
