@@ -5401,32 +5401,35 @@ public struct StorageView: View {
         .accessibilityLabel(storageOwnershipAccessibilityLabel(breakdown, free: free))
     }
 
-    private func storageOwnershipLegend(_ breakdown: StorageOwnershipBreakdownModel) -> some View {
+    private func storageOwnershipSummary(_ breakdown: StorageOwnershipBreakdownModel) -> some View {
         let buckets = breakdown.stableBuckets.filter { $0.bytes > 0 }
+        let visibleBuckets = Array(buckets.prefix(4))
+        let hiddenBytes = buckets.dropFirst(4).reduce(UInt64(0)) { $0 &+ $1.bytes }
 
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-            LazyVGrid(
-                columns: [
-                    GridItem(
-                        .adaptive(minimum: AetowerDesign.Size.storageLegendMinWidth),
-                        spacing: AetowerDesign.Spacing.md
-                    ),
-                ],
-                alignment: .leading,
-                spacing: AetowerDesign.Spacing.xs
-            ) {
-                ForEach(buckets) { bucket in
+            HStack(spacing: AetowerDesign.Spacing.md) {
+                Text("Used \(formatBytes(breakdown.usedBytes))")
+                    .font(AetowerDesign.Typography.metadataStrong)
+                    .foregroundStyle(AetowerDesign.Ink.primary)
+                Spacer(minLength: 0)
+                if breakdown.reclaimableBytes > 0 {
+                    Label(
+                        "\(formatBytes(breakdown.reclaimableBytes)) reclaimable",
+                        systemImage: "arrow.down.circle"
+                    )
+                    .font(AetowerDesign.Typography.metadataStrong)
+                    .foregroundStyle(AetowerDesign.Tone.disk)
+                }
+            }
+
+            HStack(spacing: AetowerDesign.Spacing.md) {
+                ForEach(visibleBuckets) { bucket in
                     HStack(spacing: AetowerDesign.Spacing.storageLegendItem) {
                         AetowerStorageOwnerMark(color: storageOwnershipColor(bucket.id))
                         Text(storageOwnershipDisplayLabel(bucket))
                             .font(AetowerDesign.Typography.caption)
                             .foregroundStyle(AetowerDesign.Ink.secondary)
                             .lineLimit(1)
-                        Spacer(minLength: AetowerDesign.Spacing.xxs)
-                        if bucket.reclaimableBytes > 0 {
-                            AetowerStorageReclaimMark()
-                                .help("\(formatBytes(bucket.reclaimableBytes)) safely reclaimable")
-                        }
                         Text(formatBytes(bucket.bytes))
                             .font(AetowerDesign.Typography.dataSmall)
                             .foregroundStyle(AetowerDesign.Ink.primary)
@@ -5434,26 +5437,41 @@ public struct StorageView: View {
                     }
                     .help(storageOwnershipBucketHelp(bucket))
                 }
+                if hiddenBytes > 0 {
+                    Text("+ \(formatBytes(hiddenBytes)) other")
+                        .font(AetowerDesign.Typography.caption)
+                        .foregroundStyle(AetowerDesign.Ink.tertiary)
+                }
+                Spacer(minLength: 0)
             }
 
-            HStack(spacing: AetowerDesign.Spacing.md) {
-                if breakdown.reclaimableBytes > 0 {
-                    HStack(spacing: AetowerDesign.Spacing.storageLegendLabel) {
-                        AetowerStorageReclaimMark(isEmphasized: true)
-                        Text("red seam · \(formatBytes(breakdown.reclaimableBytes)) reclaimable")
+            if breakdown.unattributedBytes > 0 || breakdown.generationStatus == "partial" {
+                Text("Some data is still being classified; totals will settle after the next ownership refresh.")
+                    .font(AetowerDesign.Typography.metadata)
+                    .foregroundStyle(AetowerDesign.Ink.tertiary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func storageRepositoryDetails(_ breakdown: StorageOwnershipBreakdownModel) -> some View {
+        if breakdown.stableBuckets.contains(where: { $0.id == "repositories" }) {
+            DisclosureGroup {
+                storageRepositoryStrata(breakdown)
+                    .padding(.top, AetowerDesign.Spacing.xs)
+            } label: {
+                HStack(spacing: AetowerDesign.Spacing.sm) {
+                    Label("Repository details", systemImage: "folder.badge.gearshape")
+                        .font(AetowerDesign.Typography.metadataStrong)
+                    Spacer()
+                    if let repository = breakdown.stableBuckets.first(where: { $0.id == "repositories" }) {
+                        Text(formatBytes(repository.bytes))
+                            .font(AetowerDesign.Typography.dataSmall)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                            .monospacedDigit()
                     }
                 }
-                if breakdown.unattributedBytes > 0 {
-                    Text("\(formatBytes(breakdown.attributedBytes)) attributed · remainder stays Other")
-                }
-                if let generationId = breakdown.generationId {
-                    Text(
-                        "ownership generation \(generationId) · rules v\(breakdown.classifierVersion ?? 0) · \(breakdown.generationStatus ?? "unknown")"
-                    )
-                }
             }
-            .font(AetowerDesign.Typography.metadata)
-            .foregroundStyle(AetowerDesign.Ink.tertiary)
         }
     }
 
@@ -9729,40 +9747,7 @@ public struct StorageView: View {
 
             storageSituationVolumeHeader(situation)
 
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 168), spacing: AetowerDesign.Spacing.sm)],
-                alignment: .leading,
-                spacing: AetowerDesign.Spacing.sm
-            ) {
-                summaryCard(
-                    "Inventory",
-                    value: formatBytes(situation.summary.inventorySizeBytes),
-                    detail: "\(situation.summary.itemCount) indexed items",
-                    systemImage: "shippingbox",
-                    tone: AetowerDesign.Tone.disk
-                )
-                summaryCard(
-                    "Safe Now",
-                    value: formatBytes(situation.summary.safelyReclaimableNowBytes),
-                    detail: "safe reclaim total",
-                    systemImage: "checkmark.shield",
-                    tone: AetowerDesign.Status.ready
-                )
-                summaryCard(
-                    "Maybe",
-                    value: formatBytes(situation.summary.maybeReclaimableBytes),
-                    detail: "verify before cleanup",
-                    systemImage: "questionmark.folder",
-                    tone: AetowerDesign.Status.warning
-                )
-                summaryCard(
-                    "Review",
-                    value: formatBytes(situation.summary.reviewRequiredBytes),
-                    detail: "\(formatBytes(situation.summary.dangerousUserDataBytes)) user data",
-                    systemImage: "exclamationmark.triangle",
-                    tone: AetowerDesign.Status.warning
-                )
-            }
+            storageSituationQuickFacts(situation)
 
             if showKnownPaths {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
@@ -9827,10 +9812,10 @@ public struct StorageView: View {
                         free: free,
                         breakdown: breakdown
                     )
-                    storageRepositoryStrata(breakdown)
+                    storageOwnershipSummary(breakdown)
                     storageBulkCleanupControls()
                     storageRuntimeCleanupControls()
-                    storageOwnershipLegend(breakdown)
+                    storageRepositoryDetails(breakdown)
                 } else {
                     diskCapacityBar(
                         total: volume.totalBytes,
@@ -9862,6 +9847,40 @@ public struct StorageView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func storageSituationQuickFacts(_ situation: StorageSituationModel) -> some View {
+        HStack(spacing: AetowerDesign.Spacing.lg) {
+            storageQuickFact(
+                label: "Indexed",
+                value: "\(situation.summary.itemCount.formatted()) items"
+            )
+            storageQuickFact(
+                label: "Safe to reclaim",
+                value: formatBytes(situation.summary.safelyReclaimableNowBytes)
+            )
+            storageQuickFact(
+                label: "Needs review",
+                value: formatBytes(situation.summary.maybeReclaimableBytes + situation.summary.reviewRequiredBytes)
+            )
+            Spacer(minLength: 0)
+        }
+        .padding(.top, -AetowerDesign.Spacing.md)
+    }
+
+    private func storageQuickFact(
+        label: String,
+        value: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+            Text(label.uppercased())
+                .font(AetowerDesign.Typography.metadataStrong)
+                .foregroundStyle(AetowerDesign.Ink.tertiary)
+            Text(value)
+                .font(AetowerDesign.Typography.dataSmall)
+                .foregroundStyle(AetowerDesign.Ink.primary)
+                .monospacedDigit()
         }
     }
 
