@@ -5403,18 +5403,16 @@ public struct StorageView: View {
 
     private func storageOwnershipSummary(_ breakdown: StorageOwnershipBreakdownModel) -> some View {
         let buckets = breakdown.stableBuckets.filter { $0.bytes > 0 }
-        let visibleBuckets = Array(buckets.prefix(4))
-        let hiddenBytes = buckets.dropFirst(4).reduce(UInt64(0)) { $0 &+ $1.bytes }
 
         return VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
             HStack(spacing: AetowerDesign.Spacing.md) {
-                Text("Used \(formatBytes(breakdown.usedBytes))")
+                Text("Used by")
                     .font(AetowerDesign.Typography.metadataStrong)
                     .foregroundStyle(AetowerDesign.Ink.primary)
                 Spacer(minLength: 0)
                 if breakdown.reclaimableBytes > 0 {
                     Label(
-                        "\(formatBytes(breakdown.reclaimableBytes)) reclaimable",
+                        "\(formatBytes(breakdown.reclaimableBytes)) to reclaim",
                         systemImage: "arrow.down.circle"
                     )
                     .font(AetowerDesign.Typography.metadataStrong)
@@ -5422,27 +5420,31 @@ public struct StorageView: View {
                 }
             }
 
-            HStack(spacing: AetowerDesign.Spacing.md) {
-                ForEach(visibleBuckets) { bucket in
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(minimum: 150), spacing: AetowerDesign.Spacing.md),
+                    GridItem(.flexible(minimum: 150), spacing: AetowerDesign.Spacing.md),
+                    GridItem(.flexible(minimum: 150), spacing: AetowerDesign.Spacing.md),
+                ],
+                alignment: .leading,
+                spacing: AetowerDesign.Spacing.xs
+            ) {
+                ForEach(buckets) { bucket in
                     HStack(spacing: AetowerDesign.Spacing.storageLegendItem) {
                         AetowerStorageOwnerMark(color: storageOwnershipColor(bucket.id))
-                        Text(storageOwnershipDisplayLabel(bucket))
-                            .font(AetowerDesign.Typography.caption)
-                            .foregroundStyle(AetowerDesign.Ink.secondary)
-                            .lineLimit(1)
-                        Text(formatBytes(bucket.bytes))
-                            .font(AetowerDesign.Typography.dataSmall)
-                            .foregroundStyle(AetowerDesign.Ink.primary)
-                            .monospacedDigit()
+                        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
+                            Text(storageOwnershipDisplayLabel(bucket))
+                                .font(AetowerDesign.Typography.caption)
+                                .foregroundStyle(AetowerDesign.Ink.secondary)
+                                .lineLimit(1)
+                            Text("\(formatBytes(bucket.bytes)) · \(storageOwnershipShare(bucket, of: breakdown.usedBytes))")
+                                .font(AetowerDesign.Typography.dataSmall)
+                                .foregroundStyle(AetowerDesign.Ink.primary)
+                                .monospacedDigit()
+                        }
                     }
                     .help(storageOwnershipBucketHelp(bucket))
                 }
-                if hiddenBytes > 0 {
-                    Text("+ \(formatBytes(hiddenBytes)) other")
-                        .font(AetowerDesign.Typography.caption)
-                        .foregroundStyle(AetowerDesign.Ink.tertiary)
-                }
-                Spacer(minLength: 0)
             }
 
             if breakdown.unattributedBytes > 0 || breakdown.generationStatus == "partial" {
@@ -5451,6 +5453,14 @@ public struct StorageView: View {
                     .foregroundStyle(AetowerDesign.Ink.tertiary)
             }
         }
+    }
+
+    private func storageOwnershipShare(
+        _ bucket: StorageOwnershipBucketModel,
+        of total: UInt64
+    ) -> String {
+        guard total > 0 else { return "—" }
+        return "\(Int((Double(bucket.bytes) / Double(total) * 100).rounded()))%"
     }
 
     @ViewBuilder
@@ -9747,8 +9757,6 @@ public struct StorageView: View {
 
             storageSituationVolumeHeader(situation)
 
-            storageSituationQuickFacts(situation)
-
             if showKnownPaths {
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.md) {
                     HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.md) {
@@ -9807,10 +9815,11 @@ public struct StorageView: View {
                         .foregroundStyle(AetowerDesign.Ink.secondary)
                 }
                 if let breakdown = situation.ownershipBreakdown, breakdown.isUsable {
-                    storageOwnershipCapacityBar(
+                    diskCapacityBar(
                         total: volume.totalBytes,
                         free: free,
-                        breakdown: breakdown
+                        reclaimable: reclaimable,
+                        tone: tone
                     )
                     storageOwnershipSummary(breakdown)
                     storageBulkCleanupControls()
@@ -9847,40 +9856,6 @@ public struct StorageView: View {
                     }
                 }
             }
-        }
-    }
-
-    private func storageSituationQuickFacts(_ situation: StorageSituationModel) -> some View {
-        HStack(spacing: AetowerDesign.Spacing.lg) {
-            storageQuickFact(
-                label: "Indexed",
-                value: "\(situation.summary.itemCount.formatted()) items"
-            )
-            storageQuickFact(
-                label: "Safe to reclaim",
-                value: formatBytes(situation.summary.safelyReclaimableNowBytes)
-            )
-            storageQuickFact(
-                label: "Needs review",
-                value: formatBytes(situation.summary.maybeReclaimableBytes + situation.summary.reviewRequiredBytes)
-            )
-            Spacer(minLength: 0)
-        }
-        .padding(.top, -AetowerDesign.Spacing.md)
-    }
-
-    private func storageQuickFact(
-        label: String,
-        value: String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
-            Text(label.uppercased())
-                .font(AetowerDesign.Typography.metadataStrong)
-                .foregroundStyle(AetowerDesign.Ink.tertiary)
-            Text(value)
-                .font(AetowerDesign.Typography.dataSmall)
-                .foregroundStyle(AetowerDesign.Ink.primary)
-                .monospacedDigit()
         }
     }
 
