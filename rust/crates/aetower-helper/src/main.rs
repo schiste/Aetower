@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs,
     io::Read,
+    os::unix::fs::PermissionsExt,
+    path::Path,
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -10,6 +13,33 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+
+const TRUSTED_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+const ESLOGGER_PATHS: [&str; 3] = [
+    "/usr/bin/eslogger",
+    "/usr/local/bin/eslogger",
+    "/opt/homebrew/bin/eslogger",
+];
+
+/// Build subprocesses with a deterministic environment. This helper runs with
+/// elevated privileges, so resolving a bare command through an inherited PATH
+/// would let an attacker influence which executable is launched.
+fn trusted_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    command
+        .env_clear()
+        .env("PATH", TRUSTED_PATH)
+        .env("LC_ALL", "C");
+    command
+}
+
+fn is_secure_executable(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    let mode = metadata.permissions().mode();
+    metadata.is_file() && mode & 0o111 != 0 && mode & 0o022 == 0
+}
 
 #[derive(Debug, Serialize)]
 struct HelperSnapshot {
@@ -149,7 +179,7 @@ fn apply_process_action_command(args: &[String]) -> Result<ProcessActionHelperRe
 
     let (program, command_args) = process_action_command_parts(action, &target_pids)?;
     let command_label = format!("{program} {}", command_args.join(" "));
-    let output = Command::new(program)
+    let output = trusted_command(program)
         .args(&command_args)
         .output()
         .with_context(|| format!("failed to run {program}"))?;
@@ -300,7 +330,7 @@ fn apply_fan_command(args: &[String], command: FanCommand) -> Result<FanControlR
 
 fn collect_snapshot() -> Result<HelperSnapshot> {
     let executable_names = collect_executable_names()?;
-    let lsof_output = Command::new("lsof")
+    let lsof_output = trusted_command("/usr/sbin/lsof")
         .args(["-nP", "-iTCP", "-iUDP", "-FpcnP"])
         .output()
         .context("failed to execute lsof")?;
@@ -380,7 +410,7 @@ fn collect_snapshot() -> Result<HelperSnapshot> {
 }
 
 fn collect_executable_names() -> Result<BTreeMap<u32, String>> {
-    let output = Command::new("ps")
+    let output = trusted_command("/bin/ps")
         .args(["-axo", "pid=,comm="])
         .output()
         .context("failed to execute ps")?;
@@ -428,7 +458,7 @@ fn collect_endpoint_security_sample() -> Result<EndpointSecuritySample> {
         });
     };
 
-    let mut child = Command::new(eslogger_path)
+    let mut child = trusted_command(&eslogger_path)
         .args(["--format", "json", "exec", "fork", "exit"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -470,7 +500,7 @@ fn probe_endpoint_security_status() -> Result<EndpointSecurityStatusSnapshot> {
 
     if let Some(path) = eslogger_path.as_deref() {
         let probe_started = Instant::now();
-        let mut child = Command::new(path)
+        let mut child = trusted_command(path)
             .args(["--format", "json", "exec"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -545,17 +575,15 @@ fn probe_endpoint_security_status() -> Result<EndpointSecurityStatusSnapshot> {
 }
 
 fn resolve_eslogger_path() -> Option<String> {
-    let output = Command::new("which").arg("eslogger").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    (!path.is_empty()).then_some(path)
+    ESLOGGER_PATHS.iter().find_map(|candidate| {
+        let path = fs::canonicalize(candidate).ok()?;
+        is_secure_executable(&path).then(|| path.to_string_lossy().into_owned())
+    })
 }
 
 fn helper_has_endpoint_security_entitlement() -> Result<bool> {
     let exe = std::env::current_exe().context("current_exe")?;
-    let output = Command::new("codesign")
+    let output = trusted_command("/usr/bin/codesign")
         .args(["-d", "--entitlements", ":-"])
         .arg(&exe)
         .output()
@@ -569,7 +597,7 @@ fn helper_has_endpoint_security_entitlement() -> Result<bool> {
 }
 
 fn current_uid() -> Option<u32> {
-    let output = Command::new("id").arg("-u").output().ok()?;
+    let output = trusted_command("/usr/bin/id").arg("-u").output().ok()?;
     if !output.status.success() {
         return None;
     }

@@ -1,8 +1,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    env,
+    env, fs,
     io::{ErrorKind, Read, Write},
     net::TcpStream,
+    os::unix::fs::PermissionsExt,
     os::unix::net::UnixStream,
     path::Path,
     process::Command,
@@ -36,6 +37,8 @@ const DOCKER_TIMEOUT: Duration = Duration::from_millis(300);
 const CHROMIUM_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 const DOCKER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
 const PRIVILEGED_HELPER_REFRESH_INTERVAL_MILLIS: u64 = 10_000;
+const TRUSTED_SUBPROCESS_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+const CODESIGN_PATH: &str = "/usr/bin/codesign";
 // Peer adapters are optional services. When they are down, keep retrying but
 // double the retry interval after each failed refresh so a dead socket is not
 // hammered on the normal polling cadence. Success or reconfiguration resets it.
@@ -2100,11 +2103,74 @@ impl AdapterState {
 
     fn privileged_helper_path(&self) -> Option<String> {
         if self.privileged_helper_enabled {
-            self.privileged_helper_path.clone()
+            self.privileged_helper_path
+                .as_deref()
+                .and_then(validate_privileged_helper_path)
         } else {
             None
         }
     }
+}
+
+/// Validate the configured helper before any process is launched with its
+/// privileges. The path must be absolute, resolve to a regular executable that
+/// is not writable by group/other, live below non-writable directories, and
+/// pass macOS's strict code-signature verification.
+fn validate_privileged_helper_path(path: &str) -> Option<String> {
+    let candidate = Path::new(path);
+    if !candidate.is_absolute() {
+        return None;
+    }
+    let metadata = fs::symlink_metadata(candidate).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return None;
+    }
+
+    let canonical = candidate.canonicalize().ok()?;
+    let metadata = fs::symlink_metadata(&canonical).ok()?;
+    let mode = metadata.permissions().mode();
+    if !metadata.file_type().is_file() || mode & 0o111 == 0 || mode & 0o022 != 0 {
+        return None;
+    }
+    if !privileged_helper_parent_dirs_are_secure(&canonical) {
+        return None;
+    }
+
+    let output = trusted_subprocess(CODESIGN_PATH)
+        .args(["--verify", "--strict", "--deep"])
+        .arg(&canonical)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| canonical.to_string_lossy().into_owned())
+}
+
+fn trusted_subprocess(program: &str) -> Command {
+    let mut command = Command::new(program);
+    command
+        .env_clear()
+        .env("PATH", TRUSTED_SUBPROCESS_PATH)
+        .env("LC_ALL", "C");
+    command
+}
+
+fn privileged_helper_parent_dirs_are_secure(path: &Path) -> bool {
+    let mut current = path.parent();
+    while let Some(directory) = current {
+        let Ok(metadata) = fs::metadata(directory) else {
+            return false;
+        };
+        if !metadata.is_dir() || metadata.permissions().mode() & 0o022 != 0 {
+            return false;
+        }
+        if directory == Path::new("/") {
+            break;
+        }
+        current = directory.parent();
+    }
+    true
 }
 
 fn adapter_capability_snapshot(
@@ -2239,48 +2305,61 @@ fn capability_status(state: &AdapterState, kind: &CapabilityKind) -> (Capability
             } else {
                 (
                     CapabilityState::Unavailable,
-                    format!("Docker socket not detected at {}.", state.docker_socket_path),
+                    format!(
+                        "Docker socket not detected at {}.",
+                        state.docker_socket_path
+                    ),
                 )
             }
         }
-        CapabilityKind::PrivilegedHelper => match (state.privileged_helper_enabled, state.privileged_helper_path.as_deref()) {
-            (true, Some(path)) if Path::new(path).exists() => (
-                CapabilityState::Granted,
-                format!(
-                    "Privileged helper configured at {path}. {}",
-                    privileged_helper_runtime_detail(state, now)
-                ),
-            ),
-            (true, Some(path)) => (
-                CapabilityState::Unavailable,
-                format!("Privileged helper is enabled but missing at {path}."),
-            ),
-            (true, None) => (
-                CapabilityState::Unavailable,
-                "Privileged helper is enabled but no helper path is configured.".to_owned(),
-            ),
-            _ => (
-                CapabilityState::Unavailable,
-                "Privileged helper is disabled. Enable it and provide a helper path for deeper attribution.".to_owned(),
-            ),
-        },
-        CapabilityKind::EndpointSecurity => {
-            let Some(path) = state.privileged_helper_path.as_deref() else {
-                return (
+        CapabilityKind::PrivilegedHelper => {
+            if !state.privileged_helper_enabled {
+                (
                     CapabilityState::Unavailable,
-                    "Endpoint Security requires the optional enterprise helper path to be configured.".to_owned(),
-                );
-            };
+                    "Privileged helper is disabled. Enable it and provide a helper path for deeper attribution.".to_owned(),
+                )
+            } else if let Some(path) = state.privileged_helper_path() {
+                (
+                    CapabilityState::Granted,
+                    format!(
+                        "Privileged helper configured at {path}. {}",
+                        privileged_helper_runtime_detail(state, now)
+                    ),
+                )
+            } else if let Some(path) = state.privileged_helper_path.as_deref() {
+                (
+                    CapabilityState::Unavailable,
+                    format!(
+                        "Privileged helper at {path} is missing or failed secure executable or code-signature validation."
+                    ),
+                )
+            } else {
+                (
+                    CapabilityState::Unavailable,
+                    "Privileged helper is enabled but no helper path is configured.".to_owned(),
+                )
+            }
+        }
+        CapabilityKind::EndpointSecurity => {
             if !state.privileged_helper_enabled {
                 return (
                     CapabilityState::Unavailable,
-                    "Endpoint Security is disabled because the enterprise helper is disabled.".to_owned(),
+                    "Endpoint Security is disabled because the enterprise helper is disabled."
+                        .to_owned(),
                 );
             }
-            if !Path::new(path).exists() {
+            if state.privileged_helper_path().is_none() {
+                if let Some(configured_path) = state.privileged_helper_path.as_deref() {
+                    return (
+                        CapabilityState::Unavailable,
+                        format!(
+                            "Endpoint Security helper at {configured_path} is missing or failed secure executable or code-signature validation."
+                        ),
+                    );
+                }
                 return (
                     CapabilityState::Unavailable,
-                    format!("Endpoint Security helper path is missing at {path}."),
+                    "Endpoint Security requires the optional enterprise helper path to be configured.".to_owned(),
                 );
             }
             if let Some(status) = state.cached_endpoint_security_status.as_ref() {
@@ -2387,11 +2466,7 @@ fn capability_health(state: &AdapterState, kind: &CapabilityKind, now: u64) -> C
         CapabilityKind::PrivilegedHelper => {
             if !state.privileged_helper_enabled {
                 CapabilityHealth::Configured
-            } else if state
-                .privileged_helper_path
-                .as_deref()
-                .is_none_or(|path| !Path::new(path).exists())
-            {
+            } else if state.privileged_helper_path().is_none() {
                 CapabilityHealth::Degraded
             } else {
                 adapter_health_kind(
@@ -2406,11 +2481,7 @@ fn capability_health(state: &AdapterState, kind: &CapabilityKind, now: u64) -> C
         CapabilityKind::EndpointSecurity => {
             if !state.privileged_helper_enabled {
                 CapabilityHealth::Configured
-            } else if state
-                .privileged_helper_path
-                .as_deref()
-                .is_none_or(|path| !Path::new(path).exists())
-            {
+            } else if state.privileged_helper_path().is_none() {
                 CapabilityHealth::Degraded
             } else {
                 adapter_health_kind(
@@ -3266,7 +3337,7 @@ fn shorten_home_path(path: &str) -> String {
 }
 
 fn fetch_privileged_helper_sample(helper_path: &str) -> Result<PrivilegedHelperSnapshot, String> {
-    let output = Command::new(helper_path)
+    let output = trusted_subprocess(helper_path)
         .args(["sample", "--json"])
         .output()
         .map_err(|error| format!("helper execution failed: {error}"))?;
@@ -3278,7 +3349,7 @@ fn fetch_privileged_helper_sample(helper_path: &str) -> Result<PrivilegedHelperS
 }
 
 fn fetch_endpoint_security_sample(helper_path: &str) -> Result<EndpointSecuritySample, String> {
-    let output = Command::new(helper_path)
+    let output = trusted_subprocess(helper_path)
         .arg("esf-sample")
         .output()
         .map_err(|error| format!("helper ESF execution failed: {error}"))?;
@@ -3301,7 +3372,7 @@ fn invoke_helper_fan_command(
     fan_id: u8,
     rpm: Option<f32>,
 ) -> Result<(), String> {
-    let mut command = Command::new(helper_path);
+    let mut command = trusted_subprocess(helper_path);
     command.arg(subcommand).arg(fan_id.to_string());
     if let Some(rpm) = rpm {
         command.arg(rpm.to_string());
