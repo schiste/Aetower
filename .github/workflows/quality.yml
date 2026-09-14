@@ -34,7 +34,8 @@ jobs:
         run: |
           brew install gitleaks swiftlint semgrep
           cargo install cargo-deny --version 0.19.0 --locked
-          cargo deny fetch db --config deny.toml
+          cargo deny fetch db --config ../deny.toml
+        working-directory: rust
 
       - name: Run the full local pre-push gate
         env:
