@@ -187,12 +187,10 @@ sh scripts/release-public-preview.sh --prepare-only --publish-cloudflare
 This deploys the prepared Cloudflare Pages payload and verifies that:
 
 - the public appcast contains the expected version and build number
-- the immutable Sparkle archive resolves
-- the direct DMG resolves
-- the direct ZIP resolves
-- the Homebrew cask resolves
-- the corresponding source archive resolves
-- the signed PKG resolves
-- third-party notices resolve
+- the immutable and latest Sparkle ZIPs match the local release bytes and hashes
+- the Homebrew cask matches the local generated cask and archive hash
+- the corresponding source archives and checksum manifests match locally
+- the optional DMG and signed PKG match when included
+- third-party notices match the local generated notices
 
 Keep old appcast archives available so Sparkle can generate and serve deltas.

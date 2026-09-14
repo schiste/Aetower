@@ -60,7 +60,10 @@ history (immutable archives, Sparkle deltas), not just the newest release.
 `scripts/prepare-release-payload.sh` therefore always syncs the live payload
 down first (via `scripts/mirror-live-release-payload.sh`, which verifies the
 cask sha256, appcast enclosure lengths, and live Content-Lengths), then
-overlays the new release's `dist/` artifacts.
+overlays the new release's `dist/` artifacts. After deployment,
+`scripts/verify-published-release.sh` downloads the required public artifacts
+and compares their byte lengths and SHA-256 values with the local release set,
+including source checksum manifests and the generated notices.
 
 The release orchestrator does all of this:
 

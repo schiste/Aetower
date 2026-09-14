@@ -68,3 +68,4 @@ printf 'so that:\n'
 printf '  - appcast.xml is reachable at AETOWER_APPCAST_URL (%s)\n' "${AETOWER_APPCAST_URL:-<unset>}"
 printf '  - each archive resolves under the download URL prefix\n'
 printf '    (AETOWER_DOWNLOAD_URL_PREFIX, or the directory of AETOWER_APPCAST_URL).\n'
+printf '  - the public verifier can compare published bytes and SHA-256 values with the local release set.\n'
