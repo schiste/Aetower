@@ -19,8 +19,10 @@ The contract is:
 - `full` adds packaged-app operator/MCP smoke and optional `cargo-audit`
   cross-checking.
 
-Aetower does **not** use GitHub Actions for CI. The source of truth is the local
-hook-driven runner, so the same gates run before code leaves the machine.
+Aetower also runs the same pre-push gate in GitHub Actions on a macOS 15 runner
+for pushes and pull requests. The local hook-driven runner remains the source
+of truth; the hosted workflow installs its tools and invokes that same
+`scripts/ci-local.sh --mode pre-push` entry point.
 
 ## Installation
 
@@ -44,6 +46,7 @@ chmod +x .githooks/pre-commit .githooks/pre-push scripts/ci-local.sh scripts/ins
 | Manual pre-commit | `sh scripts/ci-local.sh --mode pre-commit` | `pre-commit` |
 | Manual pre-push | `sh scripts/ci-local.sh --mode pre-push` | `pre-push` |
 | Full local battery | `sh scripts/ci-local.sh --mode full` | `full` |
+| Hosted push/PR CI | `.github/workflows/quality.yml` | `pre-push` on `macos-15` |
 
 Compatibility aliases:
 

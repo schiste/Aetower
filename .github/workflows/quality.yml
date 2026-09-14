@@ -1,0 +1,42 @@
+name: Aetower quality
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: macOS 15 quality gate
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal \
+            --component rustfmt \
+            --component clippy
+
+      - name: Install quality tools
+        run: |
+          brew install gitleaks swiftlint semgrep
+          cargo install cargo-deny --version 0.19.0 --locked
+          cargo deny fetch db --config deny.toml
+
+      - name: Run the full local pre-push gate
+        env:
+          AETOWER_SKIP_DIRTY_WORKTREE_CONFIRM: "1"
+        run: sh scripts/ci-local.sh --mode pre-push
