@@ -591,7 +591,7 @@ private func mcpHelperHealthSeverity(_ runtime: RuntimeLagMetrics) -> OperatorSe
 
 private func mcpHelperHealthDetail(_ runtime: RuntimeLagMetrics) -> String {
     if runtime.staleMcpHelperCount > 0 {
-        return "\(runtime.staleMcpHelperCount) helper process(es) have been alive for more than 15 minutes. Helpers should exit when clients disconnect."
+        return "\(runtime.staleMcpHelperCount) helper process(es) have been alive for more than 15 minutes. Helpers should exit when clients disconnect; review their owners before taking any manual action."
     }
     if runtime.mcpHelperCount > 0 {
         return "\(runtime.mcpHelperCount) helper process(es) are currently attached to local MCP clients."

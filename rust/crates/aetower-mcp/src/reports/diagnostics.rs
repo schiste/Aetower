@@ -617,7 +617,7 @@ pub(crate) fn build_recommendations(
     if mcp_helper_severity(runtime) != SeverityBand::Info {
         recommendations.push(RecommendationItem {
             severity: mcp_helper_severity(runtime),
-            title: "Clean up stale MCP helper processes".to_owned(),
+            title: "Investigate stale MCP helper processes".to_owned(),
             detail: format!(
                 "{} helper processes are currently visible, {} of them older than {} minutes.",
                 runtime.mcp_helper_count,

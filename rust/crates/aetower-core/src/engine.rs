@@ -98,7 +98,6 @@ const RESOURCE_COST_NOMINAL_BATTERY_PACK_VOLTAGE: f64 = 11.4;
 const NANOJOULES_PER_WATT_HOUR: f64 = 3_600_000_000_000.0;
 const NANOWATTS_PER_WATT: f64 = 1_000_000_000.0;
 const MCP_HELPER_STALE_MILLIS: u64 = 15 * 60 * 1000;
-const MCP_HELPER_REAP_RETRY_MILLIS: u64 = 60 * 1000;
 const MCP_HELPER_LIFECYCLE_AGE_BUCKET_MILLIS: u64 = 15 * 60 * 1000;
 const SYSTEM_MARKER_LOOKBACK_MILLIS: u64 = 15 * 60 * 1000;
 const SYSTEM_MARKER_LOG_SHOW_TIMEOUT: Duration = Duration::from_secs(4);
@@ -774,7 +773,6 @@ impl Engine {
             let mut last_boot_session_key: Option<String> = None;
             let mut host_incident_state =
                 BTreeMap::<&'static str, PersistedHostIncidentState>::new();
-            let mut recently_reaped_mcp_helpers = BTreeMap::<u32, u64>::new();
             let mut mcp_helper_lifecycle = McpHelperLifecycleState::default();
             let mut deferred_history_snapshot: Option<Arc<SystemSnapshot>> = None;
             let mut history_store_busy_since_millis: Option<u64> = None;
@@ -846,26 +844,6 @@ impl Engine {
                 let process_ids = process_id_set(&raw.processes);
                 let (mcp_helper_count, stale_mcp_helper_count, oldest_mcp_helper_age_millis) =
                     summarize_mcp_helpers(&raw.processes, captured_at_millis, &process_ids);
-                let reaped_mcp_helpers = reap_stale_mcp_helpers(
-                    &raw.processes,
-                    captured_at_millis,
-                    &process_ids,
-                    &mut recently_reaped_mcp_helpers,
-                );
-                if reaped_mcp_helpers > 0 {
-                    diagnostics.emit(
-                        DiagnosticsEvent::builder(
-                            DiagnosticsLevel::Warn,
-                            DiagnosticsSubsystem::Engine,
-                            "mcp-helper-reaped",
-                            "Terminated orphaned local MCP helper process(es).",
-                        )
-                        .timestamp_millis(captured_at_millis)
-                        .field("reaped_count", reaped_mcp_helpers)
-                        .field("stale_mcp_helper_count", stale_mcp_helper_count)
-                        .build(),
-                    );
-                }
                 let (frontmost_app_state, capabilities, runtime_lag_metrics) = {
                     let mut guard = state.lock();
                     refresh_adapter_capabilities(&mut guard, &adapters, captured_at_millis);
@@ -2266,37 +2244,6 @@ fn emit_mcp_helper_lifecycle(
     );
 }
 
-fn reap_stale_mcp_helpers(
-    processes: &[crate::collector::RawProcessSample],
-    captured_at_millis: u64,
-    process_ids: &BTreeSet<u32>,
-    recently_reaped: &mut BTreeMap<u32, u64>,
-) -> u32 {
-    recently_reaped.retain(|_, last_attempt| {
-        captured_at_millis.saturating_sub(*last_attempt) < MCP_HELPER_REAP_RETRY_MILLIS
-    });
-    let mut reaped = 0u32;
-
-    for process in processes {
-        if !is_mcp_helper_process(process) {
-            continue;
-        }
-        let age = captured_at_millis.saturating_sub(process.start_time_millis);
-        if age < MCP_HELPER_STALE_MILLIS || !is_orphaned_process(process, process_ids) {
-            continue;
-        }
-        if recently_reaped.contains_key(&process.pid) {
-            continue;
-        }
-        recently_reaped.insert(process.pid, captured_at_millis);
-        if terminate_process(process.pid) {
-            reaped = reaped.saturating_add(1);
-        }
-    }
-
-    reaped
-}
-
 fn process_id_set(processes: &[crate::collector::RawProcessSample]) -> BTreeSet<u32> {
     processes.iter().map(|process| process.pid).collect()
 }
@@ -2317,24 +2264,6 @@ fn is_orphaned_process(
         Some(0 | 1) => true,
         Some(parent_pid) => !process_ids.contains(&parent_pid),
     }
-}
-
-#[cfg(unix)]
-fn terminate_process(pid: u32) -> bool {
-    const SIGTERM: i32 = 15;
-    unsafe extern "C" {
-        fn kill(pid: i32, sig: i32) -> i32;
-    }
-
-    if pid <= 1 || pid > i32::MAX as u32 {
-        return false;
-    }
-    unsafe { kill(pid as i32, SIGTERM) == 0 }
-}
-
-#[cfg(not(unix))]
-fn terminate_process(_pid: u32) -> bool {
-    false
 }
 
 fn default_history_retention_policy() -> aetower_persistence::HistoryRetentionPolicy {

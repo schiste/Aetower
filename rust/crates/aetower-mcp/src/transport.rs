@@ -44,7 +44,7 @@ const MCP_PARTIAL_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 // long. Real interactive use (Claude Code, Codex, Chau7) keeps a steady cadence
 // well under 5 min, so this fires only on abandoned helpers — clients that
 // connected, then crashed or were force-killed without propagating exit. Without
-// this, abandoned helpers wait for `parent_exited` to fire, which only catches
+// this, abandoned helpers wait for `parent_exited` to fire, which only detects
 // the original parent termination, missing intermediate detached states.
 const PROXY_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -501,8 +501,8 @@ fn proxy_stdio_to_socket_polling(socket_path: impl AsRef<Path>) -> Result<(), St
         }
         if last_activity.elapsed() >= PROXY_IDLE_TIMEOUT {
             // Helper has been idle for too long; exit cleanly so abandoned
-            // helpers don't accumulate until the engine's stale-helper detector
-            // (15 min orphan + age) catches them.
+            // helpers don't accumulate until the engine's stale-helper report
+            // (15 min orphan + age) surfaces them.
             break;
         }
 

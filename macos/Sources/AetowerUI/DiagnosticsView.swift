@@ -1268,7 +1268,7 @@ public struct DiagnosticsView: View {
     private var mcpLifecycleGuidance: String {
         let runtime = state.runtimeLagMetrics
         if runtime.staleMcpHelperCount > 0 {
-            return "\(runtime.staleMcpHelperCount) helper process(es) crossed the stale threshold. Check agents that kept stdio sessions open after disconnect."
+            return "\(runtime.staleMcpHelperCount) helper process(es) crossed the stale threshold. Check agents that kept stdio sessions open after disconnect; Aetower reports these processes but does not terminate them automatically."
         }
         if runtime.mcpHelperCount >= 8 && runtime.mcpHelperCount >= runtime.mcpActiveClientCount {
             return "Helper count tracks active clients one-for-one at a high steady state. If this is normal, the next runtime step is a pooled or persistent transport so idle helper overhead does not scale linearly with client count."
