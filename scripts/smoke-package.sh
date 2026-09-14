@@ -44,6 +44,7 @@ fi
 # socket-backed verbs are exercised by the live smoke below.
 "$CLI_BIN" --version >/dev/null
 /usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$APP_PLIST" | grep -Fx "Aetower" >/dev/null
+/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP_PLIST" | grep -Fx "15.0" >/dev/null
 # The privileged Endpoint Security helper is optional and excluded by default
 # (package-macos.sh only bundles it when AETOWER_INCLUDE_PRIVILEGED_HELPER=1),
 # so only assert its presence when it was meant to be included.

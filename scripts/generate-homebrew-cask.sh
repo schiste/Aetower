@@ -51,7 +51,7 @@ cask "aetower" do
   end
 
   auto_updates true
-  depends_on macos: :sonoma
+  depends_on macos: :sequoia
 
   app "Aetower.app"
   binary "#{appdir}/Aetower.app/Contents/Helpers/aetower",

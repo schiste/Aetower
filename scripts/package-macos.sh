@@ -65,6 +65,7 @@ APP_ICON_PATH="${AETOWER_APP_ICON_PATH:-$APP_ICON_BUILD_DIR/Aetower.icns}"
 export CLANG_MODULE_CACHE_PATH
 
 BUNDLE_ID="${AETOWER_BUNDLE_ID:-com.aetower.app}"
+MACOS_MIN_VERSION="15.0"
 # Default the marketing version to the latest git tag (without a leading "v"),
 # falling back to 0.1.0. CFBundleVersion (the value Sparkle compares to decide
 # "is there a newer build") defaults to the commit count so it increases
@@ -245,7 +246,7 @@ cat > "$PLIST_DIR/Info.plist" <<PLIST
   <key>CFBundleVersion</key>
   <string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
-  <string>14.0</string>
+  <string>$MACOS_MIN_VERSION</string>
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © 2026 Aetower contributors. Licensed under AGPL-3.0-only.</string>
   <key>NSAppleEventsUsageDescription</key>
@@ -264,15 +265,53 @@ if [ -n "$SPARKLE_PUBLIC_ED_KEY" ]; then
     /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_ED_KEY" "$PLIST_DIR/Info.plist"
 fi
 
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$BIN_DIR/Aetower" || true
-install_name_tool -change "$ROOT/rust/target/debug/deps/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
-install_name_tool -change "$ROOT/rust/target/debug/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
-install_name_tool -change "$ROOT/rust/target/release/deps/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
-install_name_tool -change "$ROOT/rust/target/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
-install_name_tool -change "$SWIFTPM_PLUGIN_DIR/debug/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
-install_name_tool -change "$SWIFTPM_PLUGIN_DIR/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower" || true
-install_name_tool -delete_rpath "$SWIFTPM_PLUGIN_DIR/debug" "$BIN_DIR/Aetower" || true
-install_name_tool -delete_rpath "$SWIFTPM_PLUGIN_DIR/release" "$BIN_DIR/Aetower" || true
+add_rpath_if_missing() {
+    RPATH="$1"
+    BINARY="$2"
+    if ! LOAD_COMMANDS="$(otool -l "$BINARY")"; then
+        echo "failed to inspect load commands for $BINARY" >&2
+        return 1
+    fi
+    if printf '%s\n' "$LOAD_COMMANDS" | grep -F "path $RPATH " >/dev/null 2>&1; then
+        return 0
+    fi
+    install_name_tool -add_rpath "$RPATH" "$BINARY"
+}
+
+delete_rpath_if_present() {
+    RPATH="$1"
+    BINARY="$2"
+    if ! LOAD_COMMANDS="$(otool -l "$BINARY")"; then
+        echo "failed to inspect load commands for $BINARY" >&2
+        return 1
+    fi
+    if printf '%s\n' "$LOAD_COMMANDS" | grep -F "path $RPATH " >/dev/null 2>&1; then
+        install_name_tool -delete_rpath "$RPATH" "$BINARY"
+    fi
+}
+
+change_install_name_if_present() {
+    OLD_NAME="$1"
+    NEW_NAME="$2"
+    BINARY="$3"
+    if ! LINKED_LIBRARIES="$(otool -L "$BINARY")"; then
+        echo "failed to inspect linked libraries for $BINARY" >&2
+        return 1
+    fi
+    if printf '%s\n' "$LINKED_LIBRARIES" | grep -F -- "$OLD_NAME" >/dev/null 2>&1; then
+        install_name_tool -change "$OLD_NAME" "$NEW_NAME" "$BINARY"
+    fi
+}
+
+add_rpath_if_missing "@executable_path/../Frameworks" "$BIN_DIR/Aetower"
+change_install_name_if_present "$ROOT/rust/target/debug/deps/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
+change_install_name_if_present "$ROOT/rust/target/debug/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
+change_install_name_if_present "$ROOT/rust/target/release/deps/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
+change_install_name_if_present "$ROOT/rust/target/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
+change_install_name_if_present "$SWIFTPM_PLUGIN_DIR/debug/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
+change_install_name_if_present "$SWIFTPM_PLUGIN_DIR/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
+delete_rpath_if_present "$SWIFTPM_PLUGIN_DIR/debug" "$BIN_DIR/Aetower"
+delete_rpath_if_present "$SWIFTPM_PLUGIN_DIR/release" "$BIN_DIR/Aetower"
 
 if otool -l "$BIN_DIR/Aetower" | grep -F "$ROOT/macos/.build" >/dev/null; then
     echo "packaged app still references local SwiftPM build paths" >&2

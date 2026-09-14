@@ -20,7 +20,7 @@ Expected public artifact:
 
 ## Requirements
 
-- macOS 14 or newer
+- macOS 15 or newer
 - Apple Silicon or Intel Mac supported by Swift Package Manager builds
 - Local user account access
 - Optional: Chau7, Docker, Chromium-compatible debug endpoint, or local AI
