@@ -2532,7 +2532,7 @@ public struct MainListView: View {
                 .foregroundStyle(state.advancedFilterEntityIds == nil ? Color.secondary : Color.accentColor)
         }
         .buttonStyle(.plain)
-        .help("Advanced filter (Rhai expression)")
+        .help("Advanced filter expression")
         .popover(isPresented: $showAdvancedFilter, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Advanced filter")

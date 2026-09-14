@@ -644,7 +644,7 @@ public final class AppState {
     private(set) var browserTabAutomationSummary: BrowserAutomationCollectionSummary?
     private(set) var browserTabAutomationError: String?
     private(set) var recentlyFinished: [FinishedProcessModel] = []
-    /// Entity ids matched by the active advanced (Rhai) filter; nil = no filter.
+    /// Entity ids matched by the active bounded advanced filter; nil = no filter.
     private(set) var advancedFilterEntityIds: Set<String>?
     private(set) var advancedFilterError: String?
     private(set) var advancedFilterSummary: String?
@@ -1214,7 +1214,7 @@ public final class AppState {
         }
     }
 
-    /// Evaluate a sandboxed Rhai filter expression in the engine and retain the
+    /// Evaluate a bounded filter expression in the engine and retain the
     /// matched entity ids so the list view can intersect against them.
     public func applyAdvancedFilter(_ expression: String) {
         let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1932,7 +1932,7 @@ impl MonitorEngine {
         json_query_result(storage_scan_result_json(&job_id))
     }
 
-    /// Evaluate a sandboxed Rhai filter expression against the latest snapshot,
+    /// Evaluate a bounded filter expression against the latest snapshot,
     /// returning matched entity ids / pids as JSON.
     pub fn filter_entities_json(&self, expression: String) -> JsonQueryResult {
         let data_source = MonitorEngineDataSource {

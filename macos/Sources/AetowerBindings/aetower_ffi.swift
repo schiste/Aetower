@@ -596,7 +596,7 @@ public protocol MonitorEngineProtocol: AnyObject, Sendable {
     func exportSnapshotJson()  -> String
 
     /**
-     * Evaluate a sandboxed Rhai filter expression against the latest snapshot,
+     * Evaluate a bounded filter expression against the latest snapshot,
      * returning matched entity ids / pids as JSON.
      */
     func filterEntitiesJson(expression: String)  -> JsonQueryResult
@@ -970,7 +970,7 @@ open func exportSnapshotJson() -> String  {
 }
 
     /**
-     * Evaluate a sandboxed Rhai filter expression against the latest snapshot,
+     * Evaluate a bounded filter expression against the latest snapshot,
      * returning matched entity ids / pids as JSON.
      */
 open func filterEntitiesJson(expression: String) -> JsonQueryResult  {
@@ -12703,7 +12703,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_aetower_ffi_checksum_method_monitorengine_export_snapshot_json() != 44531) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_aetower_ffi_checksum_method_monitorengine_filter_entities_json() != 60988) {
+    if (uniffi_aetower_ffi_checksum_method_monitorengine_filter_entities_json() != 57842) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_aetower_ffi_checksum_method_monitorengine_history_range_summary() != 33324) {

@@ -41,7 +41,6 @@ core-foundation-sys = "0.8.7"
 smallvec = { version = "1", features = ["serde"] }
 ureq = "3"
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
-rhai = { version = "1.19", default-features = false, features = ["std", "sync"] }
 sha2 = "0.10"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 miniz_oxide = "0.8"

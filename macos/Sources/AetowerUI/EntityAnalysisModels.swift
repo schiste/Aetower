@@ -476,7 +476,7 @@ struct DylibSummaryModel: Codable {
     let injected: UInt32
 }
 
-/// Result of a sandboxed Rhai advanced filter evaluated by the engine.
+/// Result of a bounded advanced filter evaluated by the engine.
 struct EntityFilterReportModel: Codable {
     let expression: String
     let matchedEntityIds: [String]
