@@ -64,6 +64,10 @@
   "a": "Use the `aetower_host_alerts` MCP tool (or `aetower call aetower_host_alerts` from the shell). Return current host alerts such as memory pressure and wakeup storms with impacted entity IDs."
  },
  {
+  "q": "What is pressuring this Mac, and how much is Aetower contributing?",
+  "a": "Use the `aetower_host_pressure_report` MCP tool (or `aetower call aetower_host_pressure_report` from the shell). Separate host-level pressure from Aetower self overhead by reporting memory compression, swap, wakeups, thermal state, Aetower rows, and external resource leaders."
+ },
+ {
   "q": "How loaded is this Mac right now — CPU, memory, energy, thermal?",
   "a": "Use the `aetower_host_summary` MCP tool (or `aetower call aetower_host_summary` from the shell). Return a concise host summary plus the top friction entities."
  },
@@ -162,6 +166,14 @@
  {
   "q": "What is taking up space inside this one repository?",
   "a": "Use the `aetower_storage_hygiene_repo_detail` MCP tool (or `aetower call aetower_storage_hygiene_repo_detail` from the shell). Return storage detail for one repository root: repo intelligence, top artifacts, cleanup actions, and diagnostics."
+ },
+ {
+  "q": "Is the cache-first storage pipeline healthy?",
+  "a": "Use the `aetower_storage_pipeline_debug` MCP tool (or `aetower call aetower_storage_pipeline_debug` from the shell). Diagnose the cache-first storage pipeline by reporting filesystem ledger ingestion, dirty queue state, latest incremental measurement, and the persisted situation snapshot. Bounded metadata only; never walks the filesystem."
+ },
+ {
+  "q": "What is the fastest honest view of storage right now?",
+  "a": "Use the `aetower_storage_situation` MCP tool (or `aetower call aetower_storage_situation` from the shell). Return the fastest cache-first storage situation: last known summary bytes, top offenders, dirty-path freshness, volume state, and cache status. Never waits on or launches a filesystem walk unless refresh/background_scan is explicitly requested."
  },
  {
   "q": "What would a support bundle include, before I export anything?",

@@ -22,7 +22,7 @@ answers questions like "what is straining this machine", with tools such as
 - [Tab guide](https://aetower.dev/docs/tabs-guide/): current app workspaces and nested sections
 - [Local MCP server](https://aetower.dev/docs/mcp/): tools, runtime model, client registration
 - [CLI reference](https://aetower.dev/docs/cli/): `aetower top/storage/repos/tab/call`, `--json`, exit codes
-- [MCP tool reference](https://aetower.dev/docs/mcp-tools/): all 47 tools with parameters, generated from the running app
+- [MCP tool reference](https://aetower.dev/docs/mcp-tools/): all 49 tools with parameters, generated from the running app
 - [All documentation](https://aetower.dev/docs/): the full docs/ directory, rendered on every deploy
 
 ## Product
@@ -35,7 +35,7 @@ answers questions like "what is straining this machine", with tools such as
 
 ## Downloads
 
-- [Installer package](https://aetower.dev/releases/Aetower.pkg) (recommended; macOS 14+, Apple silicon)
+- [Installer package](https://aetower.dev/releases/Aetower.pkg) (recommended; macOS 15+, Apple silicon)
 - [Sparkle appcast](https://aetower.dev/releases/appcast.xml)
 - Homebrew: `brew tap aeptus/aetower && brew install --cask aetower`
 - [Source](https://github.com/schiste/Aetower) (AGPL-3.0-only)

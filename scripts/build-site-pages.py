@@ -81,7 +81,7 @@ PAGE_FAQS: dict[str, list[tuple[str, str]]] = {
         (
             "How do I install Aetower?",
             "Download the signed installer package or DMG from aetower.dev, or use Homebrew: "
-            "brew tap aeptus/aetower && brew install --cask aetower. macOS 14+ on Apple silicon.",
+            "brew tap aeptus/aetower && brew install --cask aetower. macOS 15+ on Apple silicon.",
         ),
         (
             "What should I check on first run?",
@@ -178,7 +178,7 @@ PAGE_FAQS: dict[str, list[tuple[str, str]]] = {
         ),
         (
             "Is Aetower free?",
-            "Yes — free and open source under AGPL-3.0, for macOS 14+ on Apple silicon. It is "
+            "Yes — free and open source under AGPL-3.0, for macOS 15+ on Apple silicon. It is "
             "an early alpha, and several tools in its comparison table are more mature at "
             "their individual slices.",
         ),
@@ -222,7 +222,7 @@ PAGE_FAQS: dict[str, list[tuple[str, str]]] = {
         ),
         (
             "Can my AI agent check what is straining my Mac?",
-            "Yes — Aetower's local MCP server exposes 47 tools; one "
+            "Yes — Aetower's local MCP server exposes 49 tools; one "
             "aetower_top_findings or aetower_investigation_bundle call gives an agent the "
             "ranked answer.",
         ),

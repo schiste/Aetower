@@ -2,7 +2,7 @@
 
 > Generated from the running app with `aetower tools --json` (`scripts/generate-mcp-tools-doc.py`). Do not edit by hand.
 
-Aetower's local MCP server exposes **47 tools** — 46 read-only tools plus one guarded operator action. Operator actions are visible to trusted local clients by default, every action stays preview- and approval-gated, and Settings can hide operator actions to force a read-only surface. This reference documents the 46 read-only tools; the operator action `aetower_process_action` is covered in [Local MCP](local-mcp.md).
+Aetower's local MCP server exposes **49 tools** — 48 read-only tools plus one guarded operator action. Operator actions are visible to trusted local clients by default, every action stays preview- and approval-gated, and Settings can hide operator actions to force a read-only surface. This reference documents the 48 read-only tools; the operator action `aetower_process_action` is covered in [Local MCP](local-mcp.md).
 
 Call any tool from the shell with `aetower call <name> [--json]`, or from any MCP client over the bundled `aetower-mcp` helper.
 
@@ -744,6 +744,16 @@ Example — `aetower call aetower_host_alerts`:
  "captured_at_millis": 1783970204757
 }
 ```
+
+## `aetower_host_pressure_report`
+
+*What is pressuring this Mac, and how much is Aetower contributing?*
+
+Separate host-level pressure from Aetower self overhead by reporting memory compression, swap, wakeups, thermal state, Aetower rows, and external resource leaders.
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `entity_limit` | integer | minimum 1; maximum 20; default 6 |
 
 ## `aetower_host_summary`
 
@@ -1551,6 +1561,34 @@ Return storage detail for one repository root: repo intelligence, top artifacts,
 |---|---|---|
 | `mode` | string | Scan mode. Defaults to fast_changed_only. |
 | `repo_root` | string | required |
+
+## `aetower_storage_pipeline_debug`
+
+*Is the cache-first storage pipeline healthy?*
+
+Diagnose the cache-first storage pipeline by reporting filesystem ledger ingestion, dirty queue state, latest incremental measurement, and the persisted situation snapshot. Bounded metadata only; never walks the filesystem.
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `roots` | array | Optional absolute paths or ~/ paths. Defaults to common developer and Xcode cache locations. |
+
+## `aetower_storage_situation`
+
+*What is the fastest honest view of storage right now?*
+
+Return the fastest cache-first storage situation: last known summary bytes, top offenders, dirty-path freshness, volume state, and cache status. Never waits on or launches a filesystem walk unless refresh/background_scan is explicitly requested.
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `background_scan` | boolean | default False; Alias for refresh; useful for clients that name side effects explicitly. |
+| `dirty_paths` | array | Optional paths to prioritize during the background refresh. |
+| `limit` | integer | minimum 1; maximum 40; default 12; Number of top offenders to return. |
+| `max_depth` | integer | minimum 1; maximum 12; default 5; Depth for the optional background refresh only. |
+| `mode` | string | Read mode is always cache-first; non-instant values only affect the optional background refresh. |
+| `refresh` | boolean | default False; Return cached facts immediately and start a background scan. |
+| `refresh_mode` | string | Background scan mode: fast_changed_only, deep_native, or forensic_verified. Defaults to fast_changed_only unless mode is non-instant. |
+| `roots` | array | Optional absolute paths or ~/ paths. Defaults to common developer and Xcode cache locations. |
+| `throttle_hint` | string | Optional background throttle hint such as normal, battery, thermal-pressure, network, or cloud. |
 
 ## `aetower_support_bundle_manifest`
 

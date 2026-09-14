@@ -338,7 +338,7 @@ def check_storage_materialized_workflow(validator: ClaimsValidator) -> None:
         "AppState cached situation": "private(set) var storageSituation" in app_state
         and "loadStorageSituationForDisplay" in app_state,
         "Storage first paint": "storageSituationFirstPaint" in storage_view
-        and "showDeferredReportNotice: state.storageHygieneReport == nil" in storage_view,
+        and "showKnownPaths: state.storageHygieneReport == nil" in storage_view,
     }
     missing_first_paint = [name for name, present in first_paint_contract.items() if not present]
     validator.require(
