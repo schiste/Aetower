@@ -289,7 +289,8 @@ struct ProcessOperatorPanel: View {
                             action: action,
                             reason: actionReason.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
                             actionID: actionID,
-                            expectedTargets: expectedTargets
+                            expectedTargets: expectedTargets,
+                            privilegedHelperApproved: true
                         )
                         state.clearProcessActionPreview(pid: pid, action: action)
                         pendingAction = nil
@@ -450,7 +451,8 @@ struct ProcessOperatorPanel: View {
                         reason: "Restore nice value \(restoreNiceValue) from action \(report.actionId ?? "unknown").",
                         actionID: restoreActionID,
                         expectedTargets: expectedTargets,
-                        restoreNiceValue: restoreNiceValue
+                        restoreNiceValue: restoreNiceValue,
+                        privilegedHelperApproved: true
                     )
                 } label: {
                     Label("Restore previous priority (\(restoreNiceValue))", systemImage: "arrow.uturn.backward.circle")
@@ -1079,7 +1081,7 @@ struct ProcessOperatorPanel: View {
     ) -> Bool {
         !identities.contains { identity in
             (identity.startTimeMillis ?? 0) == 0
-                && identity.executablePath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+                || identity.executablePath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
         }
     }
 

@@ -35,37 +35,47 @@ pub(crate) fn build_process_action_with_context(
     validate_pid(pid)?;
     let snapshot = data_source.latest_snapshot().ok();
     let mut plan = process_action_plan(snapshot.as_ref(), pid, action)?;
-    if plan.normalized_action == "normal-priority"
-        && let Some(restore_nice_value) = request_context.restore_nice_value
-    {
-        plan = renice_process_action_plan(
-            "normal-priority",
-            restore_nice_value.clamp(-20, 20),
-            pid,
-            "Dry run only; priority was not changed.",
-            format!(
-                "Requested restored priority for process {pid} with nice value {}.",
-                restore_nice_value.clamp(-20, 20)
-            ),
-        );
-    }
-    let context = snapshot
-        .as_ref()
-        .and_then(|snapshot| process_component_context(snapshot, pid));
+    apply_restore_nice_value(&mut plan, pid, request_context.restore_nice_value);
     verify_expected_process_identities(
         snapshot.as_ref(),
         &request_context.expected_targets,
         &plan.target_pids,
         !dry_run,
     )?;
+
+    // A preview is advisory. Re-read the snapshot immediately before any
+    // command and verify both the stable identities and the expanded target
+    // set again so a PID reuse or a changing process tree cannot turn the
+    // preview into authorization for a different process.
+    let active_snapshot = if dry_run {
+        snapshot
+    } else {
+        let fresh_snapshot = data_source
+            .latest_snapshot()
+            .map_err(|error| format!("cannot revalidate process action targets: {error}"))?;
+        let mut fresh_plan = process_action_plan(Some(&fresh_snapshot), pid, action)?;
+        apply_restore_nice_value(&mut fresh_plan, pid, request_context.restore_nice_value);
+        verify_expected_process_identities(
+            Some(&fresh_snapshot),
+            &request_context.expected_targets,
+            &fresh_plan.target_pids,
+            true,
+        )?;
+        plan = fresh_plan;
+        Some(fresh_snapshot)
+    };
+    let context = active_snapshot
+        .as_ref()
+        .and_then(|snapshot| process_component_context(snapshot, pid));
     let action_id = normalized_action_id(request_context.action_id.as_deref(), pid);
-    let target_identities = process_action_target_identities(snapshot.as_ref(), &plan.target_pids);
+    let target_identities =
+        process_action_target_identities(active_snapshot.as_ref(), &plan.target_pids);
     let blast_radius = process_action_blast_radius(&plan);
     let before_states = collect_process_action_target_states(&plan.target_pids);
     let mut safety_notes = Vec::new();
     if request_context.privileged_helper_approved {
         safety_notes.push(
-            "Privileged process-action helper was explicitly approved. Aetower will use it only if the normal macOS command path fails."
+            "Elevated process-action retry was explicitly approved. Aetower will request administrator authorization only if the normal macOS command path fails."
                 .to_owned(),
         );
     }
@@ -91,6 +101,10 @@ pub(crate) fn build_process_action_with_context(
                 "Target process(es) are not visible to macOS right now: {missing_pids:?}."
             ));
         }
+    }
+
+    if !dry_run && request_context.require_operator_confirmation {
+        confirm_operator_process_action(&plan)?;
     }
 
     if dry_run {
@@ -120,6 +134,7 @@ pub(crate) fn build_process_action_with_context(
             display_name: context.as_ref().map(|context| context.display_name.clone()),
             message: plan.dry_run_message,
             safety_notes,
+            approval_token: None,
         });
     }
 
@@ -127,8 +142,11 @@ pub(crate) fn build_process_action_with_context(
         run_process_action_command(&plan.program, &plan.args)?;
     let mut privileged_helper_status =
         privileged_helper_status(request_context.privileged_helper_approved);
-    if !success && request_context.privileged_helper_approved {
-        match run_privileged_helper_process_action(&plan) {
+    if !success
+        && request_context.privileged_helper_approved
+        && process_action_command_requires_privilege(&command_result)
+    {
+        match run_privileged_process_action(&plan) {
             Ok(helper_result) => {
                 success = true;
                 command_result = helper_result;
@@ -137,7 +155,7 @@ pub(crate) fn build_process_action_with_context(
             Err(error) => {
                 privileged_helper_status = "approved-but-failed".to_owned();
                 failure_message = format!(
-                    "{failure_message} Privileged helper fallback did not complete: {error}"
+                    "{failure_message} Elevated authorization fallback did not complete: {error}"
                 );
             }
         }
@@ -196,6 +214,7 @@ pub(crate) fn build_process_action_with_context(
         display_name: context.as_ref().map(|context| context.display_name.clone()),
         message,
         safety_notes,
+        approval_token: None,
     };
     data_source.record_diagnostics_event(process_action_diagnostics_event(&report));
     Ok(report)
@@ -260,6 +279,7 @@ fn parse_process_action_request_context(reason: Option<String>) -> ProcessAction
             expected_targets: envelope.expected_targets,
             restore_nice_value: envelope.restore_nice_value,
             privileged_helper_approved: envelope.privileged_helper_approved,
+            ..ProcessActionRequestContext::default()
         };
     }
     ProcessActionRequestContext {
@@ -288,6 +308,29 @@ fn privileged_helper_status(approved: bool) -> String {
     } else {
         "not-requested".to_owned()
     }
+}
+
+fn apply_restore_nice_value(
+    plan: &mut ProcessActionPlan,
+    pid: u32,
+    restore_nice_value: Option<i32>,
+) {
+    if plan.normalized_action != "normal-priority" {
+        return;
+    }
+    let Some(restore_nice_value) = restore_nice_value else {
+        return;
+    };
+    let restore_nice_value = restore_nice_value.clamp(-20, 20);
+    *plan = renice_process_action_plan(
+        "normal-priority",
+        restore_nice_value,
+        pid,
+        "Dry run only; priority was not changed.",
+        format!(
+            "Requested restored priority for process {pid} with nice value {restore_nice_value}."
+        ),
+    );
 }
 
 fn process_action_target_identities(
@@ -325,20 +368,23 @@ fn verify_expected_process_identities(
     if expected_targets.is_empty() {
         if require_expected_targets {
             return Err(
-                "Refusing process action: execution requires expected_targets from a dry-run preview."
+                "Refusing process action: execution requires expected_targets containing stable identities from a dry-run preview."
                     .to_owned(),
             );
         }
         return Ok(());
     }
-    let planned = planned_targets
-        .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
+    let planned = planned_targets.iter().copied().collect::<BTreeSet<_>>();
     let expected = expected_targets
         .iter()
         .map(|target| target.pid)
-        .collect::<std::collections::BTreeSet<_>>();
+        .collect::<BTreeSet<_>>();
+    if planned.len() != planned_targets.len() || expected.len() != expected_targets.len() {
+        return Err(
+            "Refusing process action: target identities must contain each PID exactly once."
+                .to_owned(),
+        );
+    }
     if expected != planned {
         let missing = planned.difference(&expected).copied().collect::<Vec<_>>();
         let unexpected = expected.difference(&planned).copied().collect::<Vec<_>>();
@@ -347,36 +393,55 @@ fn verify_expected_process_identities(
         ));
     }
     for expected in expected_targets {
+        if !process_action_target_identity_is_stable(expected) {
+            return Err(format!(
+                "Refusing process action: PID {} lacks a non-zero start time or executable path for PID-reuse protection.",
+                expected.pid
+            ));
+        }
         let current =
             snapshot.and_then(|snapshot| process_component_context(snapshot, expected.pid));
-        if expected.start_time_millis.is_some() || expected.executable_path.is_some() {
-            let Some(current) = current else {
-                return Err(format!(
-                    "Refusing process action: PID {} is no longer attributed, so Aetower cannot verify it is the previewed process.",
-                    expected.pid
-                ));
-            };
-            if let Some(expected_start) = expected.start_time_millis
-                && expected_start > 0
-                && current.start_time_millis > 0
-                && current.start_time_millis != expected_start
-            {
-                return Err(format!(
-                    "Refusing process action: PID {} start time changed from {} to {}.",
-                    expected.pid, expected_start, current.start_time_millis
-                ));
-            }
-            if let Some(expected_path) = expected.executable_path.as_deref()
-                && current.executable_path.as_deref() != Some(expected_path)
-            {
-                return Err(format!(
-                    "Refusing process action: PID {} executable changed since preview.",
-                    expected.pid
-                ));
-            }
+        let Some(current) = current else {
+            return Err(format!(
+                "Refusing process action: PID {} is no longer attributed, so Aetower cannot verify it is the previewed process.",
+                expected.pid
+            ));
+        };
+        let Some(expected_start) = expected.start_time_millis else {
+            unreachable!("stable process identity has a start time");
+        };
+        if current.start_time_millis == 0 || current.start_time_millis != expected_start {
+            return Err(format!(
+                "Refusing process action: PID {} start time changed or is unavailable.",
+                expected.pid
+            ));
+        }
+        let Some(expected_path) = expected.executable_path.as_deref() else {
+            unreachable!("stable process identity has an executable path");
+        };
+        if current
+            .executable_path
+            .as_deref()
+            .is_none_or(|path| path.trim().is_empty())
+            || current.executable_path.as_deref() != Some(expected_path)
+        {
+            return Err(format!(
+                "Refusing process action: PID {} executable changed or is unavailable.",
+                expected.pid
+            ));
         }
     }
     Ok(())
+}
+
+pub(crate) fn process_action_target_identity_is_stable(
+    identity: &ProcessActionTargetIdentity,
+) -> bool {
+    identity.start_time_millis.is_some_and(|value| value > 0)
+        && identity
+            .executable_path
+            .as_deref()
+            .is_some_and(|path| !path.trim().is_empty())
 }
 
 fn process_action_blast_radius(plan: &ProcessActionPlan) -> ProcessActionBlastRadius {
@@ -496,24 +561,68 @@ fn run_process_action_command(
     Ok((output.status.success(), result, failure_message))
 }
 
-fn run_privileged_helper_process_action(
+fn process_action_command_requires_privilege(result: &ProcessActionCommandResult) -> bool {
+    let stderr = result.stderr.to_ascii_lowercase();
+    stderr.contains("operation not permitted")
+        || stderr.contains("permission denied")
+        || stderr.contains("not authorized")
+}
+
+fn run_privileged_process_action(
     plan: &ProcessActionPlan,
 ) -> Result<ProcessActionCommandResult, String> {
-    let helper_path = bundled_privileged_helper_path()
-        .ok_or_else(|| "bundled aetower-helper was not found".to_owned())?;
-    let mut args = vec!["process-action".to_owned(), plan.signal.clone()];
-    args.extend(plan.target_pids.iter().map(u32::to_string));
-    let output = Command::new(&helper_path)
-        .args(&args)
+    let mut helper_failure = None;
+    if let Some(helper_path) = bundled_privileged_helper_path() {
+        let mut args = vec!["process-action".to_owned(), plan.signal.clone()];
+        args.extend(plan.target_pids.iter().map(u32::to_string));
+        match Command::new(&helper_path).args(&args).output() {
+            Ok(output) if output.status.success() => {
+                return Ok(ProcessActionCommandResult {
+                    exit_status: output.status.code(),
+                    stdout: bounded_command_text(&output.stdout),
+                    stderr: bounded_command_text(&output.stderr),
+                });
+            }
+            Ok(output) => {
+                let stderr = bounded_command_text(&output.stderr);
+                helper_failure = Some(if stderr.is_empty() {
+                    format!("helper exited with status {}", output.status)
+                } else {
+                    format!("helper exited with status {}: {stderr}", output.status)
+                });
+            }
+            Err(error) => {
+                helper_failure = Some(format!("helper execution failed: {error}"));
+            }
+        }
+    }
+
+    match run_authorized_process_action(plan) {
+        Ok(result) => Ok(result),
+        Err(error) => match helper_failure {
+            Some(helper_failure) => Err(format!(
+                "{helper_failure}; administrator authorization failed: {error}"
+            )),
+            None => Err(format!("administrator authorization failed: {error}")),
+        },
+    }
+}
+
+fn run_authorized_process_action(
+    plan: &ProcessActionPlan,
+) -> Result<ProcessActionCommandResult, String> {
+    let script = administrator_authorization_script(&plan.command);
+    let output = Command::new("/usr/bin/osascript")
+        .args(["-e", script.as_str()])
         .output()
-        .map_err(|error| format!("helper execution failed: {error}"))?;
+        .map_err(|error| format!("failed to start /usr/bin/osascript: {error}"))?;
     let stdout = bounded_command_text(&output.stdout);
     let stderr = bounded_command_text(&output.stderr);
     if !output.status.success() {
         return Err(if stderr.is_empty() {
-            format!("helper exited with status {}", output.status)
+            format!("osascript exited with status {}", output.status)
         } else {
-            format!("helper exited with status {}: {stderr}", output.status)
+            stderr
         });
     }
     Ok(ProcessActionCommandResult {
@@ -521,6 +630,53 @@ fn run_privileged_helper_process_action(
         stdout,
         stderr,
     })
+}
+
+fn confirm_operator_process_action(plan: &ProcessActionPlan) -> Result<(), String> {
+    let target_list = plan
+        .target_pids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let prompt = format!(
+        "Aetower requests permission to {} process{} (PID{} {}). Allow this action?",
+        plan.normalized_action,
+        if plan.target_pids.len() == 1 {
+            ""
+        } else {
+            "es"
+        },
+        if plan.target_pids.len() == 1 { "" } else { "s" },
+        target_list,
+    );
+    let script = operator_confirmation_script(&prompt);
+    let output = Command::new("/usr/bin/osascript")
+        .args(["-e", script.as_str()])
+        .output()
+        .map_err(|error| format!("failed to start operator confirmation dialog: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = bounded_command_text(&output.stderr);
+        Err(if stderr.is_empty() {
+            "Process action cancelled or the operator confirmation dialog failed.".to_owned()
+        } else {
+            format!("Process action was not confirmed: {stderr}")
+        })
+    }
+}
+
+fn operator_confirmation_script(prompt: &str) -> String {
+    let escaped = prompt.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        "display dialog \"{escaped}\" with title \"Aetower\" buttons {{\"Cancel\", \"Allow\"}} default button \"Cancel\" cancel button \"Cancel\""
+    )
+}
+
+fn administrator_authorization_script(command: &str) -> String {
+    let escaped = command.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("do shell script \"{escaped}\" with administrator privileges")
 }
 
 fn bundled_privileged_helper_path() -> Option<std::path::PathBuf> {
@@ -1128,4 +1284,46 @@ pub(crate) fn diagnostics_field<'a>(event: &'a DiagnosticsEvent, key: &str) -> O
         .iter()
         .find(|field| field.key == key)
         .map(|field| field.value.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ProcessActionCommandResult, administrator_authorization_script,
+        process_action_command_requires_privilege,
+    };
+
+    #[test]
+    fn administrator_authorization_script_wraps_fixed_process_command() {
+        assert_eq!(
+            administrator_authorization_script("/bin/kill -KILL 42"),
+            "do shell script \"/bin/kill -KILL 42\" with administrator privileges"
+        );
+    }
+
+    #[test]
+    fn administrator_authorization_script_escapes_applescript_string_delimiters() {
+        assert_eq!(
+            administrator_authorization_script("/bin/kill \\\"quoted\\\" \\\\path"),
+            "do shell script \"/bin/kill \\\\\\\"quoted\\\\\\\" \\\\\\\\path\" with administrator privileges"
+        );
+    }
+
+    #[test]
+    fn permission_retry_only_matches_authorization_failures() {
+        assert!(process_action_command_requires_privilege(
+            &ProcessActionCommandResult {
+                exit_status: Some(1),
+                stdout: String::new(),
+                stderr: "kill: 42: Operation not permitted".to_owned(),
+            }
+        ));
+        assert!(!process_action_command_requires_privilege(
+            &ProcessActionCommandResult {
+                exit_status: Some(1),
+                stdout: String::new(),
+                stderr: "kill: 42: No such process".to_owned(),
+            }
+        ));
+    }
 }

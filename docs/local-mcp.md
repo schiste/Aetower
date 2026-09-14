@@ -219,6 +219,25 @@ would include before exporting anything.
 `aetower_recommendations` returns structured remediation guidance derived from
 host load, history health, diagnostics, and entity recommendations.
 
+## Operator-action approval flow
+
+`aetower_process_action` is hidden when operator actions are disabled. When it
+is enabled, callers must use this sequence:
+
+1. Call the tool with `dry_run: true` (the default).
+2. Confirm that the returned target set and stable identities are the intended
+   targets. A successful preview returns a short-lived, one-time
+   `approval_token` bound to that action and target set.
+3. Call the tool with `dry_run: false` and the token. Aetower re-reads process
+   state, rejects PID reuse or process-tree drift, and shows a native macOS
+   confirmation dialog immediately before sending a signal or changing nice.
+
+The token cannot be supplied by the client as a substitute for confirmation,
+cannot be reused, and expires after a short interval. The older
+`expected_targets` and `privileged_helper_approved` request fields are not part
+of the MCP tool schema; those fields remain internal to the already-confirmed
+macOS UI/FFI path.
+
 `aetower_session_health` returns a merged health view across runtime lag,
 diagnostics, history store, capabilities, host load, and MCP state.
 

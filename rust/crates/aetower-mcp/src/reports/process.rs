@@ -28,10 +28,11 @@ pub(crate) use memory::parse_vmmap_region_line;
 pub(crate) use memory::{build_entity_memory_breakdown, vmmap_regions_for_processes};
 pub use memory::{memory_breakdown_json, self_memory_attribution_json};
 #[cfg(test)]
+pub(crate) use process_action::{build_process_action, process_action_history_item};
 pub(crate) use process_action::{
-    build_process_action, process_action_history_item, process_action_plan,
+    build_process_action_history, build_process_action_with_context, process_action_plan,
+    process_action_target_identity_is_stable,
 };
-pub(crate) use process_action::{build_process_action_history, build_process_action_with_context};
 pub use process_action::{process_action_history_json, process_action_json};
 pub use process_tree::entity_process_tree_json;
 pub(crate) use process_tree::{build_process_tree_report, extract_parent_pid};
@@ -103,32 +104,6 @@ pub(crate) fn process_dynamic_tool_request(
             *top_stacks,
         )?)
         .map_err(|error| extract_tool_error_message(&error)),
-        DynamicToolRequest::ProcessAction {
-            pid,
-            action,
-            dry_run,
-            reason,
-            action_id,
-            expected_targets,
-            restore_nice_value,
-            privileged_helper_approved,
-        } => {
-            let context = ProcessActionRequestContext {
-                action_id: action_id.clone(),
-                reason: reason.clone(),
-                expected_targets: expected_targets.clone(),
-                restore_nice_value: *restore_nice_value,
-                privileged_helper_approved: *privileged_helper_approved,
-            };
-            tool_json(build_process_action_with_context(
-                data_source,
-                *pid,
-                action,
-                *dry_run,
-                context,
-            )?)
-            .map_err(|error| extract_tool_error_message(&error))
-        }
         DynamicToolRequest::ProcessActionHistory {
             window_minutes,
             limit,

@@ -1,8 +1,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs::File,
+    io::Read,
     path::Path,
     process::Command,
-    sync::{Arc, atomic::Ordering},
+    sync::{Arc, Mutex, atomic::Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -17,6 +19,7 @@ use aetower_model::{
 pub(crate) use aetower_policy::{SeverityBand, WAKEUPS_CRITICAL, WAKEUPS_WARNING};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 mod transport;
 
@@ -637,16 +640,6 @@ enum DynamicToolRequest {
         duration_seconds: u64,
         top_stacks: usize,
     },
-    ProcessAction {
-        pid: u32,
-        action: String,
-        dry_run: bool,
-        reason: Option<String>,
-        action_id: Option<String>,
-        expected_targets: Vec<ProcessActionTargetIdentity>,
-        restore_nice_value: Option<i32>,
-        privileged_helper_approved: bool,
-    },
     ProcessActionHistory {
         window_minutes: u64,
         limit: usize,
@@ -1060,9 +1053,11 @@ struct ProcessActionReport {
     display_name: Option<String>,
     message: String,
     safety_notes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approval_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 struct ProcessActionTargetIdentity {
     pid: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1116,6 +1111,105 @@ struct ProcessActionRequestContext {
     expected_targets: Vec<ProcessActionTargetIdentity>,
     restore_nice_value: Option<i32>,
     privileged_helper_approved: bool,
+    require_operator_confirmation: bool,
+}
+
+const PROCESS_ACTION_APPROVAL_TTL: Duration = Duration::from_secs(120);
+const MAX_PENDING_PROCESS_ACTION_APPROVALS: usize = 64;
+
+#[derive(Debug)]
+pub(crate) struct ProcessActionApprovalStore {
+    pending: Mutex<BTreeMap<String, PendingProcessActionApproval>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PendingProcessActionApproval {
+    pub(crate) action_id: String,
+    pub(crate) pid: u32,
+    pub(crate) normalized_action: String,
+    pub(crate) restore_nice_value: Option<i32>,
+    pub(crate) expected_targets: Vec<ProcessActionTargetIdentity>,
+    expires_at: Instant,
+}
+
+impl Default for ProcessActionApprovalStore {
+    fn default() -> Self {
+        Self {
+            pending: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+impl ProcessActionApprovalStore {
+    pub(crate) fn issue(
+        &self,
+        action_id: String,
+        pid: u32,
+        normalized_action: String,
+        restore_nice_value: Option<i32>,
+        expected_targets: Vec<ProcessActionTargetIdentity>,
+    ) -> Result<String, String> {
+        let token = secure_approval_token()?;
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| "process-action approval store is unavailable".to_owned())?;
+        let now = Instant::now();
+        pending.retain(|_, approval| approval.expires_at > now);
+        while pending.len() >= MAX_PENDING_PROCESS_ACTION_APPROVALS {
+            let Some(oldest_token) = pending
+                .iter()
+                .min_by_key(|(_, approval)| approval.expires_at)
+                .map(|(token, _)| token.clone())
+            else {
+                break;
+            };
+            pending.remove(&oldest_token);
+        }
+        pending.insert(
+            token.clone(),
+            PendingProcessActionApproval {
+                action_id,
+                pid,
+                normalized_action,
+                restore_nice_value,
+                expected_targets,
+                expires_at: now + PROCESS_ACTION_APPROVAL_TTL,
+            },
+        );
+        Ok(token)
+    }
+
+    pub(crate) fn claim(&self, token: &str) -> Result<PendingProcessActionApproval, String> {
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| "process-action approval store is unavailable".to_owned())?;
+        let Some(approval) = pending.remove(token) else {
+            return Err(
+                "Execution requires a valid, one-time approval_token from a recent dry-run preview."
+                    .to_owned(),
+            );
+        };
+        if approval.expires_at <= Instant::now() {
+            return Err(
+                "Execution approval expired; request a new dry-run preview before executing."
+                    .to_owned(),
+            );
+        }
+        Ok(approval)
+    }
+}
+
+fn secure_approval_token() -> Result<String, String> {
+    let mut random = [0u8; 32];
+    let mut source = File::open("/dev/urandom")
+        .map_err(|error| format!("cannot create process-action approval token: {error}"))?;
+    source
+        .read_exact(&mut random)
+        .map_err(|error| format!("cannot create process-action approval token: {error}"))?;
+    let digest = Sha256::digest(random);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1219,18 +1313,21 @@ pub(crate) struct AetowerMcpServer {
     data_source: Arc<dyn AetowerMcpDataSource>,
     mcp_stats: Option<Arc<McpRuntimeStats>>,
     operator_actions_enabled: bool,
+    pub(crate) approval_store: Arc<ProcessActionApprovalStore>,
 }
 
 impl AetowerMcpServer {
-    pub(crate) fn new_with_stats(
+    pub(crate) fn new_with_stats_and_approval_store(
         data_source: Arc<dyn AetowerMcpDataSource>,
         mcp_stats: Option<Arc<McpRuntimeStats>>,
         operator_actions_enabled: bool,
+        approval_store: Arc<ProcessActionApprovalStore>,
     ) -> Self {
         Self {
             data_source,
             mcp_stats,
             operator_actions_enabled,
+            approval_store,
         }
     }
 
@@ -3195,6 +3292,41 @@ mod tests {
         snapshot: SystemSnapshot,
     }
 
+    fn stable_process_action_target(
+        pid: u32,
+        executable_path: &str,
+    ) -> ProcessActionTargetIdentity {
+        ProcessActionTargetIdentity {
+            pid,
+            start_time_millis: Some(1),
+            executable_path: Some(executable_path.to_owned()),
+            display_name: None,
+            nice_value: None,
+        }
+    }
+
+    fn stable_process_snapshot_source(pid: u32, executable_path: &str) -> ProcessSnapshotSource {
+        ProcessSnapshotSource {
+            snapshot: SystemSnapshot {
+                sequence: 1,
+                entities: vec![aetower_model::EntitySnapshot {
+                    entity_id: "test-process".to_owned(),
+                    display_name: "Test process".to_owned(),
+                    components: vec![aetower_model::ComponentSnapshot {
+                        kind: aetower_model::ComponentKind::Process,
+                        title: executable_path.to_owned(),
+                        process_id: Some(pid),
+                        start_time_millis: 1,
+                        executable_path: Some(executable_path.to_owned()),
+                        ..aetower_model::ComponentSnapshot::default()
+                    }],
+                    ..aetower_model::EntitySnapshot::default()
+                }],
+                ..SystemSnapshot::default()
+            },
+        }
+    }
+
     impl AetowerMcpDataSource for ProcessSnapshotSource {
         fn latest_snapshot(&self) -> Result<SystemSnapshot, String> {
             Ok(self.snapshot.clone())
@@ -3564,6 +3696,7 @@ mod tests {
             data_source: Arc::new(FakeSource),
             mcp_stats: None,
             operator_actions_enabled,
+            approval_store: Arc::new(ProcessActionApprovalStore::default()),
         }
     }
 
@@ -3572,6 +3705,7 @@ mod tests {
             data_source: Arc::new(HistoryBrokenSource),
             mcp_stats: None,
             operator_actions_enabled: false,
+            approval_store: Arc::new(ProcessActionApprovalStore::default()),
         }
     }
 
@@ -3985,6 +4119,33 @@ mod tests {
         };
         assert_eq!(framing, Some(MessageFraming::JsonLine));
         assert_eq!(message.get("method").and_then(Value::as_str), Some("ping"));
+    }
+
+    #[test]
+    fn rejects_oversized_mcp_headers_before_unbounded_growth() {
+        let input = vec![b'X'; 16 * 1024 + 1];
+        let mut framing = None;
+        let error = read_message(&mut input.as_slice(), &mut framing)
+            .expect_err("oversized headers should be rejected");
+        assert!(error.contains("headers exceed"));
+    }
+
+    #[test]
+    fn rejects_oversized_mcp_body_before_allocation() {
+        let input = format!("Content-Length: {}\r\n\r\n", 1024 * 1024 + 1);
+        let mut framing = None;
+        let error = read_message(&mut input.as_bytes(), &mut framing)
+            .expect_err("oversized body should be rejected");
+        assert!(error.contains("body exceeds"));
+    }
+
+    #[test]
+    fn rejects_oversized_json_line() {
+        let input = vec![b'{'; 1024 * 1024 + 1];
+        let mut framing = Some(MessageFraming::JsonLine);
+        let error = read_message(&mut input.as_slice(), &mut framing)
+            .expect_err("oversized JSON line should be rejected");
+        assert!(error.contains("JSON line exceeds"));
     }
 
     #[test]
@@ -4537,6 +4698,7 @@ mod tests {
             data_source: Arc::new(BrokenSource),
             mcp_stats: None,
             operator_actions_enabled: false,
+            approval_store: Arc::new(ProcessActionApprovalStore::default()),
         }
         .handle_message(json!({
             "jsonrpc": "2.0",
@@ -5050,6 +5212,7 @@ mod tests {
             }),
             mcp_stats: None,
             operator_actions_enabled: false,
+            approval_store: Arc::new(ProcessActionApprovalStore::default()),
         };
         let response = match server.handle_message(json!({
             "jsonrpc": "2.0",
@@ -5471,6 +5634,28 @@ mod tests {
     }
 
     #[test]
+    fn process_action_approval_tokens_are_one_time() {
+        let store = ProcessActionApprovalStore::default();
+        let identity = stable_process_action_target(42, "/bin/sleep");
+        let token = store
+            .issue(
+                "action-1".to_owned(),
+                42,
+                "force-kill".to_owned(),
+                None,
+                vec![identity.clone()],
+            )
+            .unwrap_or_else(|error| panic!("issue approval: {error}"));
+        assert_eq!(token.len(), 64);
+        let approval = store
+            .claim(&token)
+            .unwrap_or_else(|error| panic!("claim approval: {error}"));
+        assert_eq!(approval.pid, 42);
+        assert_eq!(approval.expected_targets, vec![identity]);
+        assert!(store.claim(&token).is_err(), "approval must be one-time");
+    }
+
+    #[test]
     fn process_action_refuses_expected_identity_mismatch() {
         let context = ProcessActionRequestContext {
             action_id: Some("unit-action".to_owned()),
@@ -5537,14 +5722,14 @@ mod tests {
             .spawn()
             .unwrap_or_else(|error| panic!("spawn sleep: {error}"));
         let pid = child.id();
+        let source = stable_process_snapshot_source(pid, "/bin/sleep");
         let context = ProcessActionRequestContext {
-            expected_targets: vec![expected_process_action_target(pid)],
+            expected_targets: vec![stable_process_action_target(pid, "/bin/sleep")],
             ..ProcessActionRequestContext::default()
         };
 
-        let report =
-            build_process_action_with_context(&FakeSource, pid, "force-kill", false, context)
-                .unwrap_or_else(|error| panic!("{error}"));
+        let report = build_process_action_with_context(&source, pid, "force-kill", false, context)
+            .unwrap_or_else(|error| panic!("{error}"));
 
         let _ = child.wait();
         assert!(report.executed);
@@ -5572,14 +5757,14 @@ mod tests {
             .spawn()
             .unwrap_or_else(|error| panic!("spawn shell: {error}"));
         let pid = child.id();
+        let source = stable_process_snapshot_source(pid, "/bin/sh");
         let context = ProcessActionRequestContext {
-            expected_targets: vec![expected_process_action_target(pid)],
+            expected_targets: vec![stable_process_action_target(pid, "/bin/sh")],
             ..ProcessActionRequestContext::default()
         };
 
-        let report =
-            build_process_action_with_context(&FakeSource, pid, "terminate", false, context)
-                .unwrap_or_else(|error| panic!("{error}"));
+        let report = build_process_action_with_context(&source, pid, "terminate", false, context)
+            .unwrap_or_else(|error| panic!("{error}"));
 
         let _ = child.wait();
         assert!(report.executed);
@@ -5603,14 +5788,15 @@ mod tests {
             .spawn()
             .unwrap_or_else(|error| panic!("spawn sleep: {error}"));
         let pid = child.id();
+        let source = stable_process_snapshot_source(pid, "/bin/sleep");
 
         let suspend_report = build_process_action_with_context(
-            &FakeSource,
+            &source,
             pid,
             "suspend",
             false,
             ProcessActionRequestContext {
-                expected_targets: vec![expected_process_action_target(pid)],
+                expected_targets: vec![stable_process_action_target(pid, "/bin/sleep")],
                 ..ProcessActionRequestContext::default()
             },
         )
@@ -5619,12 +5805,12 @@ mod tests {
         assert_eq!(suspend_report.verification, "verified-suspended");
 
         let resume_report = build_process_action_with_context(
-            &FakeSource,
+            &source,
             pid,
             "resume",
             false,
             ProcessActionRequestContext {
-                expected_targets: vec![expected_process_action_target(pid)],
+                expected_targets: vec![stable_process_action_target(pid, "/bin/sleep")],
                 ..ProcessActionRequestContext::default()
             },
         )

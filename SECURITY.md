@@ -37,8 +37,11 @@ Report:
 
 - The default app runs locally and should not expose a network listener.
 - The local MCP socket must remain owner-only and local to the user account.
-- The MCP server is intended to be read-only for observation data. Any action
-  planning must remain explicit and user-controlled.
+- The MCP server is intended to be read-only for observation data. Operator
+  actions require a server-issued, one-time preview token, stable process
+  identity revalidation, and a native macOS confirmation immediately before
+  execution. Client-supplied approval flags and target identities are not
+  trusted as authorization.
 - The optional Endpoint Security helper is excluded from default Developer
   Preview builds.
 - Sparkle updates must be Developer ID signed, notarized, and EdDSA-verified.

@@ -724,6 +724,7 @@ struct ProcessActionReportModel: Codable {
     let displayName: String?
     let message: String
     let safetyNotes: [String]
+    let approvalToken: String?
 }
 
 struct ProcessActionTargetIdentityModel: Codable, Identifiable {

@@ -4,6 +4,10 @@ All notable public changes to Aetower should be documented here.
 
 ## Unreleased
 
+- Process actions now retry with a macOS administrator authorization prompt
+  after an explicitly approved terminate or force-kill cannot signal the target
+  under the app's normal user identity.
+
 ## 0.9.0 (build 900) - 2026-07-14
 
 Aetower 0.9.0 makes Monitor's process view structurally reliable. The app now

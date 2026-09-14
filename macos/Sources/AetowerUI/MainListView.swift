@@ -1580,7 +1580,8 @@ public struct MainListView: View {
             pid: pid,
             action: action,
             reason: reason,
-            actionID: actionID
+            actionID: actionID,
+            privilegedHelperApproved: true
         )
     }
 

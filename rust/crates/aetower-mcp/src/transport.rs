@@ -25,17 +25,21 @@ use std::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
 
-use crate::{AetowerMcpDataSource, AetowerMcpServer};
+use crate::{AetowerMcpDataSource, AetowerMcpServer, ProcessActionApprovalStore};
 
 pub(crate) const SOCKET_DIR_MODE: u32 = 0o700;
 pub(crate) const SOCKET_FILE_MODE: u32 = 0o600;
-const MCP_READ_TIMEOUT: Duration = Duration::from_millis(250);
 const PROXY_POLL_TIMEOUT: Duration = Duration::from_millis(250);
+const MAX_MCP_CLIENTS: usize = 64;
+const MAX_MCP_HEADER_BYTES: usize = 16 * 1024;
+const MAX_MCP_BODY_BYTES: usize = 1024 * 1024;
+const MAX_MCP_JSON_LINE_BYTES: usize = 1024 * 1024;
+const MCP_PARTIAL_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 // Exit a helper that has seen no MCP traffic in either direction for this
 // long. Real interactive use (Claude Code, Codex, Chau7) keeps a steady cadence
 // well under 5 min, so this fires only on abandoned helpers — clients that
@@ -50,10 +54,11 @@ pub(crate) enum MessageFraming {
     JsonLine,
 }
 
+#[derive(Debug)]
 pub(crate) enum ReadMessageOutcome {
     Message(Value),
     EndOfStream,
-    Timeout,
+    Timeout { partial: bool },
 }
 
 pub struct LocalMcpServerHandle {
@@ -179,11 +184,13 @@ pub fn start_local_socket_server(
     )?;
     let running = Arc::new(AtomicBool::new(true));
     let stats = Arc::new(McpRuntimeStats::default());
+    let approval_store = Arc::new(ProcessActionApprovalStore::default());
     let thread_running = Arc::clone(&running);
     let thread_socket_path = socket_path.clone();
     let client_threads: Arc<Mutex<Vec<thread::JoinHandle<()>>>> = Arc::new(Mutex::new(Vec::new()));
     let thread_client_threads = Arc::clone(&client_threads);
     let thread_stats = Arc::clone(&stats);
+    let thread_approval_store = Arc::clone(&approval_store);
     let join_handle = thread::spawn(move || {
         while thread_running.load(Ordering::SeqCst) {
             match listener.accept() {
@@ -191,15 +198,23 @@ pub fn start_local_socket_server(
                     if !thread_running.load(Ordering::SeqCst) {
                         break;
                     }
+                    if !try_reserve_client_slot(&thread_stats) {
+                        eprintln!(
+                            "aetower-mcp socket: refusing client because the {}-client limit is reached",
+                            MAX_MCP_CLIENTS
+                        );
+                        drop(stream);
+                        continue;
+                    }
                     let source = Arc::clone(&data_source);
                     let connection_running = Arc::clone(&thread_running);
                     let connection_operator_actions_enabled = operator_actions_enabled;
                     thread_stats
                         .total_connections
                         .fetch_add(1, Ordering::Relaxed);
-                    thread_stats.active_clients.fetch_add(1, Ordering::Relaxed);
                     publish_mcp_runtime_stats(&source, &thread_stats);
                     let stats = Arc::clone(&thread_stats);
+                    let approval_store = Arc::clone(&thread_approval_store);
                     let join_handle = thread::spawn(move || {
                         if let Err(err) = handle_connection(
                             stream,
@@ -207,6 +222,7 @@ pub fn start_local_socket_server(
                             connection_running,
                             Arc::clone(&stats),
                             connection_operator_actions_enabled,
+                            approval_store,
                         ) {
                             // Surface per-connection failures — handle_connection
                             // returns Ok on clean peer close, so reaching here
@@ -240,6 +256,24 @@ pub fn start_local_socket_server(
         stats,
         operator_actions_enabled,
     })
+}
+
+fn try_reserve_client_slot(stats: &McpRuntimeStats) -> bool {
+    let mut current = stats.active_clients.load(Ordering::Relaxed);
+    loop {
+        if current >= MAX_MCP_CLIENTS {
+            return false;
+        }
+        match stats.active_clients.compare_exchange_weak(
+            current,
+            current + 1,
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return true,
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 fn reap_finished_client_threads(handles: &mut Vec<thread::JoinHandle<()>>) {
@@ -304,7 +338,7 @@ fn request_once(
         ReadMessageOutcome::EndOfStream => {
             return Err("MCP socket closed before responding".into());
         }
-        ReadMessageOutcome::Timeout => {
+        ReadMessageOutcome::Timeout { .. } => {
             return Err("MCP socket timed out before responding".into());
         }
     };
@@ -621,7 +655,7 @@ impl McpSocketConnection {
         match self
             .reader
             .get_ref()
-            .set_read_timeout(Some(MCP_READ_TIMEOUT))
+            .set_read_timeout(Some(MCP_PARTIAL_FRAME_TIMEOUT))
         {
             Ok(()) => Ok(true),
             Err(_) if self.peer_hung_up() => Ok(false),
@@ -678,6 +712,7 @@ pub(crate) fn handle_connection(
     running: Arc<AtomicBool>,
     stats: Arc<McpRuntimeStats>,
     operator_actions_enabled: bool,
+    approval_store: Arc<ProcessActionApprovalStore>,
 ) -> Result<(), String> {
     let mut connection = McpSocketConnection::new(stream);
     if !connection.arm_read_timeout()? {
@@ -685,13 +720,19 @@ pub(crate) fn handle_connection(
         // probe or the accept-loop wakeup). Nothing to do; close cleanly.
         return Ok(());
     }
-    let server =
-        AetowerMcpServer::new_with_stats(data_source, Some(stats), operator_actions_enabled);
+    let server = AetowerMcpServer::new_with_stats_and_approval_store(
+        data_source,
+        Some(stats),
+        operator_actions_enabled,
+        approval_store,
+    );
     let mut framing = None;
+    let mut last_activity = Instant::now();
 
     loop {
         match connection.read_message(&mut framing)? {
             ReadMessageOutcome::Message(message) => {
+                last_activity = Instant::now();
                 let response = server.handle_message(message);
                 if let Some(response) = response {
                     connection.write_message(
@@ -701,8 +742,19 @@ pub(crate) fn handle_connection(
                 }
             }
             ReadMessageOutcome::EndOfStream => break,
-            ReadMessageOutcome::Timeout if running.load(Ordering::SeqCst) => continue,
-            ReadMessageOutcome::Timeout => break,
+            ReadMessageOutcome::Timeout { partial: true } => {
+                return Err(format!(
+                    "partial MCP frame exceeded {:?} without completing",
+                    MCP_PARTIAL_FRAME_TIMEOUT
+                ));
+            }
+            ReadMessageOutcome::Timeout { partial: false }
+                if running.load(Ordering::SeqCst)
+                    && last_activity.elapsed() < PROXY_IDLE_TIMEOUT =>
+            {
+                continue;
+            }
+            ReadMessageOutcome::Timeout { partial: false } => break,
         }
     }
     connection.shutdown();
@@ -742,6 +794,12 @@ pub(crate) fn read_message(
                 return Err("unexpected EOF while reading headers".into());
             }
             Ok(_) => {
+                if headers.len() >= MAX_MCP_HEADER_BYTES {
+                    return Err(format!(
+                        "MCP headers exceed the {}-byte limit",
+                        MAX_MCP_HEADER_BYTES
+                    ));
+                }
                 headers.push(byte[0]);
                 let trimmed = trim_ascii_whitespace(&headers);
                 if is_json_line_candidate(trimmed) && byte[0] == b'\n' {
@@ -762,7 +820,9 @@ pub(crate) fn read_message(
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
             {
-                return Ok(ReadMessageOutcome::Timeout);
+                return Ok(ReadMessageOutcome::Timeout {
+                    partial: !headers.is_empty(),
+                });
             }
             Err(error) => return Err(format!("read header: {error}")),
         }
@@ -779,6 +839,12 @@ pub(crate) fn read_message(
                 .flatten()
         })
         .ok_or_else(|| "missing Content-Length".to_string())?;
+    if content_length > MAX_MCP_BODY_BYTES {
+        return Err(format!(
+            "MCP body exceeds the {}-byte limit",
+            MAX_MCP_BODY_BYTES
+        ));
+    }
 
     let mut body = vec![0u8; content_length];
     let mut offset = 0;
@@ -790,7 +856,10 @@ pub(crate) fn read_message(
                 if matches!(
                     error.kind(),
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
+                ) =>
+            {
+                return Ok(ReadMessageOutcome::Timeout { partial: true });
+            }
             Err(error) => return Err(format!("read body: {error}")),
         }
     }
@@ -812,6 +881,12 @@ fn read_json_line_message(reader: &mut impl Read) -> Result<ReadMessageOutcome, 
                 return parse_json_line(trim_ascii_whitespace(&buffer));
             }
             Ok(_) => {
+                if buffer.len() >= MAX_MCP_JSON_LINE_BYTES {
+                    return Err(format!(
+                        "MCP JSON line exceeds the {}-byte limit",
+                        MAX_MCP_JSON_LINE_BYTES
+                    ));
+                }
                 buffer.push(byte[0]);
                 if byte[0] == b'\n' {
                     return parse_json_line(trim_ascii_whitespace(&buffer));
@@ -823,7 +898,9 @@ fn read_json_line_message(reader: &mut impl Read) -> Result<ReadMessageOutcome, 
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
             {
-                return Ok(ReadMessageOutcome::Timeout);
+                return Ok(ReadMessageOutcome::Timeout {
+                    partial: !buffer.is_empty(),
+                });
             }
             Err(error) => return Err(format!("read json line: {error}")),
         }
@@ -849,7 +926,7 @@ fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
 
 fn parse_json_line(bytes: &[u8]) -> Result<ReadMessageOutcome, String> {
     if bytes.is_empty() {
-        return Ok(ReadMessageOutcome::Timeout);
+        return Ok(ReadMessageOutcome::Timeout { partial: false });
     }
     let value =
         serde_json::from_slice(bytes).map_err(|error| format!("parse json line: {error}"))?;

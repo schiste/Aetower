@@ -536,16 +536,15 @@ static TOOL_DESCRIPTORS: LazyLock<Vec<ToolDescriptor>> = LazyLock::new(|| {
         ),
         ToolDescriptor::with_args(
             "aetower_process_action",
-            "Preview or execute a guarded process action. Defaults to dry_run=true. Execution requires explicit operator approval plus expected_targets copied from the dry-run preview so Aetower can reject PID reuse or target-set drift. Executed reports include command_result, target_outcomes, and a bounded verification status so callers can tell whether macOS accepted the command and whether the target post-condition was confirmed.",
+            "Preview or execute a guarded process action. Defaults to dry_run=true. A successful preview issues a short-lived, one-time approval_token bound to the action, PID set, and stable process identities. Execution requires that token and a native operator confirmation dialog; Aetower rejects PID reuse or target-set drift before invoking macOS. Executed reports include command_result, target_outcomes, and bounded verification status.",
             vec![
                 uint("pid", Some(2), None, None).required(),
                 string_enum("action", &["terminate", "force-kill", "suspend", "resume", "terminate-tree", "force-kill-tree", "lower-priority", "normal-priority"]).required(),
                 boolean("dry_run", None),
                 string("reason"),
-                string("action_id").described("Optional caller-provided correlation id. Reuse the preview action_id when executing."),
-                process_expected_targets(),
+                string("action_id").described("Optional correlation id. When executing, it must match the preview that issued approval_token."),
                 int("restore_nice_value", Some(-20), Some(20), None).described("For normal-priority, restore this exact nice value instead of assuming 0."),
-                boolean("privileged_helper_approved", None).described("Explicit operator approval for an elevated retry. Current public builds report approved-but-unavailable rather than silently escalating."),
+                string("approval_token").described("One-time token returned by a successful dry-run preview; required for execution."),
             ],
             AetowerMcpServer::tool_process_action,
         )
@@ -663,29 +662,6 @@ fn diagnostics_properties(include_summary_limit: bool) -> Vec<ToolProperty> {
     properties.push(uint("since_millis", Some(0), None, None));
     properties.push(boolean("include_persisted", None));
     properties
-}
-
-fn process_expected_targets() -> ToolProperty {
-    raw(
-        "expected_targets",
-        json!({
-            "type": "array",
-            "description": "Required for dry_run=false. Copy target_identities from the matching dry-run preview. Execution is refused if the planned targets changed or if a PID no longer matches the previewed start time or executable path.",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "pid": { "type": "integer", "minimum": 2 },
-                    "start_time_millis": { "type": "integer", "minimum": 0 },
-                    "executable_path": { "type": "string" },
-                    "display_name": { "type": "string" },
-                    "nice_value": { "type": "integer", "minimum": -20, "maximum": 20 }
-                },
-                "required": ["pid"],
-                "additionalProperties": false
-            },
-            "maxItems": 256
-        }),
-    )
 }
 
 fn string(name: &'static str) -> ToolProperty {
