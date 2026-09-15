@@ -341,6 +341,13 @@ pub(super) struct StorageIncrementalMeasurementResult {
     pub(super) last_error: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct StorageMeasurementJob {
+    pub(super) job_id: String,
+    pub(super) job_kind: String,
+    pub(super) roots: Vec<PathBuf>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct StorageIndexSummaryRow {
     pub(super) source_root: String,
@@ -1276,6 +1283,7 @@ impl StorageSizeIndex {
         Self::ensure_materialized_storage_index_schema(connection)?;
         Self::ensure_repository_artifact_columns(connection)?;
         Self::ensure_storage_scan_generation_schema(connection)?;
+        Self::ensure_storage_measurement_job_columns(connection)?;
         Ok(())
     }
 
@@ -1545,12 +1553,17 @@ impl StorageSizeIndex {
                 measured_file_count INTEGER NOT NULL,
                 measured_bytes INTEGER NOT NULL,
                 partial INTEGER NOT NULL DEFAULT 0,
-                last_error TEXT
+                last_error TEXT,
+                next_attempt_millis INTEGER NOT NULL DEFAULT 0,
+                lease_until_millis INTEGER,
+                attempt_count INTEGER NOT NULL DEFAULT 0
              );
              CREATE INDEX IF NOT EXISTS idx_storage_measurement_job_root
                 ON storage_measurement_job(root_key, updated_at_millis DESC);
              CREATE INDEX IF NOT EXISTS idx_storage_measurement_job_status
-                ON storage_measurement_job(status, updated_at_millis DESC);",
+                ON storage_measurement_job(status, next_attempt_millis, updated_at_millis DESC);
+             CREATE INDEX IF NOT EXISTS idx_storage_measurement_job_lease
+                ON storage_measurement_job(status, lease_until_millis);",
         )
     }
 
@@ -1760,6 +1773,44 @@ impl StorageSizeIndex {
              CREATE INDEX IF NOT EXISTS idx_storage_scan_generation_stage_fingerprint_path
                 ON storage_scan_generation_stage_fingerprint(generation_id, path);",
         )
+    }
+
+    fn ensure_storage_measurement_job_columns(connection: &Connection) -> rusqlite::Result<()> {
+        for (column, ddl) in [
+            (
+                "next_attempt_millis",
+                "ALTER TABLE storage_measurement_job
+                 ADD COLUMN next_attempt_millis INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "lease_until_millis",
+                "ALTER TABLE storage_measurement_job
+                 ADD COLUMN lease_until_millis INTEGER",
+            ),
+            (
+                "attempt_count",
+                "ALTER TABLE storage_measurement_job
+                 ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
+            ),
+        ] {
+            let exists: i64 = connection.query_row(
+                "SELECT COUNT(*)
+                 FROM pragma_table_info('storage_measurement_job')
+                 WHERE name = ?1",
+                params![column],
+                |row| row.get(0),
+            )?;
+            if exists == 0 {
+                tolerate_duplicate_column(connection.execute(ddl, []))?;
+            }
+        }
+        connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_storage_measurement_job_status
+                ON storage_measurement_job(status, next_attempt_millis, updated_at_millis DESC);
+             CREATE INDEX IF NOT EXISTS idx_storage_measurement_job_lease
+                ON storage_measurement_job(status, lease_until_millis);",
+        )?;
+        Ok(())
     }
 
     fn ensure_storage_dirty_path_columns(connection: &Connection) -> rusqlite::Result<()> {
@@ -2945,6 +2996,161 @@ impl StorageSizeIndex {
         Ok(())
     }
 
+    pub(super) fn indexed_source_roots(&self) -> Result<BTreeSet<String>, String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let mut statement = connection
+            .prepare("SELECT DISTINCT source_root FROM storage_file_index ORDER BY source_root")
+            .map_err(|error| format!("prepare_indexed_source_roots:{error}"))?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("query_indexed_source_roots:{error}"))?;
+        rows.map(|row| row.map_err(|error| format!("decode_indexed_source_root:{error}")))
+            .collect()
+    }
+
+    /// Atomically claim one pending measurement job. The lease makes a crash
+    /// recoverable: another process can claim an expired `running` row after
+    /// the lease deadline without relying on an in-memory worker registry.
+    pub(super) fn claim_next_storage_measurement_job(
+        &self,
+        now_millis: u64,
+        lease_millis: u64,
+    ) -> Result<Option<StorageMeasurementJob>, String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let now = now_millis.min(i64::MAX as u64) as i64;
+        let lease_until = now_millis.saturating_add(lease_millis).min(i64::MAX as u64) as i64;
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("claim_measurement_job_transaction:{error}"))?;
+        let candidate = transaction
+            .query_row(
+                "SELECT job_id, job_kind, roots_json
+                 FROM storage_measurement_job
+                 WHERE (
+                    status IN ('pending', 'partial')
+                    OR (status = 'running'
+                        AND lease_until_millis IS NOT NULL
+                        AND lease_until_millis <= ?1)
+                 )
+                   AND next_attempt_millis <= ?1
+                 ORDER BY next_attempt_millis ASC, updated_at_millis ASC, job_id ASC
+                 LIMIT 1",
+                params![now],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| format!("select_measurement_job:{error}"))?;
+        let Some((job_id, job_kind, roots_json)) = candidate else {
+            transaction
+                .commit()
+                .map_err(|error| format!("commit_empty_measurement_claim:{error}"))?;
+            return Ok(None);
+        };
+        let changed = transaction
+            .execute(
+                "UPDATE storage_measurement_job
+                 SET status = 'running',
+                     started_at_millis = ?2,
+                     updated_at_millis = ?2,
+                     completed_at_millis = NULL,
+                     partial = 0,
+                     last_error = NULL,
+                     next_attempt_millis = 0,
+                     lease_until_millis = ?3,
+                     attempt_count = attempt_count + 1
+                 WHERE job_id = ?1
+                   AND (
+                        status IN ('pending', 'partial')
+                        OR (status = 'running'
+                            AND lease_until_millis IS NOT NULL
+                            AND lease_until_millis <= ?2)
+                   )
+                   AND next_attempt_millis <= ?2",
+                params![job_id, now, lease_until],
+            )
+            .map_err(|error| format!("claim_measurement_job:{error}"))?;
+        if changed != 1 {
+            transaction
+                .commit()
+                .map_err(|error| format!("commit_lost_measurement_claim:{error}"))?;
+            return Ok(None);
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_measurement_claim:{error}"))?;
+        let roots = serde_json::from_str::<Vec<String>>(&roots_json)
+            .map_err(|error| format!("decode_measurement_job_roots:{error}"))?
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        Ok(Some(StorageMeasurementJob {
+            job_id,
+            job_kind,
+            roots,
+        }))
+    }
+
+    pub(super) fn finish_storage_measurement_job(
+        &self,
+        job_id: &str,
+        success: bool,
+        error: Option<&str>,
+        now_millis: u64,
+    ) -> Result<(), String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let now = now_millis.min(i64::MAX as u64) as i64;
+        let next_attempt = if success {
+            0
+        } else {
+            now_millis
+                .saturating_add(STORAGE_MEASUREMENT_RETRY_DELAY_MILLIS)
+                .min(i64::MAX as u64) as i64
+        };
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("finish_measurement_job_transaction:{error}"))?;
+        let changed = transaction
+            .execute(
+                "UPDATE storage_measurement_job
+                 SET status = ?2,
+                     updated_at_millis = ?3,
+                     completed_at_millis = CASE WHEN ?4 <> 0 THEN ?3 ELSE NULL END,
+                     partial = CASE WHEN ?4 <> 0 THEN 0 ELSE 1 END,
+                     last_error = ?5,
+                     next_attempt_millis = ?6,
+                     lease_until_millis = NULL
+                 WHERE job_id = ?1 AND status = 'running'",
+                params![
+                    job_id,
+                    if success { "complete" } else { "pending" },
+                    now,
+                    if success { 1i64 } else { 0i64 },
+                    error,
+                    next_attempt,
+                ],
+            )
+            .map_err(|error| format!("finish_measurement_job:{error}"))?;
+        if changed != 1 {
+            return Err(format!("measurement job is not running: {job_id}"));
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_finish_measurement_job:{error}"))?;
+        Ok(())
+    }
+
     pub(super) fn record_incremental_measurement_job(
         &self,
         roots: &[PathBuf],
@@ -2952,8 +3158,22 @@ impl StorageSizeIndex {
         result: &StorageIncrementalMeasurementResult,
         now_millis: u64,
     ) {
+        if let Err(error) =
+            self.record_incremental_measurement_job_checked(roots, dirty_paths, result, now_millis)
+        {
+            self.record_write_error(format!("record_incremental_measurement_job:{error}"));
+        }
+    }
+
+    fn record_incremental_measurement_job_checked(
+        &self,
+        roots: &[PathBuf],
+        dirty_paths: &[String],
+        result: &StorageIncrementalMeasurementResult,
+        now_millis: u64,
+    ) -> Result<(), String> {
         let Some(connection) = self.connection.as_ref() else {
-            return;
+            return Err(self.status.clone());
         };
         let roots_json = serde_json::to_string(
             &roots
@@ -2961,14 +3181,14 @@ impl StorageSizeIndex {
                 .map(|root| root.display().to_string())
                 .collect::<Vec<_>>(),
         )
-        .unwrap_or_else(|_| "[]".to_owned());
+        .map_err(|error| format!("encode_measurement_job_roots:{error}"))?;
         let recorded_dirty_paths = if dirty_paths.is_empty() && !result.dirty_paths.is_empty() {
             result.dirty_paths.as_slice()
         } else {
             dirty_paths
         };
-        let dirty_paths_json =
-            serde_json::to_string(recorded_dirty_paths).unwrap_or_else(|_| "[]".to_owned());
+        let dirty_paths_json = serde_json::to_string(recorded_dirty_paths)
+            .map_err(|error| format!("encode_measurement_job_dirty_paths:{error}"))?;
         let root_key = storage_situation_roots_key(roots);
         let status = if result.continuation_pending {
             "pending"
@@ -2986,31 +3206,64 @@ impl StorageSizeIndex {
         } else {
             result.last_error.clone()
         };
-        let _ = connection.execute(
-            "INSERT OR REPLACE INTO storage_measurement_job (
+        let now = now_millis.min(i64::MAX as u64) as i64;
+        let completed_at = (status == "complete").then_some(now);
+        let next_attempt = if status == "complete" {
+            0
+        } else {
+            now_millis
+                .saturating_add(STORAGE_MEASUREMENT_RETRY_DELAY_MILLIS)
+                .min(i64::MAX as u64) as i64
+        };
+        connection
+            .execute(
+                "INSERT INTO storage_measurement_job (
                 job_id, job_kind, status, source, root_key, roots_json, dirty_paths_json,
                 started_at_millis, updated_at_millis, completed_at_millis, measured_path_count,
-                measured_directory_count, measured_file_count, measured_bytes, partial, last_error
+                measured_directory_count, measured_file_count, measured_bytes, partial, last_error,
+                next_attempt_millis, lease_until_millis, attempt_count
              ) VALUES (
                 ?1, 'dirty_subtree_incremental', ?2, 'dirty_queue', ?3, ?4, ?5,
-                ?6, ?7, ?7, ?8, ?9, ?10, ?11, ?12, ?13
-             )",
-            params![
-                format!("dirty-subtree-incremental:{root_key}"),
-                status,
-                root_key,
-                roots_json,
-                dirty_paths_json,
-                result.started_at_millis.min(i64::MAX as u64) as i64,
-                now_millis.min(i64::MAX as u64) as i64,
-                result.measured_path_count.min(i64::MAX as u64) as i64,
-                result.measured_directory_count.min(i64::MAX as u64) as i64,
-                result.measured_file_count.min(i64::MAX as u64) as i64,
-                result.measured_bytes.min(i64::MAX as u64) as i64,
-                if result.partial { 1i64 } else { 0i64 },
-                last_error.as_deref(),
-            ],
-        );
+                ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, NULL, 0
+             )
+             ON CONFLICT(job_id) DO UPDATE SET
+                job_kind = excluded.job_kind,
+                status = excluded.status,
+                source = excluded.source,
+                root_key = excluded.root_key,
+                roots_json = excluded.roots_json,
+                dirty_paths_json = excluded.dirty_paths_json,
+                started_at_millis = excluded.started_at_millis,
+                updated_at_millis = excluded.updated_at_millis,
+                completed_at_millis = excluded.completed_at_millis,
+                measured_path_count = excluded.measured_path_count,
+                measured_directory_count = excluded.measured_directory_count,
+                measured_file_count = excluded.measured_file_count,
+                measured_bytes = excluded.measured_bytes,
+                partial = excluded.partial,
+                last_error = excluded.last_error,
+                next_attempt_millis = excluded.next_attempt_millis,
+                lease_until_millis = NULL",
+                params![
+                    format!("dirty-subtree-incremental:{root_key}"),
+                    status,
+                    root_key,
+                    roots_json,
+                    dirty_paths_json,
+                    result.started_at_millis.min(i64::MAX as u64) as i64,
+                    now,
+                    completed_at,
+                    result.measured_path_count.min(i64::MAX as u64) as i64,
+                    result.measured_directory_count.min(i64::MAX as u64) as i64,
+                    result.measured_file_count.min(i64::MAX as u64) as i64,
+                    result.measured_bytes.min(i64::MAX as u64) as i64,
+                    if result.partial { 1i64 } else { 0i64 },
+                    last_error.as_deref(),
+                    next_attempt,
+                ],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("upsert_incremental_measurement_job:{error}"))
     }
 
     pub(super) fn latest_measurement_job_debug(
@@ -6191,10 +6444,11 @@ fn record_deferred_materialized_storage_backfill(
 ) -> rusqlite::Result<()> {
     let now_millis = storage_now_millis();
     connection.execute(
-        "INSERT OR REPLACE INTO storage_measurement_job (
+        "INSERT INTO storage_measurement_job (
             job_id, job_kind, status, source, root_key, roots_json, dirty_paths_json,
             started_at_millis, updated_at_millis, completed_at_millis, measured_path_count,
-            measured_directory_count, measured_file_count, measured_bytes, partial, last_error
+            measured_directory_count, measured_file_count, measured_bytes, partial, last_error,
+            next_attempt_millis, lease_until_millis, attempt_count
          ) VALUES (
             'legacy-file-index:deferred-materialized-backfill',
             'legacy_file_index_backfill',
@@ -6211,8 +6465,22 @@ fn record_deferred_materialized_storage_backfill(
             0,
             0,
             1,
-            ?2
-         )",
+            ?2,
+            0,
+            NULL,
+            0
+         )
+         ON CONFLICT(job_id) DO UPDATE SET
+            status = 'pending',
+            source = excluded.source,
+            root_key = excluded.root_key,
+            roots_json = excluded.roots_json,
+            updated_at_millis = excluded.updated_at_millis,
+            completed_at_millis = NULL,
+            partial = 1,
+            last_error = excluded.last_error,
+            next_attempt_millis = 0,
+            lease_until_millis = NULL",
         params![
             now_millis.min(i64::MAX as u64) as i64,
             format!(

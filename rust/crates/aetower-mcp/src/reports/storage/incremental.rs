@@ -1,5 +1,10 @@
 use super::*;
 
+#[cfg(not(test))]
+const STORAGE_MEASUREMENT_LEASE_MILLIS: u64 = 30_000;
+#[cfg(not(test))]
+const STORAGE_BACKGROUND_WORKER_POLL: Duration = Duration::from_secs(2);
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct StorageIncrementalDrainPolicy {
     dirty_batch_limit: usize,
@@ -44,33 +49,90 @@ pub(super) fn ensure_dirty_storage_subtree_measurement(
     if dirty_summary.dirty_path_count == 0 {
         return;
     }
-    let roots = roots.to_vec();
-    let roots_key = incremental_roots_key(&roots);
-    let active = incremental_measurement_roots();
-    {
-        let mut active_roots = lock_or_recover(active);
-        if !active_roots.insert(roots_key.clone()) {
-            return;
+    let storage_index = StorageSizeIndex::open();
+    let queued_paths = storage_index.load_dirty_path_strings(roots, 512);
+    let now_millis = storage_now_millis();
+    let result = StorageIncrementalMeasurementResult {
+        started_at_millis: now_millis,
+        dirty_paths: queued_paths,
+        partial: true,
+        continuation_pending: true,
+        last_error: Some("durable_measurement_queued".to_owned()),
+        ..StorageIncrementalMeasurementResult::default()
+    };
+    storage_index.record_incremental_measurement_job(roots, &[], &result, now_millis);
+}
+
+#[cfg(not(test))]
+pub(crate) fn start_storage_background_services() {
+    static STARTED: OnceLock<()> = OnceLock::new();
+    if STARTED.set(()).is_err() {
+        return;
+    }
+    let _ = thread::Builder::new()
+        .name("aetower-storage-worker".to_owned())
+        .spawn(storage_background_worker_loop);
+}
+
+#[cfg(not(test))]
+fn storage_background_worker_loop() {
+    loop {
+        let storage_index = StorageSizeIndex::open();
+        let now_millis = storage_now_millis();
+        match storage_index
+            .claim_next_storage_measurement_job(now_millis, STORAGE_MEASUREMENT_LEASE_MILLIS)
+        {
+            Ok(Some(job)) => run_claimed_storage_measurement_job(&storage_index, job),
+            Ok(None) => thread::sleep(STORAGE_BACKGROUND_WORKER_POLL),
+            Err(_) => thread::sleep(STORAGE_BACKGROUND_WORKER_POLL),
         }
     }
+}
 
-    let worker_roots_key = roots_key.clone();
-    match thread::Builder::new()
-        .name("aetower-storage-incremental".to_owned())
-        .spawn(move || {
-            let _guard = IncrementalActiveRootGuard {
-                roots_key: worker_roots_key,
-            };
-            let storage_index = StorageSizeIndex::open();
+#[cfg(not(test))]
+fn run_claimed_storage_measurement_job(
+    storage_index: &StorageSizeIndex,
+    job: StorageMeasurementJob,
+) {
+    match job.job_kind.as_str() {
+        "dirty_subtree_incremental" => {
             run_dirty_storage_subtree_measurement_worker_with_policy(
-                &storage_index,
-                &roots,
+                storage_index,
+                &job.roots,
                 StorageIncrementalDrainPolicy::background_launch(),
             );
-        }) {
-        Ok(_handle) => {}
-        Err(_) => {
-            lock_or_recover(active).remove(&roots_key);
+        }
+        "legacy_file_index_backfill" => {
+            let result = storage_index
+                .indexed_source_roots()
+                .and_then(|source_roots| {
+                    storage_index
+                        .refresh_materialized_storage_for_source_roots_checked(&source_roots)
+                });
+            if let Err(error) = result {
+                let _ = storage_index.finish_storage_measurement_job(
+                    &job.job_id,
+                    false,
+                    Some(&error),
+                    storage_now_millis(),
+                );
+            } else {
+                let _ = storage_index.finish_storage_measurement_job(
+                    &job.job_id,
+                    true,
+                    None,
+                    storage_now_millis(),
+                );
+            }
+        }
+        _ => {
+            let error = format!("unsupported_measurement_job_kind:{}", job.job_kind);
+            let _ = storage_index.finish_storage_measurement_job(
+                &job.job_id,
+                false,
+                Some(&error),
+                storage_now_millis(),
+            );
         }
     }
 }
@@ -289,27 +351,4 @@ pub(super) fn measure_dirty_storage_subtrees_once_with_policy(
         "incremental_dirty_subtree",
     );
     result
-}
-
-fn incremental_measurement_roots() -> &'static Mutex<BTreeSet<String>> {
-    static ACTIVE: OnceLock<Mutex<BTreeSet<String>>> = OnceLock::new();
-    ACTIVE.get_or_init(|| Mutex::new(BTreeSet::new()))
-}
-
-struct IncrementalActiveRootGuard {
-    roots_key: String,
-}
-
-impl Drop for IncrementalActiveRootGuard {
-    fn drop(&mut self) {
-        lock_or_recover(incremental_measurement_roots()).remove(&self.roots_key);
-    }
-}
-
-fn incremental_roots_key(roots: &[PathBuf]) -> String {
-    roots
-        .iter()
-        .map(|root| root.display().to_string())
-        .collect::<Vec<_>>()
-        .join("\u{1f}")
 }

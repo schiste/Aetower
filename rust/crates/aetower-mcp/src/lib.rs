@@ -1323,6 +1323,8 @@ impl AetowerMcpServer {
         operator_actions_enabled: bool,
         approval_store: Arc<ProcessActionApprovalStore>,
     ) -> Self {
+        #[cfg(not(test))]
+        reports::storage::start_storage_background_services();
         Self {
             data_source,
             mcp_stats,

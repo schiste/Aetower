@@ -2278,6 +2278,93 @@ fn storage_index_flush_failure_retains_rows_for_retry() {
 }
 
 #[test]
+fn storage_measurement_job_claims_leases_and_retries_after_expiry() {
+    let root = test_root("measurement-job-lease");
+    let index_dir = test_root("measurement-job-lease-index");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    assert!(
+        storage_index
+            .indexed_source_roots()
+            .expect("load empty indexed source roots")
+            .is_empty()
+    );
+    let connection = Connection::open(index_dir.join(STORAGE_INDEX_FILE_NAME))
+        .expect("open measurement job fixture connection");
+    connection
+        .execute(
+            "INSERT INTO storage_measurement_job (
+                job_id, job_kind, status, source, root_key, roots_json, dirty_paths_json,
+                started_at_millis, updated_at_millis, completed_at_millis,
+                measured_path_count, measured_directory_count, measured_file_count,
+                measured_bytes, partial, last_error, next_attempt_millis,
+                lease_until_millis, attempt_count
+             ) VALUES (?1, 'dirty_subtree_incremental', 'pending', 'dirty_queue', ?2, ?3,
+                       '[]', 0, 0, NULL, 0, 0, 0, 0, 1, 'queued', 0, NULL, 0)",
+            params![
+                "lease-job",
+                "job-root",
+                serde_json::to_string(&vec![root.display().to_string()]).expect("encode roots"),
+            ],
+        )
+        .expect("insert measurement job");
+    drop(connection);
+
+    let claimed = storage_index
+        .claim_next_storage_measurement_job(100, 50)
+        .expect("claim measurement job")
+        .expect("pending job exists");
+    assert_eq!(claimed.job_id, "lease-job");
+    assert_eq!(claimed.job_kind, "dirty_subtree_incremental");
+    assert_eq!(claimed.roots, vec![root.clone()]);
+    assert!(
+        storage_index
+            .claim_next_storage_measurement_job(120, 50)
+            .expect("respect active lease")
+            .is_none()
+    );
+    let reclaimed = storage_index
+        .claim_next_storage_measurement_job(151, 50)
+        .expect("claim expired lease")
+        .expect("expired job is recoverable");
+    assert_eq!(reclaimed.job_id, "lease-job");
+
+    storage_index
+        .finish_storage_measurement_job("lease-job", false, Some("worker_retry"), 200)
+        .expect("requeue failed measurement job");
+    assert!(
+        storage_index
+            .claim_next_storage_measurement_job(200, 50)
+            .expect("respect retry delay")
+            .is_none()
+    );
+    let retry = storage_index
+        .claim_next_storage_measurement_job(1_700, 50)
+        .expect("claim delayed retry")
+        .expect("retry is available");
+    assert_eq!(retry.job_id, "lease-job");
+    storage_index
+        .finish_storage_measurement_job("lease-job", true, None, 1_800)
+        .expect("complete measurement job");
+
+    let connection = Connection::open(index_dir.join(STORAGE_INDEX_FILE_NAME))
+        .expect("reopen measurement job fixture connection");
+    let (status, attempts, lease): (String, i64, Option<i64>) = connection
+        .query_row(
+            "SELECT status, attempt_count, lease_until_millis
+             FROM storage_measurement_job WHERE job_id = 'lease-job'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read completed measurement job");
+    assert_eq!(status, "complete");
+    assert_eq!(attempts, 3);
+    assert!(lease.is_none());
+
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(index_dir);
+}
+
+#[test]
 fn storage_index_buffered_rows_are_visible_to_reads_without_explicit_flush() {
     let _index_guard = storage_index_test_guard();
     let root = test_root("batched-flush-read-your-writes");

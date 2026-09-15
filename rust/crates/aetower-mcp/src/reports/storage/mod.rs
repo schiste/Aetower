@@ -112,6 +112,7 @@ const STORAGE_SCAN_DIFF_ENTRY_LIMIT: usize = 12;
 const COLD_COOLING_AFTER_DAYS: u64 = 90;
 const STORAGE_COLD_BAND_TOP_ITEMS: usize = 10;
 const DAY_MILLIS: u64 = 24 * 60 * 60 * 1000;
+const STORAGE_MEASUREMENT_RETRY_DELAY_MILLIS: u64 = 1_500;
 const RECENT_CLEANUP_BLOCK_MILLIS: u64 = 10 * 60 * 1000;
 const STORAGE_TREEMAP_MAX_DEPTH: usize = 4;
 const STORAGE_TREEMAP_MAX_CHILDREN: usize = 14;
@@ -514,6 +515,8 @@ use fingerprint::{
     metadata_birth_millis,
 };
 use incremental::ensure_dirty_storage_subtree_measurement;
+#[cfg(not(test))]
+pub(crate) use incremental::start_storage_background_services;
 #[cfg(test)]
 use incremental::{
     StorageIncrementalDrainPolicy, measure_dirty_storage_subtrees_once,
@@ -614,6 +617,8 @@ pub use report::{
     storage_hygiene_deep_scan_json, storage_hygiene_indexed_json, storage_hygiene_json,
     storage_hygiene_mode_json,
 };
+#[cfg(not(test))]
+use state_store::StorageMeasurementJob;
 use state_store::{
     RepositoryInventoryCacheEntry, RepositoryInventoryCacheState, StorageDirtyPathSummary,
     StorageIncrementalMeasurementResult, StorageIndexSummaryRow, StorageIndexedFileRow,
