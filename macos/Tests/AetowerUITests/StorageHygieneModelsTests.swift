@@ -30,6 +30,20 @@ final class StorageHygieneModelsTests: XCTestCase {
         XCTAssertNotEqual(initialSignature, AppState.storageSituationPublishSignature(newEvent))
     }
 
+    func testStorageSituationSurfacesExplicitScanState() throws {
+        let situation = try storageSituation(
+            capturedAtMillis: 10,
+            snapshotUpdatedAtMillis: 10,
+            latestEventId: 20
+        )
+
+        XCTAssertEqual(situation.requestedMode, "instant_cached")
+        XCTAssertEqual(situation.servedMode, "instant_cached")
+        XCTAssertEqual(situation.summaryScope, "situation_snapshot_partial")
+        XCTAssertEqual(situation.coveragePercent, 0)
+        XCTAssertTrue(situation.isPartialResult)
+    }
+
     func testStorageVolumeCapacityEnricherReplacesStaleCapacityFacts() {
         let stale = StorageVolumeStateModel(
             path: "/",
@@ -78,6 +92,10 @@ final class StorageHygieneModelsTests: XCTestCase {
             from: Data("""
             {
               "captured_at_millis": \(capturedAtMillis),
+              "requested_mode": "instant_cached",
+              "served_mode": "instant_cached",
+              "summary_scope": "situation_snapshot_partial",
+              "coverage_percent": 0,
               "snapshot_updated_at_millis": \(snapshotUpdatedAtMillis),
               "cache_status": {
                 "source": "test", "stale": false, "partial": false,
@@ -590,6 +608,10 @@ final class StorageHygieneModelsTests: XCTestCase {
         let root = temporarySupportURL.appendingPathComponent("Repositories", isDirectory: true).path
         let rawJSON = Self.minimalStorageReportJSON(
             root: root,
+            requestedMode: "forensic_verified",
+            servedMode: "forensic_partial",
+            summaryScope: "scanned_roots_partial",
+            coveragePercent: 0,
             scanMode: "forensic_partial",
             cachePartial: true,
             cacheMessage: "Forensic scan ended partial because a traversal budget stopped verification.",
@@ -614,11 +636,38 @@ final class StorageHygieneModelsTests: XCTestCase {
         )
 
         XCTAssertEqual(report.cacheStatus.source, "live_scan")
+        XCTAssertEqual(report.requestedMode, "forensic_verified")
+        XCTAssertEqual(report.servedMode, "forensic_partial")
+        XCTAssertEqual(report.summaryScope, "scanned_roots_partial")
+        XCTAssertEqual(report.coveragePercent, 0)
         XCTAssertTrue(report.cacheStatus.partial)
         XCTAssertTrue(report.isPartialResult)
         XCTAssertEqual(state.storageEstimateStatus.confidence.rawValue, "partial")
         XCTAssertEqual(state.storageEstimateStatus.title, "Partial")
         XCTAssertTrue(state.storageEstimateStatus.detail.contains("Forensic scan ended partial"))
+    }
+
+    func testStorageReportSurfacesRequestedAndServedScanState() throws {
+        let root = "/Users/example/Repositories"
+        let rawJSON = Self.minimalStorageReportJSON(
+            root: root,
+            requestedMode: "deep_native",
+            servedMode: "deep_partial",
+            summaryScope: "scanned_roots_partial",
+            coveragePercent: 73,
+            scanMode: "deep_partial"
+        )
+
+        let report = try AetowerJSON.snakeCaseDecoder().decode(
+            StorageHygieneReportModel.self,
+            from: Data(rawJSON.utf8)
+        )
+
+        XCTAssertEqual(report.requestedMode, "deep_native")
+        XCTAssertEqual(report.servedMode, "deep_partial")
+        XCTAssertEqual(report.summaryScope, "scanned_roots_partial")
+        XCTAssertEqual(report.coveragePercent, 73)
+        XCTAssertTrue(report.isPartialResult)
     }
 
     func testStorageReportDecodesCleanupLanes() throws {
@@ -1310,15 +1359,25 @@ final class StorageHygieneModelsTests: XCTestCase {
 
     private static func minimalStorageReportJSON(
         root: String,
+        requestedMode: String? = nil,
+        servedMode: String? = nil,
+        summaryScope: String = "scanned_roots",
+        coveragePercent: UInt8 = 100,
         scanMode: String = "deep_native",
         cachePartial: Bool = false,
         cacheMessage: String = "Fresh live scan completed within the configured budget.",
         truncated: Bool = false
     ) -> String {
-        """
+        let effectiveRequestedMode = requestedMode ?? scanMode
+        let effectiveServedMode = servedMode ?? scanMode
+        return """
         {
           "captured_at_millis": 1782860000000,
           "scan_duration_millis": 42,
+          "requested_mode": "\(effectiveRequestedMode)",
+          "served_mode": "\(effectiveServedMode)",
+          "summary_scope": "\(summaryScope)",
+          "coverage_percent": \(coveragePercent),
           "scan_mode": "\(scanMode)",
           "cache_status": {
             "source": "live_scan",

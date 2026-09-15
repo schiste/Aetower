@@ -12,6 +12,20 @@ final class StorageReclaimPolicyTests: XCTestCase {
         XCTAssertEqual(existing, ["/repo/target"])
     }
 
+    func testMissingCleanupPolicyFailsClosed() throws {
+        let item = try storageItem(
+            kind: "rust-build",
+            path: "/repo/target",
+            sizeGB: 6,
+            includeCleanupPolicy: false
+        )
+
+        XCTAssertFalse(item.cleanupAllowed)
+        XCTAssertEqual(item.defaultCleanupAction, "manual_review")
+        XCTAssertTrue(item.cleanupBlockers.contains("Missing cleanup policy evidence."))
+        XCTAssertFalse(StorageReclaimPolicy.itemIsTrashActionable(item))
+    }
+
     func testPrimaryActionDecisionStagesWhenContentIsNotTrashSafe() {
         XCTAssertEqual(
             StorageReclaimPolicy.primaryActionDecision(
@@ -191,7 +205,8 @@ final class StorageReclaimPolicyTests: XCTestCase {
         let safeBuild = try storageItem(
             kind: "rust-build",
             path: "/repo/target",
-            sizeGB: 6
+            sizeGB: 6,
+            cleanupConsequence: "Moves generated output to Finder Trash; emptying Trash is separate."
         )
         let oldDeviceSupport = try storageItem(
             kind: "xcode-device-support",
@@ -253,6 +268,10 @@ final class StorageReclaimPolicyTests: XCTestCase {
         XCTAssertEqual(plan.safeBytes, 6 * gigabyte)
         XCTAssertEqual(plan.additionalReviewBytes, 11 * gigabyte)
         XCTAssertEqual(plan.totalBytes, 17 * gigabyte)
+        XCTAssertEqual(
+            plan.safeItems.first?.cleanupConsequence,
+            "Moves generated output to Finder Trash; emptying Trash is separate."
+        )
     }
 
     func testBulkCleanupPlanUsesVerifiedCachedRepositoryArtifactsWithoutAHygieneReport() throws {
@@ -364,11 +383,13 @@ final class StorageReclaimPolicyTests: XCTestCase {
         cleanupTier: String = "rebuildable",
         cleanupAllowed: Bool = true,
         defaultCleanupAction: String = "trash",
+        cleanupConsequence: String? = nil,
         storageRole: String? = nil,
         provider: String? = nil,
         aiAgentSession: String? = nil,
         hasHardlinks: Bool = false,
-        protectedPath: Bool = false
+        protectedPath: Bool = false,
+        includeCleanupPolicy: Bool = true
     ) throws -> StorageHygieneItemModel {
         var attribution: [String: Any] = [
             "confidence": "high",
@@ -405,11 +426,16 @@ final class StorageReclaimPolicyTests: XCTestCase {
             "reason": "Unit test fixture.",
             "recommendation": "Review this fixture.",
             "commandHint": "",
-            "cleanupAllowed": cleanupAllowed,
-            "cleanupBlockers": [],
-            "defaultCleanupAction": defaultCleanupAction,
             "attribution": attribution,
         ]
+        if includeCleanupPolicy {
+            payload["cleanupAllowed"] = cleanupAllowed
+            payload["cleanupBlockers"] = []
+            payload["defaultCleanupAction"] = defaultCleanupAction
+        }
+        if let cleanupConsequence {
+            payload["cleanupConsequence"] = cleanupConsequence
+        }
         if let storageRole {
             payload["storageRole"] = storageRole
         }

@@ -6,6 +6,10 @@ final class StorageItemsPageModelsTests: XCTestCase {
         let json = """
         {
           "captured_at_millis": 1782860000000,
+          "requested_mode": "deep_native",
+          "served_mode": "deep_partial",
+          "summary_scope": "scanned_roots_partial",
+          "coverage_percent": 73,
           "scan_mode": "instant_cached",
           "diagnostics": {
             "mode": "instant_cached",
@@ -65,6 +69,10 @@ final class StorageItemsPageModelsTests: XCTestCase {
         )
 
         XCTAssertEqual(page.capturedAtMillis, 1_782_860_000_000)
+        XCTAssertEqual(page.requestedMode, "deep_native")
+        XCTAssertEqual(page.servedMode, "deep_partial")
+        XCTAssertEqual(page.summaryScope, "scanned_roots_partial")
+        XCTAssertEqual(page.coveragePercent, 73)
         XCTAssertEqual(page.scanMode, "instant_cached")
         XCTAssertEqual(page.offset, 100)
         XCTAssertEqual(page.limit, 50)
@@ -92,6 +100,10 @@ final class StorageItemsPageModelsTests: XCTestCase {
         )
 
         XCTAssertEqual(page.capturedAtMillis, 0)
+        XCTAssertEqual(page.requestedMode, "instant_cached")
+        XCTAssertEqual(page.servedMode, "instant_cached")
+        XCTAssertEqual(page.summaryScope, "legacy")
+        XCTAssertEqual(page.coveragePercent, 0)
         XCTAssertEqual(page.scanMode, "instant_cached")
         XCTAssertEqual(page.offset, 0)
         XCTAssertEqual(page.sortKey, "size")

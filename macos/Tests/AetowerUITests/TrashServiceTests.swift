@@ -64,6 +64,45 @@ final class TrashServiceTests: XCTestCase {
         }
     }
 
+    func testTrashRejectsPathWhenIdentityChanges() throws {
+        let url = try makeTemporaryTrashFixture(name: "identity-changed")
+        let identity = try XCTUnwrap(TrashService.identity(for: url.path))
+        try Data("replacement-content".utf8).write(to: url)
+
+        let outcome = TrashService.trash(url.path, expectedIdentity: identity) { _ in
+            .checked([])
+        }
+
+        XCTAssertFalse(outcome.succeeded)
+        XCTAssertTrue(outcome.message.contains("identity changed"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    func testTrashRequiresFilesystemIdentityEvidence() throws {
+        let url = try makeTemporaryTrashFixture(name: "missing-identity")
+
+        let outcome = TrashService.trash(url.path) { _ in
+            .checked([])
+        }
+
+        XCTAssertFalse(outcome.succeeded)
+        XCTAssertTrue(outcome.message.contains("Missing filesystem identity evidence"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    func testRestoreRefusesDestinationCollision() throws {
+        let trashURL = try makeTemporaryTrashFixture(name: "restore-source")
+        let destinationURL = try makeTemporaryTrashFixture(name: "restore-destination")
+
+        XCTAssertThrowsError(try TrashService.restore(from: trashURL, to: destinationURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destinationURL.path))
+        try? FileManager.default.removeItem(at: trashURL)
+        try? FileManager.default.removeItem(at: destinationURL)
+    }
+
     func testPermanentDeleteReclaimsOnlyRequestedVerifiedPath() throws {
         let requested = try makeTemporaryTrashFixture(name: "permanent-requested")
         let unrelated = try makeTemporaryTrashFixture(name: "permanent-unrelated")

@@ -414,6 +414,10 @@ fn storage_hygiene_projection_apis_return_compact_shapes() {
         "overview serializes",
     );
     let overview = parse_json_value(&overview, "overview JSON parses");
+    assert_eq!(overview["requested_mode"], "fast_changed_only");
+    assert_eq!(overview["served_mode"], "instant_cached");
+    assert_eq!(overview["summary_scope"], "indexed_snapshot_compatibility");
+    assert!(overview["coverage_percent"].as_u64().is_some());
     assert!(
         overview["items"]
             .as_array()
@@ -434,6 +438,10 @@ fn storage_hygiene_projection_apis_return_compact_shapes() {
         storage_hygiene_actions_json(vec![root.display().to_string()], 5, 80, "fast_changed_only");
     let actions = must_ok(actions, "actions serializes");
     let actions = parse_json_value(&actions, "actions JSON parses");
+    assert_eq!(actions["requested_mode"], "fast_changed_only");
+    assert_eq!(actions["served_mode"], "instant_cached");
+    assert_eq!(actions["summary_scope"], "indexed_snapshot_compatibility");
+    assert!(actions["coverage_percent"].as_u64().is_some());
     assert!(actions.get("items").is_none());
     assert!(actions.get("cleanup_bundles").is_some());
     assert!(actions["duplicate_groups"].as_array().is_some());
@@ -450,6 +458,10 @@ fn storage_hygiene_projection_apis_return_compact_shapes() {
     );
     let page = must_ok(page, "items page serializes");
     let page = parse_json_value(&page, "page JSON parses");
+    assert_eq!(page["requested_mode"], "fast_changed_only");
+    assert_eq!(page["served_mode"], "instant_cached");
+    assert_eq!(page["summary_scope"], "indexed_snapshot_compatibility");
+    assert!(page["coverage_percent"].as_u64().is_some());
     assert_eq!(page["sort_key"], "path");
     assert_eq!(page["sort_descending"], false);
     assert_eq!(page["returned_count"], 1);
@@ -464,6 +476,9 @@ fn storage_hygiene_projection_apis_return_compact_shapes() {
         "situation serializes",
     );
     let situation = parse_json_value(&situation, "situation JSON parses");
+    assert_eq!(situation["requested_mode"], "instant_cached");
+    assert_eq!(situation["served_mode"], "instant_cached");
+    assert!(situation["coverage_percent"].as_u64().is_some());
     assert_eq!(situation["cache_status"]["source"], "situation_snapshot");
     assert!(
         situation["summary"]["inventory_size_bytes"]
@@ -508,6 +523,10 @@ fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
         "indexed overview serializes",
     );
     let overview = parse_json_value(&overview, "indexed overview JSON parses");
+    assert_eq!(overview["requested_mode"], "instant_cached");
+    assert_eq!(overview["served_mode"], "instant_cached");
+    assert_eq!(overview["summary_scope"], "indexed_snapshot_partial");
+    assert_eq!(overview["coverage_percent"], 0);
     assert_eq!(overview["scan_mode"], "instant_cached");
     assert_eq!(overview["diagnostics"]["root_walk_millis"], 0);
     assert!(
@@ -526,6 +545,9 @@ fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
         "snapshot situation serializes",
     );
     let situation = parse_json_value(&situation, "snapshot situation JSON parses");
+    assert_eq!(situation["requested_mode"], "instant_cached");
+    assert_eq!(situation["served_mode"], "instant_cached");
+    assert_eq!(situation["coverage_percent"], 100);
     assert_eq!(situation["cache_status"]["source"], "situation_snapshot");
     assert!(
         situation["summary"]["inventory_size_bytes"]
@@ -551,6 +573,10 @@ fn storage_hygiene_indexed_snapshot_reuses_persistent_rows() {
     );
     let indexed = parse_json_value(&indexed, "indexed JSON parses");
 
+    assert_eq!(indexed["requested_mode"], "instant_cached");
+    assert_eq!(indexed["served_mode"], "instant_cached");
+    assert_eq!(indexed["summary_scope"], "indexed_snapshot_partial");
+    assert_eq!(indexed["coverage_percent"], 0);
     assert_eq!(indexed["scan_mode"], "instant_cached");
     assert_eq!(indexed["diagnostics"]["root_walk_millis"], 0);
     assert_eq!(indexed["items"][0]["kind"], "rust-build");
@@ -576,6 +602,13 @@ fn storage_hygiene_mode_json_projects_from_index_unless_forensic() {
         "deep compatibility projection serializes before index baseline",
     );
     let empty_projection = parse_json_value(&empty_projection, "empty projection parses");
+    assert_eq!(empty_projection["requested_mode"], "deep_native");
+    assert_eq!(empty_projection["served_mode"], "instant_cached");
+    assert_eq!(
+        empty_projection["summary_scope"],
+        "indexed_snapshot_compatibility"
+    );
+    assert_eq!(empty_projection["coverage_percent"], 0);
     assert_eq!(empty_projection["scan_mode"], "instant_cached");
     assert_eq!(empty_projection["diagnostics"]["root_walk_millis"], 0);
     assert_eq!(
@@ -596,6 +629,10 @@ fn storage_hygiene_mode_json_projects_from_index_unless_forensic() {
         "forensic verification serializes",
     );
     let forensic = parse_json_value(&forensic, "forensic report parses");
+    assert_eq!(forensic["requested_mode"], "forensic_verified");
+    assert_eq!(forensic["served_mode"], "forensic_verified");
+    assert_eq!(forensic["summary_scope"], "scanned_roots");
+    assert_eq!(forensic["coverage_percent"], 100);
     assert_eq!(forensic["scan_mode"], "forensic_verified");
     assert!(
         forensic["diagnostics"]["scanned_directory_count"]
@@ -615,6 +652,13 @@ fn storage_hygiene_mode_json_projects_from_index_unless_forensic() {
         "deep compatibility projection serializes after index baseline",
     );
     let cached_projection = parse_json_value(&cached_projection, "cached projection parses");
+    assert_eq!(cached_projection["requested_mode"], "deep_native");
+    assert_eq!(cached_projection["served_mode"], "instant_cached");
+    assert_eq!(
+        cached_projection["summary_scope"],
+        "indexed_snapshot_compatibility"
+    );
+    assert_eq!(cached_projection["coverage_percent"], 0);
     assert_eq!(cached_projection["scan_mode"], "instant_cached");
     assert_eq!(cached_projection["diagnostics"]["root_walk_millis"], 0);
     assert_eq!(
@@ -7605,6 +7649,7 @@ fn storage_situation_ingests_fsevents_ledger_before_returning_snapshot() {
     let situation = parse_json_value(&situation, "storage situation JSON parses");
     assert_eq!(situation["dirty_paths"]["dirty_path_count"], 1);
     assert_eq!(situation["cache_status"]["stale"], true);
+    assert_eq!(situation["coverage_percent"], 0);
     assert!(
         situation["dirty_paths"]["sample_paths"]
             .as_array()
@@ -7687,6 +7732,7 @@ fn storage_situation_exposes_unknown_gap_recovery_plan() {
     let situation = parse_json_value(&situation, "storage situation JSON parses");
     assert!(situation["snapshot_updated_at_millis"].is_u64());
     assert_eq!(situation["dirty_paths"]["unknown_gap"], true);
+    assert_eq!(situation["coverage_percent"], 0);
     assert_eq!(
         situation["dirty_paths"]["unknown_gap_roots"],
         serde_json::json!([watched.display().to_string()])
@@ -9306,6 +9352,10 @@ fn forensic_scan_result_stays_verified_only_when_complete() {
     );
 
     assert_eq!(report.scan_mode, "forensic_verified");
+    assert_eq!(report.requested_mode, "forensic_verified");
+    assert_eq!(report.served_mode, "forensic_verified");
+    assert_eq!(report.summary_scope, "scanned_roots");
+    assert_eq!(report.coverage_percent, 100);
     assert_eq!(report.diagnostics.mode, "forensic_verified");
     assert!(!report.cache_status.partial);
     assert!(!report.truncated);
@@ -9351,6 +9401,10 @@ fn forensic_scan_result_is_labeled_partial_when_budget_stops_verification() {
     );
 
     assert_eq!(report.scan_mode, "forensic_partial");
+    assert_eq!(report.requested_mode, "forensic_verified");
+    assert_eq!(report.served_mode, "forensic_partial");
+    assert_eq!(report.summary_scope, "scanned_roots_partial");
+    assert!(report.coverage_percent < 100);
     assert_eq!(report.diagnostics.mode, "forensic_verified");
     assert!(report.cache_status.partial);
     assert!(

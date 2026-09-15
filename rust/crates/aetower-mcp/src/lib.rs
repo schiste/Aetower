@@ -4237,6 +4237,10 @@ mod tests {
             .unwrap_or_else(|| panic!("structuredContent"));
 
         assert_eq!(content["scan_mode"], "instant_cached");
+        assert_eq!(content["requested_mode"], "deep_native");
+        assert_eq!(content["served_mode"], "instant_cached");
+        assert_eq!(content["summary_scope"], "indexed_snapshot_compatibility");
+        assert_eq!(content["coverage_percent"], 0);
         assert_eq!(content["diagnostics"]["root_walk_millis"], 0);
         assert_eq!(content["diagnostics"]["scanned_directory_count"], 0);
         assert_eq!(content["summary"]["item_count"], 0);
