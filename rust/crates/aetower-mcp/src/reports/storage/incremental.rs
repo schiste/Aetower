@@ -180,22 +180,38 @@ pub(super) fn measure_dirty_storage_subtrees_once_with_policy(
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) if !metadata.file_type().is_symlink() => metadata,
             Ok(_) | Err(_) => {
-                affected_source_roots.extend(storage_index.remove_indexed_subtree(
+                match storage_index.remove_indexed_subtree_checked(
                     &path,
                     roots,
                     storage_now_millis(),
-                ));
-                completed_dirty_paths.push(record.path);
+                ) {
+                    Ok(source_roots) => {
+                        affected_source_roots.extend(source_roots);
+                        completed_dirty_paths.push(record.path);
+                    }
+                    Err(error) => {
+                        result.partial = true;
+                        result.continuation_pending = true;
+                        result.last_error = Some(format!("remove_indexed_subtree:{error}"));
+                        deferred_dirty_paths.push(record.path);
+                    }
+                }
                 continue;
             }
         };
         if !metadata.is_dir() && !metadata.is_file() {
-            affected_source_roots.extend(storage_index.remove_indexed_subtree(
-                &path,
-                roots,
-                storage_now_millis(),
-            ));
-            completed_dirty_paths.push(record.path);
+            match storage_index.remove_indexed_subtree_checked(&path, roots, storage_now_millis()) {
+                Ok(source_roots) => {
+                    affected_source_roots.extend(source_roots);
+                    completed_dirty_paths.push(record.path);
+                }
+                Err(error) => {
+                    result.partial = true;
+                    result.continuation_pending = true;
+                    result.last_error = Some(format!("remove_indexed_subtree:{error}"));
+                    deferred_dirty_paths.push(record.path);
+                }
+            }
             continue;
         }
 
@@ -231,13 +247,33 @@ pub(super) fn measure_dirty_storage_subtrees_once_with_policy(
         }
     }
 
-    storage_index.flush_pending_rows();
-    storage_index.refresh_materialized_storage_for_source_roots(&affected_source_roots);
-    if !completed_dirty_paths.is_empty() {
-        storage_index.mark_dirty_paths_clean(&completed_dirty_paths, storage_now_millis());
+    if let Err(error) = storage_index.flush_pending_rows_checked() {
+        result.partial = true;
+        result.continuation_pending = true;
+        result.last_error = Some(format!("flush_incremental_measurements:{error}"));
+    } else if let Err(error) =
+        storage_index.refresh_materialized_storage_for_source_roots_checked(&affected_source_roots)
+    {
+        result.partial = true;
+        result.continuation_pending = true;
+        result.last_error = Some(format!("refresh_incremental_materialized_index:{error}"));
     }
-    if !deferred_dirty_paths.is_empty() {
-        storage_index.mark_dirty_paths_deferred(&deferred_dirty_paths, storage_now_millis());
+    if result.last_error.is_none()
+        && !completed_dirty_paths.is_empty()
+        && let Err(error) = storage_index
+            .mark_dirty_paths_clean_checked(&completed_dirty_paths, storage_now_millis())
+    {
+        result.partial = true;
+        result.continuation_pending = true;
+        result.last_error = Some(format!("mark_incremental_paths_clean:{error}"));
+    }
+    if !deferred_dirty_paths.is_empty()
+        && let Err(error) = storage_index
+            .mark_dirty_paths_deferred_checked(&deferred_dirty_paths, storage_now_millis())
+    {
+        result.partial = true;
+        result.continuation_pending = true;
+        result.last_error = Some(format!("mark_incremental_paths_deferred:{error}"));
     }
     result.measured_path_count = metrics.storage_index_writes;
     result.measured_file_count = metrics.sized_entry_count;

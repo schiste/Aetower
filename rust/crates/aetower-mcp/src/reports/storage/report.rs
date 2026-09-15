@@ -539,18 +539,20 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
     if !not_seen_repository_roots.is_empty() {
         repository_inventory_completeness.complete = false;
     }
+    let storage_write_error = storage_index.storage_write_error();
     let mut scan_partial = storage_walk_truncated
         || storage_sizing_truncated
         || !skipped_roots.is_empty()
         || repository_inventory_completeness.truncated
-        || !repository_inventory_completeness.complete;
+        || !repository_inventory_completeness.complete
+        || storage_write_error.is_some();
     let mut scan_generation_error = None;
     if let Some(generation) = scan_generation.take() {
         match storage_index.finish_storage_scan_generation(
             generation.generation_id,
             !scan_partial,
             scan_partial,
-            None,
+            storage_write_error.as_deref(),
             now_millis,
         ) {
             Ok(finished) => scan_generation = Some(finished),
@@ -560,8 +562,12 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
             }
         }
     }
-    if !scan_partial && !scanned_roots.is_empty() {
-        storage_index.mark_dirty_paths_clean(&scanned_roots, now_millis);
+    if !scan_partial
+        && !scanned_roots.is_empty()
+        && let Err(error) = storage_index.mark_dirty_paths_clean_checked(&scanned_roots, now_millis)
+    {
+        scan_partial = true;
+        storage_index.record_write_error_for_report(&error);
     }
 
     let fact_safety_summary = storage_index.dirty_path_summary(&requested_roots, 512);
@@ -602,7 +608,11 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
     }
     let typed_domains = typed_storage_domains_for_items(&requested_roots, &items, now_millis);
     let typed_domain_count = typed_domains.len();
-    let _ = storage_index.store_typed_storage_domains(&requested_roots, &typed_domains);
+    if let Err(error) = storage_index.store_typed_storage_domains(&requested_roots, &typed_domains)
+    {
+        scan_partial = true;
+        storage_index.record_write_error_for_report(&error);
+    }
 
     if let Some(runtime) = options.runtime.as_ref() {
         let _ = runtime.set_phase(STORAGE_SCAN_PHASE_SCORECARD_OVERLAY, None);
@@ -721,6 +731,11 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
     if let Some(error) = scan_generation_error {
         caveats.push(format!(
             "The scan was computed but its persistent publication failed; the previous published generation remains authoritative: {error}."
+        ));
+    }
+    if let Some(error) = storage_index.storage_write_error() {
+        caveats.push(format!(
+            "A storage persistence step failed, so cleanup and cache consumers must treat this result as partial until the next successful scan: {error}."
         ));
     }
 

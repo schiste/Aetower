@@ -2144,6 +2144,140 @@ fn storage_index_batched_flush_matches_per_row_growth_semantics() {
 }
 
 #[test]
+fn storage_scan_generation_keeps_last_publication_until_complete() {
+    let root = test_root("scan-generation-publication");
+    let index_dir = test_root("scan-generation-publication-index");
+    let roots = vec![root.clone()];
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let mut metrics = StorageScanMetrics::default();
+
+    let first = batched_flush_row(&root, "first.bin", 2 * MIN_ITEM_BYTES, "rebuildable", 10);
+    let generation = storage_index
+        .begin_storage_scan_generation(&roots, "deep", 10)
+        .expect("begin first generation");
+    storage_index.store_indexed_row(&first, &mut metrics);
+    storage_index
+        .flush_pending_rows_checked()
+        .expect("stage first generation");
+    assert_eq!(
+        storage_index.count_indexed_rows_with_prefix(&format!("{}/", root.display())),
+        0
+    );
+    assert!(
+        storage_index
+            .latest_published_storage_scan_generation(&roots)
+            .is_none()
+    );
+    let published = storage_index
+        .finish_storage_scan_generation(generation.generation_id, true, false, None, 20)
+        .expect("publish first generation");
+    assert_eq!(published.status, "complete");
+    assert!(published.published);
+    assert_eq!(
+        storage_index.count_indexed_rows_with_prefix(&format!("{}/", root.display())),
+        1
+    );
+
+    let replacement = batched_flush_row(&root, "replacement.bin", 3 * MIN_ITEM_BYTES, "review", 30);
+    let generation = storage_index
+        .begin_storage_scan_generation(&roots, "deep", 30)
+        .expect("begin partial generation");
+    storage_index.store_indexed_row(&replacement, &mut metrics);
+    storage_index
+        .flush_pending_rows_checked()
+        .expect("stage partial generation");
+    assert_eq!(
+        storage_index.count_indexed_rows_with_prefix(&format!("{}/", root.display())),
+        1
+    );
+    let partial = storage_index
+        .finish_storage_scan_generation(generation.generation_id, true, true, None, 40)
+        .expect("discard partial generation");
+    assert_eq!(partial.status, "partial");
+    assert!(!partial.published);
+    assert_eq!(
+        storage_index.count_indexed_rows_with_prefix(&format!("{}/", root.display())),
+        1
+    );
+
+    let generation = storage_index
+        .begin_storage_scan_generation(&roots, "deep", 50)
+        .expect("begin replacement generation");
+    storage_index.store_indexed_row(&replacement, &mut metrics);
+    let finished = storage_index
+        .finish_storage_scan_generation(generation.generation_id, true, false, None, 60)
+        .expect("publish replacement generation");
+    assert_eq!(finished.status, "complete");
+    assert_eq!(
+        storage_index.count_indexed_rows_with_prefix(&format!("{}/", root.display())),
+        1
+    );
+    let replacement_path = replacement.path.clone();
+    let (bytes, tier, _) = storage_index
+        .indexed_row_tier_snapshot(&replacement_path)
+        .expect("replacement row is published");
+    assert_eq!(bytes, 3 * MIN_ITEM_BYTES);
+    assert_eq!(tier, "review");
+
+    let connection = Connection::open(index_dir.join(STORAGE_INDEX_FILE_NAME))
+        .expect("open generation verification connection");
+    for table in [
+        "storage_scan_generation_stage_file",
+        "storage_scan_generation_stage_size",
+        "storage_scan_generation_stage_fingerprint",
+    ] {
+        let count: i64 = connection
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .expect("read empty generation stage");
+        assert_eq!(
+            count, 0,
+            "partial and published stages are cleaned: {table}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(index_dir);
+}
+
+#[test]
+fn storage_index_flush_failure_retains_rows_for_retry() {
+    let root = test_root("storage-index-flush-failure");
+    let index_dir = test_root("storage-index-flush-failure-index");
+    let storage_index = StorageSizeIndex::open_in_directory_for_test(&index_dir);
+    let row = batched_flush_row(&root, "locked.bin", MIN_ITEM_BYTES, "rebuildable", 10);
+    let mut metrics = StorageScanMetrics::default();
+    storage_index.store_indexed_row(&row, &mut metrics);
+
+    let lock_connection =
+        Connection::open(index_dir.join(STORAGE_INDEX_FILE_NAME)).expect("open lock connection");
+    lock_connection
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("hold storage index writer lock");
+    let error = storage_index
+        .flush_pending_rows_checked()
+        .expect_err("locked flush must be reported");
+    assert!(!error.is_empty());
+    assert_eq!(storage_index.pending_row_count(), 1);
+    assert!(storage_index.storage_write_error().is_some());
+    lock_connection
+        .execute_batch("ROLLBACK")
+        .expect("release storage index writer lock");
+    storage_index
+        .flush_pending_rows_checked()
+        .expect("retry flush after lock release");
+    assert_eq!(storage_index.pending_row_count(), 0);
+    assert_eq!(
+        storage_index.count_indexed_rows_with_prefix(&format!("{}/", root.display())),
+        1
+    );
+
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(index_dir);
+}
+
+#[test]
 fn storage_index_buffered_rows_are_visible_to_reads_without_explicit_flush() {
     let _index_guard = storage_index_test_guard();
     let root = test_root("batched-flush-read-your-writes");

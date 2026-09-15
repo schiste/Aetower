@@ -72,6 +72,7 @@ impl StorageScanStateStore {
         fs::create_dir_all(&directory).map_err(|error| format!("create_dir:{error}"))?;
         let path = directory.join(STORAGE_INDEX_FILE_NAME);
         let connection = Connection::open(path).map_err(|error| format!("open_failed:{error}"))?;
+        let _ = connection.busy_timeout(Duration::from_millis(2_000));
         StorageSizeIndex::prepare_schema(&connection).map_err(|error| format!("schema:{error}"))?;
         Ok(connection)
     }
@@ -391,6 +392,7 @@ pub(super) struct StorageSizeIndex {
     /// continue to see the last published index until this value is cleared by
     /// `finish_storage_scan_generation`.
     active_scan_generation: Cell<Option<i64>>,
+    last_write_error: RefCell<Option<String>>,
 }
 
 impl Drop for StorageSizeIndex {
@@ -461,6 +463,7 @@ impl StorageSizeIndex {
             pending_rows: RefCell::new(Vec::new()),
             budget_flush_count: RefCell::new(0),
             active_scan_generation: Cell::new(None),
+            last_write_error: RefCell::new(None),
         }
     }
 
@@ -475,13 +478,15 @@ impl StorageSizeIndex {
         let Ok(connection) = Connection::open(&path) else {
             return Self::with_status(None, None, "unavailable:open_failed".to_owned());
         };
+        // Install the busy timeout before migrations: first-open schema work
+        // is also a write and must not fail just because another reader has a
+        // short-lived SQLite lock.
+        let _ = connection.busy_timeout(Duration::from_millis(2_000));
         if let Err(error) = Self::prepare_schema(&connection) {
             return Self::with_status(None, None, format!("unavailable:schema:{error}"));
         }
         // Index reads/writes tolerate short writer contention instead of
-        // silently dropping rows. The scan-job state store deliberately keeps
-        // the default fail-fast behavior so cancel/pause stay responsive.
-        let _ = connection.busy_timeout(Duration::from_millis(2_000));
+        // silently dropping rows.
         #[cfg(not(test))]
         let _ = Self::backfill_materialized_storage_index(&connection);
         // Best effort (a concurrent writer may hold the lock; the next open
@@ -504,10 +509,10 @@ impl StorageSizeIndex {
         let Ok(connection) = Connection::open(&path) else {
             return Self::with_status(None, None, "unavailable:open_failed".to_owned());
         };
+        let _ = connection.busy_timeout(Duration::from_millis(2_000));
         if let Err(error) = Self::prepare_schema(&connection) {
             return Self::with_status(None, None, format!("unavailable:schema:{error}"));
         }
-        let _ = connection.busy_timeout(Duration::from_millis(2_000));
         Self::with_status(Some(connection), Some(path), "ready".to_owned())
     }
 
@@ -517,6 +522,21 @@ impl StorageSizeIndex {
     #[cfg(test)]
     pub(super) fn disabled(reason: &str) -> Self {
         Self::with_status(None, None, format!("disabled:{reason}"))
+    }
+
+    fn record_write_error(&self, error: impl Into<String>) {
+        let mut last_error = self.last_write_error.borrow_mut();
+        if last_error.is_none() {
+            *last_error = Some(error.into());
+        }
+    }
+
+    pub(super) fn storage_write_error(&self) -> Option<String> {
+        self.last_write_error.borrow().clone()
+    }
+
+    pub(super) fn record_write_error_for_report(&self, error: &str) {
+        self.record_write_error(error.to_owned());
     }
 
     /// Start a scan generation.  All rows produced by this handle are written
@@ -532,6 +552,7 @@ impl StorageSizeIndex {
         let Some(connection) = self.connection.as_ref() else {
             return Err(self.status.clone());
         };
+        self.last_write_error.replace(None);
         let roots = roots
             .iter()
             .map(|root| root.display().to_string())
@@ -622,7 +643,10 @@ impl StorageSizeIndex {
         }
         // Flushes are still bounded transactions, but remain invisible because
         // they target the generation stage table.
-        self.flush_pending_rows();
+        if let Err(error) = self.flush_pending_rows_checked() {
+            self.abort_storage_scan_generation(&error);
+            return Err(error);
+        }
         let result = self.finish_storage_scan_generation_transaction(
             generation_id,
             publish,
@@ -742,7 +766,8 @@ impl StorageSizeIndex {
                 &transaction,
                 &source_roots,
                 now_millis,
-            );
+            )
+            .map_err(|error| format!("publish_storage_index_summaries:{error}"))?;
             refresh_materialized_storage_index_for_roots(&transaction, &source_roots)
                 .map_err(|error| format!("publish_materialized_index:{error}"))?;
             let materialized_generation = materialized_storage_index_generation(&transaction)
@@ -750,14 +775,18 @@ impl StorageSizeIndex {
             set_materialized_storage_index_generation(&transaction, &materialized_generation)
                 .map_err(|error| format!("save_materialized_generation:{error}"))?;
         }
-        transaction
-            .execute(
-                "DELETE FROM storage_scan_generation_stage_file WHERE generation_id = ?1;
-                 DELETE FROM storage_scan_generation_stage_size WHERE generation_id = ?1;
-                 DELETE FROM storage_scan_generation_stage_fingerprint WHERE generation_id = ?1",
-                params![generation_id],
-            )
-            .map_err(|error| format!("clear_scan_generation_stage:{error}"))?;
+        for table in [
+            "storage_scan_generation_stage_file",
+            "storage_scan_generation_stage_size",
+            "storage_scan_generation_stage_fingerprint",
+        ] {
+            transaction
+                .execute(
+                    &format!("DELETE FROM {table} WHERE generation_id = ?1"),
+                    params![generation_id],
+                )
+                .map_err(|error| format!("clear_scan_generation_stage:{table}:{error}"))?;
+        }
         transaction
             .execute(
                 "UPDATE storage_scan_generation
@@ -794,27 +823,37 @@ impl StorageSizeIndex {
         let Some(generation_id) = self.active_scan_generation.get() else {
             return;
         };
+        self.pending_rows.borrow_mut().clear();
         let Some(connection) = self.connection.as_ref() else {
             self.active_scan_generation.set(None);
             return;
         };
         if let Ok(transaction) = connection.unchecked_transaction() {
-            let _ = transaction.execute(
-                "DELETE FROM storage_scan_generation_stage_file WHERE generation_id = ?1;
-                 DELETE FROM storage_scan_generation_stage_size WHERE generation_id = ?1;
-                 DELETE FROM storage_scan_generation_stage_fingerprint WHERE generation_id = ?1;
-                 UPDATE storage_scan_generation
-                 SET status = 'failed', partial = 1, published = 0,
-                     updated_at_millis = ?2, completed_at_millis = ?2,
-                     error_message = ?3
-                 WHERE generation_id = ?1",
-                params![
-                    generation_id,
-                    storage_now_millis().min(i64::MAX as u64) as i64,
-                    reason
-                ],
-            );
-            let _ = transaction.commit();
+            let now_millis = storage_now_millis().min(i64::MAX as u64) as i64;
+            let cleanup_result = (|| -> rusqlite::Result<()> {
+                for table in [
+                    "storage_scan_generation_stage_file",
+                    "storage_scan_generation_stage_size",
+                    "storage_scan_generation_stage_fingerprint",
+                ] {
+                    transaction.execute(
+                        &format!("DELETE FROM {table} WHERE generation_id = ?1"),
+                        params![generation_id],
+                    )?;
+                }
+                transaction.execute(
+                    "UPDATE storage_scan_generation
+                     SET status = 'failed', partial = 1, published = 0,
+                         updated_at_millis = ?2, completed_at_millis = ?2,
+                         error_message = ?3
+                     WHERE generation_id = ?1",
+                    params![generation_id, now_millis, reason],
+                )?;
+                transaction.commit()
+            })();
+            if let Err(error) = cleanup_result {
+                self.record_write_error(format!("abort_scan_generation:{error}"));
+            }
         }
         self.active_scan_generation.set(None);
     }
@@ -1912,9 +1951,13 @@ impl StorageSizeIndex {
         let inode = metadata.ino() as i64;
         let modified_millis = unix_metadata_millis(metadata.mtime(), metadata.mtime_nsec());
         let changed_millis = unix_metadata_millis(metadata.ctime(), metadata.ctime_nsec());
-        if let Some(generation_id) = self.active_scan_generation.get() {
-            if connection
-                .execute(
+        let Some(transaction) = connection.unchecked_transaction().ok() else {
+            self.record_write_error(format!("size_index_transaction:{path}"));
+            return;
+        };
+        let result = (|| -> rusqlite::Result<()> {
+            if let Some(generation_id) = self.active_scan_generation.get() {
+                transaction.execute(
                     "INSERT OR REPLACE INTO storage_scan_generation_stage_size (
                         generation_id, path, device, inode, modified_millis,
                         changed_millis, kind, repo_root, size_bytes, allocated_bytes,
@@ -1935,46 +1978,66 @@ impl StorageSizeIndex {
                         if size.truncated { 1i64 } else { 0i64 },
                         now_millis.min(i64::MAX as u64) as i64,
                     ],
-                )
-                .is_ok()
-            {
-                metrics.storage_index_writes = metrics.storage_index_writes.saturating_add(1);
-                self.store_path_fingerprint_for_generation(
-                    generation_id,
-                    &path,
-                    fingerprint,
-                    now_millis,
-                    "size_walk",
-                );
+                )?;
+                transaction.execute(
+                    "INSERT OR REPLACE INTO storage_scan_generation_stage_fingerprint (
+                        generation_id, path, fingerprint, source, measured_at_millis
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        generation_id,
+                        &path,
+                        fingerprint,
+                        "size_walk",
+                        now_millis.min(i64::MAX as u64) as i64,
+                    ],
+                )?;
+            } else {
+                transaction.execute(
+                    "INSERT OR REPLACE INTO storage_size_index (
+                        path, device, inode, modified_millis, changed_millis, kind, repo_root,
+                        size_bytes, allocated_bytes, entries, truncated, last_scan_millis
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    params![
+                        &path,
+                        device,
+                        inode,
+                        modified_millis,
+                        changed_millis,
+                        kind,
+                        repo_root,
+                        size.bytes.min(i64::MAX as u64) as i64,
+                        size.allocated_bytes.min(i64::MAX as u64) as i64,
+                        size.entries.min(i64::MAX as u64) as i64,
+                        if size.truncated { 1i64 } else { 0i64 },
+                        now_millis.min(i64::MAX as u64) as i64,
+                    ],
+                )?;
+                transaction.execute(
+                    "INSERT INTO storage_path_fingerprint (
+                        path, fingerprint, source, measured_at_millis
+                     ) VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(path) DO UPDATE SET
+                        fingerprint = excluded.fingerprint,
+                        source = excluded.source,
+                        measured_at_millis = excluded.measured_at_millis",
+                    params![
+                        &path,
+                        fingerprint,
+                        "size_walk",
+                        now_millis.min(i64::MAX as u64) as i64,
+                    ],
+                )?;
             }
-            return;
-        }
-        if connection
-            .execute(
-                "INSERT OR REPLACE INTO storage_size_index (
-                    path, device, inode, modified_millis, changed_millis, kind, repo_root,
-                    size_bytes, allocated_bytes, entries, truncated, last_scan_millis
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![
-                    &path,
-                    device,
-                    inode,
-                    modified_millis,
-                    changed_millis,
-                    kind,
-                    repo_root,
-                    size.bytes.min(i64::MAX as u64) as i64,
-                    size.allocated_bytes.min(i64::MAX as u64) as i64,
-                    size.entries.min(i64::MAX as u64) as i64,
-                    if size.truncated { 1i64 } else { 0i64 },
-                    now_millis.min(i64::MAX as u64) as i64
-                ],
-            )
-            .is_ok()
-        {
-            metrics.storage_index_writes = metrics.storage_index_writes.saturating_add(1);
-            self.store_path_fingerprint(&path, fingerprint, now_millis, "size_walk");
-            self.mark_dirty_path_clean(&path, now_millis);
+            transaction.commit()
+        })();
+        match result {
+            Ok(()) => {
+                metrics.storage_index_writes = metrics.storage_index_writes.saturating_add(1);
+                if self.active_scan_generation.get().is_none() {
+                    self.mark_dirty_path_clean(&path, now_millis);
+                }
+            }
+            Err(error) => self.record_write_error(format!("size_index_row:{}:{error}", path)),
         }
     }
 
@@ -2447,60 +2510,119 @@ impl StorageSizeIndex {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn mark_dirty_paths_clean(&self, paths: &[String], now_millis: u64) {
-        for path in paths {
-            self.mark_dirty_path_clean(path, now_millis);
+        if let Err(error) = self.mark_dirty_paths_clean_checked(paths, now_millis) {
+            self.record_write_error(format!("mark_dirty_paths_clean:{error}"));
         }
     }
 
-    pub(super) fn mark_dirty_paths_deferred(&self, paths: &[String], now_millis: u64) {
-        let Some(connection) = self.connection.as_ref() else {
-            return;
-        };
-        let Ok(mut statement) = connection.prepare(
-            "UPDATE storage_dirty_path
-             SET deferred_at_millis = ?2
-             WHERE path = ?1 AND status = 'dirty'",
-        ) else {
-            return;
-        };
-        for path in paths {
-            let _ = statement.execute(params![path, now_millis.min(i64::MAX as u64) as i64]);
+    pub(super) fn mark_dirty_paths_clean_checked(
+        &self,
+        paths: &[String],
+        now_millis: u64,
+    ) -> Result<(), String> {
+        if paths.is_empty() {
+            return Ok(());
         }
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("mark_dirty_paths_clean_transaction:{error}"))?;
+        let mut dirty_update = transaction
+            .prepare(
+                "UPDATE storage_dirty_path
+                 SET status = 'clean',
+                     last_seen_millis = MAX(last_seen_millis, ?2),
+                     deferred_at_millis = NULL
+                 WHERE path = ?1
+                    OR substr(path, 1, ?3) = ?4",
+            )
+            .map_err(|error| format!("prepare_dirty_path_clean:{error}"))?;
+        let mut gap_update = transaction
+            .prepare(
+                "UPDATE storage_unknown_gap
+                 SET unresolved = 0,
+                     last_seen_millis = MAX(last_seen_millis, ?2)
+                 WHERE unresolved <> 0
+                   AND (root_path = ?1 OR substr(root_path, 1, ?3) = ?4)",
+            )
+            .map_err(|error| format!("prepare_unknown_gap_clean:{error}"))?;
+        for path in paths {
+            let child_prefix = format!("{path}/");
+            let bindings = params![
+                path,
+                now_millis.min(i64::MAX as u64) as i64,
+                child_prefix.len().min(i64::MAX as usize) as i64,
+                child_prefix,
+            ];
+            dirty_update
+                .execute(bindings)
+                .map_err(|error| format!("clean_dirty_path:{path}:{error}"))?;
+            let child_prefix = format!("{path}/");
+            gap_update
+                .execute(params![
+                    path,
+                    now_millis.min(i64::MAX as u64) as i64,
+                    child_prefix.len().min(i64::MAX as usize) as i64,
+                    child_prefix,
+                ])
+                .map_err(|error| format!("clean_unknown_gap:{path}:{error}"))?;
+        }
+        drop(dirty_update);
+        drop(gap_update);
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_dirty_paths_clean:{error}"))?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn mark_dirty_paths_deferred(&self, paths: &[String], now_millis: u64) {
+        if let Err(error) = self.mark_dirty_paths_deferred_checked(paths, now_millis) {
+            self.record_write_error(format!("mark_dirty_paths_deferred:{error}"));
+        }
+    }
+
+    pub(super) fn mark_dirty_paths_deferred_checked(
+        &self,
+        paths: &[String],
+        now_millis: u64,
+    ) -> Result<(), String> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("mark_dirty_paths_deferred_transaction:{error}"))?;
+        let mut statement = transaction
+            .prepare(
+                "UPDATE storage_dirty_path
+                 SET deferred_at_millis = ?2
+                 WHERE path = ?1 AND status = 'dirty'",
+            )
+            .map_err(|error| format!("prepare_dirty_path_deferred:{error}"))?;
+        for path in paths {
+            statement
+                .execute(params![path, now_millis.min(i64::MAX as u64) as i64])
+                .map_err(|error| format!("defer_dirty_path:{path}:{error}"))?;
+        }
+        drop(statement);
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_dirty_paths_deferred:{error}"))?;
+        Ok(())
     }
 
     fn mark_dirty_path_clean(&self, path: &str, now_millis: u64) {
-        let Some(connection) = self.connection.as_ref() else {
-            return;
-        };
-        let child_prefix = format!("{path}/");
-        let _ = connection.execute(
-            "UPDATE storage_dirty_path
-             SET status = 'clean',
-                 last_seen_millis = MAX(last_seen_millis, ?2),
-                 deferred_at_millis = NULL
-             WHERE path = ?1
-                OR substr(path, 1, ?3) = ?4",
-            params![
-                path,
-                now_millis.min(i64::MAX as u64) as i64,
-                child_prefix.len().min(i64::MAX as usize) as i64,
-                child_prefix,
-            ],
-        );
-        let _ = connection.execute(
-            "UPDATE storage_unknown_gap
-             SET unresolved = 0,
-                 last_seen_millis = MAX(last_seen_millis, ?2)
-             WHERE unresolved <> 0
-               AND (root_path = ?1 OR substr(root_path, 1, ?3) = ?4)",
-            params![
-                path,
-                now_millis.min(i64::MAX as u64) as i64,
-                child_prefix.len().min(i64::MAX as usize) as i64,
-                child_prefix,
-            ],
-        );
+        if let Err(error) = self.mark_dirty_paths_clean_checked(&[path.to_owned()], now_millis) {
+            self.record_write_error(format!("mark_dirty_path_clean:{path}:{error}"));
+        }
     }
 
     fn coalesced_dirty_queue_path(&self, path: &str, roots: &[PathBuf]) -> String {
@@ -2705,102 +2827,122 @@ impl StorageSizeIndex {
         source_roots
     }
 
-    pub(super) fn remove_indexed_subtree(
+    pub(super) fn remove_indexed_subtree_checked(
         &self,
         path: &Path,
         requested_roots: &[PathBuf],
         now_millis: u64,
-    ) -> BTreeSet<String> {
-        self.flush_pending_rows();
+    ) -> Result<BTreeSet<String>, String> {
+        self.flush_pending_rows_checked()?;
         let source_roots = self.indexed_source_roots_for_subtree(path, requested_roots);
         let Some(connection) = self.connection.as_ref() else {
-            return source_roots;
+            return Err(self.status.clone());
         };
         let path_display = path.display().to_string();
         let child_prefix = format!("{path_display}/");
-        let Ok(transaction) = connection.unchecked_transaction() else {
-            return source_roots;
-        };
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("remove_indexed_subtree_transaction:{error}"))?;
         let params = params![
             &path_display,
             child_prefix.len().min(i64::MAX as usize) as i64,
             &child_prefix,
         ];
-        let _ = transaction.execute(
-            "DELETE FROM storage_file_index
+        transaction
+            .execute(
+                "DELETE FROM storage_file_index
              WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
-            params,
-        );
+                params,
+            )
+            .map_err(|error| format!("remove_file_indexed_subtree:{path_display}:{error}"))?;
         let params = params![
             &path_display,
             child_prefix.len().min(i64::MAX as usize) as i64,
             &child_prefix,
         ];
-        let _ = transaction.execute(
-            "DELETE FROM storage_size_index
+        transaction
+            .execute(
+                "DELETE FROM storage_size_index
              WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
-            params,
-        );
+                params,
+            )
+            .map_err(|error| format!("remove_size_indexed_subtree:{path_display}:{error}"))?;
         let params = params![
             &path_display,
             child_prefix.len().min(i64::MAX as usize) as i64,
             &child_prefix,
         ];
-        let _ = transaction.execute(
-            "DELETE FROM storage_path_fingerprint
+        transaction
+            .execute(
+                "DELETE FROM storage_path_fingerprint
              WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
-            params,
-        );
+                params,
+            )
+            .map_err(|error| format!("remove_fingerprint_subtree:{path_display}:{error}"))?;
         let params = params![
             &path_display,
             child_prefix.len().min(i64::MAX as usize) as i64,
             &child_prefix,
         ];
-        let _ = transaction.execute(
-            "DELETE FROM storage_path
+        transaction
+            .execute(
+                "DELETE FROM storage_path
              WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
-            params,
-        );
+                params,
+            )
+            .map_err(|error| format!("remove_materialized_path_subtree:{path_display}:{error}"))?;
         let params = params![
             &path_display,
             child_prefix.len().min(i64::MAX as usize) as i64,
             &child_prefix,
         ];
-        let _ = transaction.execute(
-            "DELETE FROM storage_directory_rollup
+        transaction
+            .execute(
+                "DELETE FROM storage_directory_rollup
              WHERE path = ?1 OR substr(path, 1, ?2) = ?3",
-            params,
-        );
-        refresh_storage_index_summaries_and_top_offenders(&transaction, &source_roots, now_millis);
-        let _ = refresh_materialized_storage_index_for_roots(&transaction, &source_roots);
-        if let Ok(generation) = materialized_storage_index_generation(&transaction) {
-            let _ = set_materialized_storage_index_generation(&transaction, &generation);
-        }
-        let _ = transaction.commit();
+                params,
+            )
+            .map_err(|error| format!("remove_directory_rollup_subtree:{path_display}:{error}"))?;
+        refresh_storage_index_summaries_and_top_offenders(&transaction, &source_roots, now_millis)
+            .map_err(|error| format!("refresh_storage_index_summaries:{error}"))?;
+        refresh_materialized_storage_index_for_roots(&transaction, &source_roots)
+            .map_err(|error| format!("refresh_materialized_storage_index:{error}"))?;
+        let generation = materialized_storage_index_generation(&transaction)
+            .map_err(|error| format!("materialized_storage_index_generation:{error}"))?;
+        set_materialized_storage_index_generation(&transaction, &generation)
+            .map_err(|error| format!("save_materialized_storage_index_generation:{error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_remove_indexed_subtree:{error}"))?;
         super::report::invalidate_index_report_sections_memo();
-        source_roots
+        Ok(source_roots)
     }
 
-    pub(super) fn refresh_materialized_storage_for_source_roots(
+    pub(super) fn refresh_materialized_storage_for_source_roots_checked(
         &self,
         source_roots: &BTreeSet<String>,
-    ) {
-        self.flush_pending_rows();
+    ) -> Result<(), String> {
+        self.flush_pending_rows_checked()?;
         let Some(connection) = self.connection.as_ref() else {
-            return;
+            return Err(self.status.clone());
         };
         if source_roots.is_empty() {
-            return;
+            return Ok(());
         }
-        let Ok(transaction) = connection.unchecked_transaction() else {
-            return;
-        };
-        let _ = refresh_materialized_storage_index_for_roots(&transaction, source_roots);
-        if let Ok(generation) = materialized_storage_index_generation(&transaction) {
-            let _ = set_materialized_storage_index_generation(&transaction, &generation);
-        }
-        let _ = transaction.commit();
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("refresh_materialized_storage_transaction:{error}"))?;
+        refresh_materialized_storage_index_for_roots(&transaction, source_roots)
+            .map_err(|error| format!("refresh_materialized_storage_index:{error}"))?;
+        let generation = materialized_storage_index_generation(&transaction)
+            .map_err(|error| format!("materialized_storage_index_generation:{error}"))?;
+        set_materialized_storage_index_generation(&transaction, &generation)
+            .map_err(|error| format!("save_materialized_storage_index_generation:{error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_refresh_materialized_storage:{error}"))?;
         super::report::invalidate_index_report_sections_memo();
+        Ok(())
     }
 
     pub(super) fn record_incremental_measurement_job(
@@ -2994,58 +3136,6 @@ impl StorageSizeIndex {
         unknown_gap_roots
     }
 
-    fn store_path_fingerprint(
-        &self,
-        path: &str,
-        fingerprint: Vec<u8>,
-        measured_at_millis: u64,
-        source: &str,
-    ) {
-        let Some(connection) = self.connection.as_ref() else {
-            return;
-        };
-        let _ = connection.execute(
-            "INSERT INTO storage_path_fingerprint (
-                path, fingerprint, source, measured_at_millis
-             ) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(path) DO UPDATE SET
-                fingerprint = excluded.fingerprint,
-                source = excluded.source,
-                measured_at_millis = excluded.measured_at_millis",
-            params![
-                path,
-                fingerprint,
-                source,
-                measured_at_millis.min(i64::MAX as u64) as i64,
-            ],
-        );
-    }
-
-    fn store_path_fingerprint_for_generation(
-        &self,
-        generation_id: i64,
-        path: &str,
-        fingerprint: Vec<u8>,
-        measured_at_millis: u64,
-        source: &str,
-    ) {
-        let Some(connection) = self.connection.as_ref() else {
-            return;
-        };
-        let _ = connection.execute(
-            "INSERT OR REPLACE INTO storage_scan_generation_stage_fingerprint (
-                generation_id, path, fingerprint, source, measured_at_millis
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                generation_id,
-                path,
-                fingerprint,
-                source,
-                measured_at_millis.min(i64::MAX as u64) as i64,
-            ],
-        );
-    }
-
     fn update_event_cursor(
         &self,
         source: &str,
@@ -3136,25 +3226,45 @@ impl StorageSizeIndex {
         }
     }
 
+    /// Compatibility wrapper for call sites that intentionally perform a
+    /// best-effort background flush. New publication paths use the checked
+    /// variant below so a failed transaction cannot be reported as complete.
+    pub(super) fn flush_pending_rows(&self) {
+        let _ = self.flush_pending_rows_checked();
+    }
+
+    /// Flush buffered rows and retain them for a later retry if SQLite rejects
+    /// any part of the transaction. A scan generation is therefore never
+    /// advanced past a persistence error merely because a row-level error was
+    /// ignored.
+    pub(super) fn flush_pending_rows_checked(&self) -> Result<(), String> {
+        let rows = std::mem::take(&mut *self.pending_rows.borrow_mut());
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let result = if let Some(generation_id) = self.active_scan_generation.get() {
+            self.flush_pending_rows_to_generation(generation_id, &rows)
+        } else {
+            self.flush_pending_rows_base(&rows)
+        };
+        if let Err(error) = &result {
+            self.record_write_error(error.clone());
+            self.pending_rows.borrow_mut().extend(rows);
+            return Err(error.clone());
+        }
+        result
+    }
+
     /// Write all buffered rows in one transaction. Per-row semantics match the
     /// old autocommit path exactly: a growth delta is recorded only when the
     /// physical byte count changed (new rows compare against zero), and a row
     /// stored twice in one chunk compares against the earlier occurrence. Raw
     /// growth deltas are compacted into rollups and top-offender summaries once
-    /// per flush instead of retaining every path indefinitely. Failures are
-    /// tolerated (best effort), matching the old `.is_ok()` behavior.
-    pub(super) fn flush_pending_rows(&self) {
-        let rows = std::mem::take(&mut *self.pending_rows.borrow_mut());
-        if rows.is_empty() {
-            return;
-        }
+    /// per flush instead of retaining every path indefinitely.
+    fn flush_pending_rows_base(&self, rows: &[StorageIndexedFileRow]) -> Result<(), String> {
         let Some(connection) = self.connection.as_ref() else {
-            return;
+            return Err(self.status.clone());
         };
-        if let Some(generation_id) = self.active_scan_generation.get() {
-            let _ = self.flush_pending_rows_to_generation(generation_id, &rows);
-            return;
-        }
         // Batched previous-values lookup, chunked to stay well under SQLite's
         // bind-variable limit. Also captures the previous cleanup tier so the
         // upsert can persist it into `previous_cleanup_tier`.
@@ -3167,33 +3277,36 @@ impl StorageSizeIndex {
             .collect();
         for chunk in unique_paths.chunks(STORAGE_INDEX_LOOKUP_BIND_CHUNK) {
             let placeholders = vec!["?"; chunk.len()].join(", ");
-            let Ok(mut statement) = connection.prepare(&format!(
-                "SELECT path, physical_bytes, cleanup_tier
+            let mut statement = connection
+                .prepare(&format!(
+                    "SELECT path, physical_bytes, cleanup_tier
                  FROM storage_file_index
                  WHERE path IN ({placeholders})"
-            )) else {
-                continue;
-            };
-            let Ok(found) = statement.query_map(params_from_iter(chunk.iter()), |row| {
-                let path: String = row.get(0)?;
-                let physical_bytes: i64 = row.get(1)?;
-                let cleanup_tier: String = row.get(2)?;
-                Ok((path, (physical_bytes.max(0) as u64, cleanup_tier)))
-            }) else {
-                continue;
-            };
-            for (path, entry) in found.flatten() {
-                previous.insert(path, entry);
+                ))
+                .map_err(|error| format!("load_previous_index_rows:{error}"))?;
+            let found = statement
+                .query_map(params_from_iter(chunk.iter()), |row| {
+                    let path: String = row.get(0)?;
+                    let physical_bytes: i64 = row.get(1)?;
+                    let cleanup_tier: String = row.get(2)?;
+                    Ok((path, (physical_bytes.max(0) as u64, cleanup_tier)))
+                })
+                .map_err(|error| format!("read_previous_index_rows:{error}"))?;
+            for entry in found {
+                let (path, value) =
+                    entry.map_err(|error| format!("decode_previous_row:{error}"))?;
+                previous.insert(path, value);
             }
         }
-        let Ok(transaction) = connection.unchecked_transaction() else {
-            return;
-        };
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("storage_index_flush_transaction:{error}"))?;
         let mut max_scan_millis = 0u64;
         let mut affected_source_roots = BTreeSet::new();
         {
-            let Ok(mut upsert) = transaction.prepare(
-                "INSERT OR REPLACE INTO storage_file_index (
+            let mut upsert = transaction
+                .prepare(
+                    "INSERT OR REPLACE INTO storage_file_index (
                     path, device, inode, file_id, source_root, repo_root, kind, storage_role,
                     safety, cleanup_tier, logical_bytes, physical_bytes, modified_millis,
                     changed_millis, accessed_millis, birth_millis, is_directory, entries,
@@ -3202,19 +3315,19 @@ impl StorageSizeIndex {
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                     ?17, ?18, ?19, ?20, ?21, ?22
                  )",
-            ) else {
-                return;
-            };
-            let Ok(mut insert_delta) = transaction.prepare(
-                "INSERT INTO storage_growth_delta (
+                )
+                .map_err(|error| format!("prepare_storage_index_upsert:{error}"))?;
+            let mut insert_delta = transaction
+                .prepare(
+                    "INSERT INTO storage_growth_delta (
                     bucket_millis, scan_millis, path, source_root, repo_root, kind, cleanup_tier,
                     previous_physical_bytes, current_physical_bytes, delta_bytes
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            ) else {
-                return;
-            };
-            let Ok(mut upsert_rollup) = transaction.prepare(
-                "INSERT INTO storage_growth_rollup (
+                )
+                .map_err(|error| format!("prepare_storage_growth_delta:{error}"))?;
+            let mut upsert_rollup = transaction
+                .prepare(
+                    "INSERT INTO storage_growth_rollup (
                     granularity, bucket_millis, source_root, repo_root, kind, cleanup_tier,
                     total_delta_bytes, positive_delta_bytes, negative_delta_bytes,
                     changed_path_count, max_abs_delta_bytes, updated_at_millis
@@ -3228,17 +3341,16 @@ impl StorageSizeIndex {
                     changed_path_count = changed_path_count + excluded.changed_path_count,
                     max_abs_delta_bytes = MAX(max_abs_delta_bytes, excluded.max_abs_delta_bytes),
                     updated_at_millis = MAX(updated_at_millis, excluded.updated_at_millis)",
-            ) else {
-                return;
-            };
-            for row in &rows {
+                )
+                .map_err(|error| format!("prepare_storage_growth_rollup:{error}"))?;
+            for row in rows {
                 affected_source_roots.insert(row.source_root.clone());
                 let previous_entry = previous.get(&row.path);
                 let previous_physical = previous_entry.map(|(bytes, _)| *bytes);
                 let previous_tier = previous_entry
                     .map(|(_, tier)| tier.clone())
                     .unwrap_or_default();
-                if upsert
+                upsert
                     .execute(params![
                         &row.path,
                         row.device,
@@ -3273,10 +3385,7 @@ impl StorageSizeIndex {
                             row.last_scan_millis,
                         ),
                     ])
-                    .is_err()
-                {
-                    continue;
-                }
+                    .map_err(|error| format!("upsert_storage_index_row:{}:{error}", row.path))?;
                 max_scan_millis = max_scan_millis.max(row.last_scan_millis);
                 let previous_physical = previous_physical.unwrap_or(0);
                 if previous_physical != row.physical_bytes {
@@ -3285,19 +3394,26 @@ impl StorageSizeIndex {
                     if delta != 0 {
                         let bucket_millis = (row.last_scan_millis / STORAGE_GROWTH_BUCKET_MILLIS)
                             * STORAGE_GROWTH_BUCKET_MILLIS;
-                        let _ = insert_delta.execute(params![
-                            bucket_millis.min(i64::MAX as u64) as i64,
-                            row.last_scan_millis.min(i64::MAX as u64) as i64,
-                            &row.path,
-                            &row.source_root,
-                            row.repo_root.as_deref(),
-                            &row.kind,
-                            &row.cleanup_tier,
-                            previous_physical.min(i64::MAX as u64) as i64,
-                            row.physical_bytes.min(i64::MAX as u64) as i64,
-                            delta,
-                        ]);
-                        upsert_growth_rollups(&mut upsert_rollup, row, bucket_millis, delta);
+                        insert_delta
+                            .execute(params![
+                                bucket_millis.min(i64::MAX as u64) as i64,
+                                row.last_scan_millis.min(i64::MAX as u64) as i64,
+                                &row.path,
+                                &row.source_root,
+                                row.repo_root.as_deref(),
+                                &row.kind,
+                                &row.cleanup_tier,
+                                previous_physical.min(i64::MAX as u64) as i64,
+                                row.physical_bytes.min(i64::MAX as u64) as i64,
+                                delta,
+                            ])
+                            .map_err(|error| {
+                                format!("insert_storage_growth_delta:{}:{error}", row.path)
+                            })?;
+                        upsert_growth_rollups(&mut upsert_rollup, row, bucket_millis, delta)
+                            .map_err(|error| {
+                                format!("upsert_storage_growth_rollup:{}:{error}", row.path)
+                            })?;
                     }
                 }
                 previous.insert(
@@ -3310,15 +3426,19 @@ impl StorageSizeIndex {
                     &transaction,
                     max_scan_millis,
                     StorageIndexBudgetLimits::default(),
-                );
+                )
+                .map_err(|error| format!("prune_storage_growth_history:{error}"))?;
                 refresh_storage_index_summaries_and_top_offenders(
                     &transaction,
                     &affected_source_roots,
                     max_scan_millis,
-                );
+                )
+                .map_err(|error| format!("refresh_storage_index_summaries:{error}"))?;
             }
         }
-        let _ = transaction.commit();
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_storage_index_flush:{error}"))?;
         let should_enforce_budget = {
             let mut count = self.budget_flush_count.borrow_mut();
             *count = count.saturating_add(1);
@@ -3332,6 +3452,7 @@ impl StorageSizeIndex {
         // The generation key usually changes too; this covers the
         // same-millisecond and unchanged-stamp cases.
         super::report::invalidate_index_report_sections_memo();
+        Ok(())
     }
 
     fn flush_pending_rows_to_generation(
@@ -3342,6 +3463,19 @@ impl StorageSizeIndex {
         let Some(connection) = self.connection.as_ref() else {
             return Err(self.status.clone());
         };
+        let mut previous_cleanup_tiers = BTreeMap::new();
+        for row in rows {
+            let cleanup_tier: Option<String> = connection
+                .query_row(
+                    "SELECT cleanup_tier FROM storage_file_index WHERE path = ?1",
+                    params![&row.path],
+                    |value| value.get(0),
+                )
+                .ok();
+            if let Some(cleanup_tier) = cleanup_tier {
+                previous_cleanup_tiers.insert(row.path.as_str(), cleanup_tier);
+            }
+        }
         let transaction = connection
             .unchecked_transaction()
             .map_err(|error| format!("stage_rows_transaction:{error}"))?;
@@ -3360,12 +3494,9 @@ impl StorageSizeIndex {
             )
             .map_err(|error| format!("prepare_stage_row_insert:{error}"))?;
         for row in rows {
-            let previous_cleanup_tier: String = transaction
-                .query_row(
-                    "SELECT cleanup_tier FROM storage_file_index WHERE path = ?1",
-                    params![&row.path],
-                    |value| value.get(0),
-                )
+            let previous_cleanup_tier = previous_cleanup_tiers
+                .get(row.path.as_str())
+                .cloned()
                 .unwrap_or_default();
             upsert
                 .execute(params![
@@ -5372,7 +5503,7 @@ impl StorageSizeIndex {
         roots: &[PathBuf],
         domains: &[StorageSituationDomain],
     ) -> Result<(), String> {
-        self.flush_pending_rows();
+        self.flush_pending_rows_checked()?;
         let Some(connection) = self.connection.as_ref() else {
             return Err(self.status.clone());
         };
@@ -5731,13 +5862,13 @@ fn upsert_growth_rollups(
     row: &StorageIndexedFileRow,
     hour_bucket_millis: u64,
     delta_bytes: i64,
-) {
+) -> rusqlite::Result<()> {
     let day_bucket_millis = (row.last_scan_millis / DAY_MILLIS) * DAY_MILLIS;
     for (granularity, bucket_millis) in [("hour", hour_bucket_millis), ("day", day_bucket_millis)] {
         let positive_delta_bytes = delta_bytes.max(0);
         let negative_delta_bytes = delta_bytes.min(0);
         let max_abs_delta_bytes = delta_bytes.saturating_abs();
-        let _ = statement.execute(params![
+        statement.execute(params![
             granularity,
             bucket_millis.min(i64::MAX as u64) as i64,
             &row.source_root,
@@ -5749,15 +5880,16 @@ fn upsert_growth_rollups(
             negative_delta_bytes,
             max_abs_delta_bytes,
             row.last_scan_millis.min(i64::MAX as u64) as i64,
-        ]);
+        ])?;
     }
+    Ok(())
 }
 
 fn prune_storage_growth_history(
     transaction: &rusqlite::Transaction<'_>,
     max_scan_millis: u64,
     limits: StorageIndexBudgetLimits,
-) {
+) -> rusqlite::Result<()> {
     let oldest_path_delta = max_scan_millis
         .saturating_sub(STORAGE_GROWTH_TOP_OFFENDER_RETENTION_MILLIS)
         .min(i64::MAX as u64) as i64;
@@ -5771,11 +5903,11 @@ fn prune_storage_growth_history(
         .saturating_sub(STORAGE_GROWTH_DAILY_ROLLUP_RETENTION_MILLIS)
         .min(i64::MAX as u64) as i64;
 
-    let _ = transaction.execute(
+    transaction.execute(
         "DELETE FROM storage_growth_delta WHERE scan_millis < ?1",
         params![oldest_path_delta],
-    );
-    let _ = transaction.execute(
+    )?;
+    transaction.execute(
         "DELETE FROM storage_growth_delta
          WHERE scan_millis < ?1
            AND id NOT IN (
@@ -5790,26 +5922,27 @@ fn prune_storage_growth_history(
             oldest_path_delta,
             limits.max_growth_delta_rows.min(i64::MAX as u64) as i64,
         ],
-    );
-    let _ = transaction.execute(
+    )?;
+    transaction.execute(
         "DELETE FROM storage_growth_rollup
          WHERE granularity = 'hour' AND bucket_millis < ?1",
         params![hourly_rollup_cutoff],
-    );
-    let _ = transaction.execute(
+    )?;
+    transaction.execute(
         "DELETE FROM storage_growth_rollup
          WHERE granularity = 'day' AND bucket_millis < ?1",
         params![daily_rollup_cutoff],
-    );
+    )?;
+    Ok(())
 }
 
 fn refresh_storage_index_summaries_and_top_offenders(
     transaction: &rusqlite::Transaction<'_>,
     source_roots: &BTreeSet<String>,
     captured_at_millis: u64,
-) {
+) -> rusqlite::Result<()> {
     for source_root in source_roots {
-        let _ = transaction.execute(
+        transaction.execute(
             "INSERT OR REPLACE INTO storage_index_summary (
                 source_root, captured_at_millis, item_count, inventory_size_bytes,
                 safe_reclaimable_bytes, maybe_reclaimable_bytes, review_required_bytes,
@@ -5861,8 +5994,8 @@ fn refresh_storage_index_summaries_and_top_offenders(
              FROM storage_file_index
              WHERE source_root = ?1",
             params![source_root, captured_at_millis.min(i64::MAX as u64) as i64,],
-        );
-        let _ = transaction.execute(
+        )?;
+        transaction.execute(
             "INSERT OR REPLACE INTO storage_top_offender (
                 source_root, path, kind, cleanup_tier, physical_bytes,
                 recommendation_score, last_scan_millis
@@ -5874,8 +6007,8 @@ fn refresh_storage_index_summaries_and_top_offenders(
              ORDER BY recommendation_score DESC, physical_bytes DESC, last_scan_millis DESC, path ASC
             LIMIT ?2",
             params![source_root, STORAGE_TOP_OFFENDERS_PER_ROOT as i64],
-        );
-        let _ = transaction.execute(
+        )?;
+        transaction.execute(
             "DELETE FROM storage_top_offender
              WHERE source_root = ?1
                AND path NOT IN (
@@ -5886,8 +6019,9 @@ fn refresh_storage_index_summaries_and_top_offenders(
                     LIMIT ?2
                )",
             params![source_root, STORAGE_TOP_OFFENDERS_PER_ROOT as i64],
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn storage_scan_generation_from_sql(
@@ -5990,6 +6124,7 @@ fn record_generation_growth_deltas(
                 params![&row.path],
                 |value| value.get(0),
             )
+            .optional()?
             .unwrap_or_default();
         let previous_physical = previous_physical.max(0) as u64;
         if previous_physical == row.physical_bytes {
@@ -6014,12 +6149,12 @@ fn record_generation_growth_deltas(
             row.physical_bytes.min(i64::MAX as u64) as i64,
             delta,
         ])?;
-        upsert_growth_rollups(&mut upsert_rollup, &row, bucket_millis, delta);
+        upsert_growth_rollups(&mut upsert_rollup, &row, bucket_millis, delta)?;
     }
     drop(insert_delta);
     drop(upsert_rollup);
     if max_scan_millis > 0 {
-        prune_storage_growth_history(transaction, max_scan_millis, limits);
+        prune_storage_growth_history(transaction, max_scan_millis, limits)?;
     }
     Ok(())
 }
