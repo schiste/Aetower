@@ -127,7 +127,7 @@ impl AetowerMcpServer {
         let json = crate::reports::storage::storage_hygiene_overview_json(
             args.roots.clone(),
             args.max_depth,
-            default_storage_scan_mode().as_str(),
+            &args.mode,
         )
         .map_err(|error| tool_error(format!("storage_hygiene_overview_failed: {error}")))?;
         let background_scan = start_optional_storage_refresh(
@@ -171,7 +171,7 @@ impl AetowerMcpServer {
             args.roots.clone(),
             args.max_depth,
             args.limit,
-            default_storage_scan_mode().as_str(),
+            &args.mode,
         )
         .map_err(|error| tool_error(format!("storage_hygiene_actions_failed: {error}")))?;
         let background_scan = start_optional_storage_refresh(
@@ -222,7 +222,7 @@ impl AetowerMcpServer {
             args.max_depth,
             args.offset,
             args.limit,
-            default_storage_scan_mode().as_str(),
+            &args.mode,
             &args.sort_key,
             args.sort_descending,
         )
@@ -278,7 +278,7 @@ impl AetowerMcpServer {
         let args: Args = parse_args(arguments)?;
         let json = crate::reports::storage::storage_hygiene_repo_detail_json(
             args.repo_root.clone(),
-            default_storage_scan_mode().as_str(),
+            &args.mode,
         )
         .map_err(|error| tool_error(format!("storage_hygiene_repo_detail_failed: {error}")))?;
         let background_scan = start_optional_storage_refresh(

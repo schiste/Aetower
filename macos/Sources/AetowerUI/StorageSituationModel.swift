@@ -2,6 +2,10 @@ import Foundation
 
 struct StorageSituationModel: Decodable, Sendable {
     let capturedAtMillis: UInt64
+    let requestedMode: String?
+    let servedMode: String?
+    let summaryScope: String?
+    let coveragePercent: UInt8?
     let snapshotUpdatedAtMillis: UInt64?
     let scanGeneration: StorageScanGenerationModel?
     let cacheStatus: StorageCacheStatusModel
@@ -18,6 +22,13 @@ struct StorageSituationModel: Decodable, Sendable {
 
     var hasCachedFacts: Bool {
         summary.itemCount > 0 || summary.inventorySizeBytes > 0 || !topOffenders.isEmpty
+    }
+
+    var isPartialResult: Bool {
+        cacheStatus.partial
+            || cacheStatus.stale
+            || scanGeneration.map { !$0.isUsable } ?? true
+            || (coveragePercent ?? 0) < 100
     }
 }
 

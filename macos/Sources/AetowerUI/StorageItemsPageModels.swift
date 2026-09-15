@@ -8,6 +8,10 @@ import Foundation
 /// `AetowerJSON.snakeCaseDecoder()`.
 struct StorageHygieneItemsPageModel: Decodable, Sendable {
     let capturedAtMillis: UInt64
+    let requestedMode: String
+    let servedMode: String
+    let summaryScope: String
+    let coveragePercent: UInt8
     let scanMode: String
     let scanGeneration: StorageScanGenerationModel?
     let cacheStatus: StorageCacheStatusModel?
@@ -25,6 +29,10 @@ struct StorageHygieneItemsPageModel: Decodable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case capturedAtMillis
+        case requestedMode
+        case servedMode
+        case summaryScope
+        case coveragePercent
         case scanMode
         case scanGeneration
         case cacheStatus
@@ -43,6 +51,10 @@ struct StorageHygieneItemsPageModel: Decodable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         capturedAtMillis = try container.decodeIfPresent(UInt64.self, forKey: .capturedAtMillis) ?? 0
         scanMode = try container.decodeIfPresent(String.self, forKey: .scanMode) ?? "instant_cached"
+        requestedMode = try container.decodeIfPresent(String.self, forKey: .requestedMode) ?? scanMode
+        servedMode = try container.decodeIfPresent(String.self, forKey: .servedMode) ?? scanMode
+        summaryScope = try container.decodeIfPresent(String.self, forKey: .summaryScope) ?? "legacy"
+        coveragePercent = try container.decodeIfPresent(UInt8.self, forKey: .coveragePercent) ?? 0
         scanGeneration = try container.decodeIfPresent(StorageScanGenerationModel.self, forKey: .scanGeneration)
         cacheStatus = try container.decodeIfPresent(StorageCacheStatusModel.self, forKey: .cacheStatus)
         items = try container.decodeIfPresent([StorageHygieneItemModel].self, forKey: .items) ?? []

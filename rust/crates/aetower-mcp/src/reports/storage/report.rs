@@ -324,6 +324,39 @@ pub(super) fn storage_index_cache_status(
     }
 }
 
+pub(super) fn storage_live_coverage_percent(
+    requested_roots: &[PathBuf],
+    scanned_roots: &[String],
+    partial: bool,
+) -> u8 {
+    if requested_roots.is_empty() {
+        return 0;
+    }
+    let covered = scanned_roots.len().min(requested_roots.len());
+    let mut percent = ((covered.saturating_mul(100)) / requested_roots.len()) as u8;
+    if partial {
+        percent = percent.min(99);
+    }
+    percent
+}
+
+pub(super) fn storage_index_coverage_percent(
+    cache_status: &StorageCacheStatus,
+    dirty_summary: &StorageDirtyPathSummary,
+    has_cached_facts: bool,
+) -> u8 {
+    if !has_cached_facts
+        || cache_status.stale
+        || cache_status.partial
+        || dirty_summary.dirty_path_count > 0
+        || dirty_summary.unknown_gap
+    {
+        0
+    } else {
+        100
+    }
+}
+
 pub fn storage_hygiene_deep_scan_json(
     roots: Vec<String>,
     max_depth: usize,
@@ -354,6 +387,8 @@ pub(crate) fn build_storage_hygiene_report_with_mode(
     }
 
     let mut report = build_storage_hygiene_report_from_index(roots, max_depth, limit);
+    report.requested_mode = mode.as_str().to_owned();
+    report.summary_scope = "indexed_snapshot_compatibility".to_owned();
     report.caveats.insert(
         0,
         format!(
@@ -740,10 +775,21 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
         ));
     }
 
+    let served_mode = options.mode.result_scan_mode(scan_partial).to_owned();
+    let coverage_percent =
+        storage_live_coverage_percent(&requested_roots, &scanned_roots, scan_partial);
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
-        scan_mode: options.mode.result_scan_mode(scan_partial).to_owned(),
+        requested_mode: options.mode.as_str().to_owned(),
+        served_mode: served_mode.clone(),
+        summary_scope: if coverage_percent == 100 {
+            "scanned_roots".to_owned()
+        } else {
+            "scanned_roots_partial".to_owned()
+        },
+        coverage_percent,
+        scan_mode: served_mode,
         scan_generation,
         cache_status,
         diagnostics,
@@ -1097,9 +1143,19 @@ pub(super) fn build_storage_hygiene_report_from_index(
         top_k_retained: true,
         performance_budget: StoragePerformanceBudgetDiagnostics::default(),
     };
+    let coverage_percent =
+        storage_index_coverage_percent(&cache_status, &dirty_summary, has_cached_facts);
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
+        requested_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+        served_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+        summary_scope: if coverage_percent == 100 {
+            "indexed_snapshot".to_owned()
+        } else {
+            "indexed_snapshot_partial".to_owned()
+        },
+        coverage_percent,
         scan_mode: StorageScanMode::InstantCached.as_str().to_owned(),
         scan_generation,
         cache_status,

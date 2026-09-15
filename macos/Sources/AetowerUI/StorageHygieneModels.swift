@@ -101,6 +101,10 @@ struct StorageScanGenerationModel: Decodable, Sendable {
 struct StorageHygieneReportModel: Decodable, Sendable {
     let capturedAtMillis: UInt64
     let scanDurationMillis: UInt64
+    let requestedMode: String
+    let servedMode: String
+    let summaryScope: String
+    let coveragePercent: UInt8
     let scanMode: String
     let scanGeneration: StorageScanGenerationModel?
     let cacheStatus: StorageCacheStatusModel
@@ -139,6 +143,10 @@ struct StorageHygieneReportModel: Decodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case capturedAtMillis
         case scanDurationMillis
+        case requestedMode
+        case servedMode
+        case summaryScope
+        case coveragePercent
         case scanMode
         case scanGeneration
         case cacheStatus
@@ -180,6 +188,10 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         capturedAtMillis = try container.decode(UInt64.self, forKey: .capturedAtMillis)
         scanDurationMillis = try container.decode(UInt64.self, forKey: .scanDurationMillis)
         scanMode = try container.decodeIfPresent(String.self, forKey: .scanMode) ?? "fast_changed_only"
+        requestedMode = try container.decodeIfPresent(String.self, forKey: .requestedMode) ?? scanMode
+        servedMode = try container.decodeIfPresent(String.self, forKey: .servedMode) ?? scanMode
+        summaryScope = try container.decodeIfPresent(String.self, forKey: .summaryScope) ?? "legacy"
+        coveragePercent = try container.decodeIfPresent(UInt8.self, forKey: .coveragePercent) ?? 0
         scanGeneration = try container.decodeIfPresent(StorageScanGenerationModel.self, forKey: .scanGeneration)
         cacheStatus =
             try container.decodeIfPresent(StorageCacheStatusModel.self, forKey: .cacheStatus) ?? .unknown
@@ -253,6 +265,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         cacheStatus.partial
             || cacheStatus.stale
             || scanGeneration.map { !$0.isUsable } ?? true
+            || coveragePercent < 100
             || truncated
             || repositoryInventoryTruncated
             || !repositoryInventoryComplete
@@ -1108,9 +1121,21 @@ struct StorageCleanupBundleItemModel: Decodable, Identifiable, Sendable {
         reason = try container.decode(String.self, forKey: .reason)
         consequence = try container.decodeIfPresent(String.self, forKey: .consequence) ?? rollbackNote
         evidence = try container.decodeIfPresent([String].self, forKey: .evidence) ?? []
-        cleanupAllowed = try container.decodeIfPresent(Bool.self, forKey: .cleanupAllowed) ?? true
-        cleanupBlockers = try container.decodeIfPresent([String].self, forKey: .cleanupBlockers) ?? []
-        defaultCleanupAction = try container.decodeIfPresent(String.self, forKey: .defaultCleanupAction) ?? "trash"
+        let decodedCleanupAllowed = try container.decodeIfPresent(Bool.self, forKey: .cleanupAllowed)
+        let decodedCleanupAction = try container.decodeIfPresent(String.self, forKey: .defaultCleanupAction)
+        if let decodedCleanupAllowed, let decodedCleanupAction {
+            cleanupAllowed = decodedCleanupAllowed
+            cleanupBlockers = try container.decodeIfPresent([String].self, forKey: .cleanupBlockers) ?? []
+            defaultCleanupAction = decodedCleanupAction
+        } else {
+            cleanupAllowed = false
+            var blockers = try container.decodeIfPresent([String].self, forKey: .cleanupBlockers) ?? []
+            if !blockers.contains("Missing cleanup policy evidence.") {
+                blockers.append("Missing cleanup policy evidence.")
+            }
+            cleanupBlockers = blockers
+            defaultCleanupAction = "manual_review"
+        }
     }
 }
 
@@ -2056,9 +2081,21 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
             ?? (attribution.repoRoot == nil ? "outside-git" : "repo-linked")
         nextStep = try container.decodeIfPresent(String.self, forKey: .nextStep) ?? recommendation
         evidence = try container.decodeIfPresent([String].self, forKey: .evidence) ?? attribution.notes
-        cleanupAllowed = try container.decodeIfPresent(Bool.self, forKey: .cleanupAllowed) ?? true
-        cleanupBlockers = try container.decodeIfPresent([String].self, forKey: .cleanupBlockers) ?? []
-        defaultCleanupAction = try container.decodeIfPresent(String.self, forKey: .defaultCleanupAction) ?? "trash"
+        let decodedCleanupAllowed = try container.decodeIfPresent(Bool.self, forKey: .cleanupAllowed)
+        let decodedCleanupAction = try container.decodeIfPresent(String.self, forKey: .defaultCleanupAction)
+        if let decodedCleanupAllowed, let decodedCleanupAction {
+            cleanupAllowed = decodedCleanupAllowed
+            cleanupBlockers = try container.decodeIfPresent([String].self, forKey: .cleanupBlockers) ?? []
+            defaultCleanupAction = decodedCleanupAction
+        } else {
+            cleanupAllowed = false
+            var blockers = try container.decodeIfPresent([String].self, forKey: .cleanupBlockers) ?? []
+            if !blockers.contains("Missing cleanup policy evidence.") {
+                blockers.append("Missing cleanup policy evidence.")
+            }
+            cleanupBlockers = blockers
+            defaultCleanupAction = "manual_review"
+        }
         recommendationScore = try container.decodeIfPresent(Double.self, forKey: .recommendationScore) ?? 0
     }
 

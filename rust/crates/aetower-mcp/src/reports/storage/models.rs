@@ -4,6 +4,10 @@ use super::*;
 pub(crate) struct StorageHygieneReport {
     pub(super) captured_at_millis: u64,
     pub(super) scan_duration_millis: u64,
+    pub(super) requested_mode: String,
+    pub(super) served_mode: String,
+    pub(super) summary_scope: String,
+    pub(super) coverage_percent: u8,
     pub(super) scan_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) scan_generation: Option<StorageScanGeneration>,
@@ -159,6 +163,14 @@ pub(super) struct StorageSituationRecoveryPlan {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct StorageSituationResponse {
     pub(super) captured_at_millis: u64,
+    #[serde(default)]
+    pub(super) requested_mode: String,
+    #[serde(default)]
+    pub(super) served_mode: String,
+    #[serde(default)]
+    pub(super) summary_scope: String,
+    #[serde(default)]
+    pub(super) coverage_percent: u8,
     #[serde(default)]
     pub(super) snapshot_updated_at_millis: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1456,6 +1468,10 @@ impl StorageItemSortKey {
 pub(super) struct StorageHygieneOverviewResponse {
     pub(super) captured_at_millis: u64,
     pub(super) scan_duration_millis: u64,
+    pub(super) requested_mode: String,
+    pub(super) served_mode: String,
+    pub(super) summary_scope: String,
+    pub(super) coverage_percent: u8,
     pub(super) scan_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) scan_generation: Option<StorageScanGeneration>,
@@ -1521,6 +1537,10 @@ pub(super) struct RepositoryInventoryDiagnostics {
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct StorageHygieneActionsResponse {
     pub(super) captured_at_millis: u64,
+    pub(super) requested_mode: String,
+    pub(super) served_mode: String,
+    pub(super) summary_scope: String,
+    pub(super) coverage_percent: u8,
     pub(super) scan_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) scan_generation: Option<StorageScanGeneration>,
@@ -1538,6 +1558,10 @@ pub(super) struct StorageHygieneActionsResponse {
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct StorageHygieneItemsPageResponse {
     pub(super) captured_at_millis: u64,
+    pub(super) requested_mode: String,
+    pub(super) served_mode: String,
+    pub(super) summary_scope: String,
+    pub(super) coverage_percent: u8,
     pub(super) scan_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) scan_generation: Option<StorageScanGeneration>,
@@ -1557,6 +1581,10 @@ pub(super) struct StorageHygieneItemsPageResponse {
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct StorageHygieneRepoDetailResponse {
     pub(super) captured_at_millis: u64,
+    pub(super) requested_mode: String,
+    pub(super) served_mode: String,
+    pub(super) summary_scope: String,
+    pub(super) coverage_percent: u8,
     pub(super) scan_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) scan_generation: Option<StorageScanGeneration>,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::reports::storage::report::storage_index_coverage_percent;
 
 pub fn storage_hygiene_overview_json(
     roots: Vec<String>,
@@ -9,6 +10,10 @@ pub fn storage_hygiene_overview_json(
     serde_json::to_string(&StorageHygieneOverviewResponse {
         captured_at_millis: report.captured_at_millis,
         scan_duration_millis: report.scan_duration_millis,
+        requested_mode: report.requested_mode,
+        served_mode: report.served_mode,
+        summary_scope: report.summary_scope,
+        coverage_percent: report.coverage_percent,
         scan_mode: report.scan_mode,
         scan_generation: report.scan_generation.clone(),
         cache_status: report.cache_status,
@@ -355,6 +360,8 @@ fn build_storage_situation_response(
     let mut cache_status =
         storage_index_cache_status(storage_index, now_millis, true, has_cached_facts);
     apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
+    let coverage_percent =
+        storage_index_coverage_percent(&cache_status, &dirty_summary, has_cached_facts);
     let mut caveats = vec![
         "Cache-first storage situation: uses Aetower's persistent index summaries and top offenders without walking the filesystem."
             .to_owned(),
@@ -393,6 +400,14 @@ fn build_storage_situation_response(
     stamp_storage_scan_generation_on_ownership(&mut ownership_breakdown, scan_generation.as_ref());
     StorageSituationResponse {
         captured_at_millis: now_millis,
+        requested_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+        served_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+        summary_scope: if coverage_percent == 100 {
+            "situation_snapshot".to_owned()
+        } else {
+            "situation_snapshot_partial".to_owned()
+        },
+        coverage_percent,
         snapshot_updated_at_millis: Some(now_millis),
         scan_generation,
         cache_status,
@@ -621,6 +636,22 @@ fn overlay_storage_situation_snapshot(
         storage_situation_backlog_drain(storage_index, roots, &dirty_summary, storage_now_millis());
     snapshot.recovery_plan = storage_situation_recovery_plan(&dirty_summary);
     snapshot.dirty_paths = dirty_summary;
+    let has_cached_facts = snapshot.summary.item_count > 0
+        || snapshot.summary.inventory_size_bytes > 0
+        || !snapshot.top_offenders.is_empty()
+        || !snapshot.domains.is_empty();
+    snapshot.requested_mode = StorageScanMode::InstantCached.as_str().to_owned();
+    snapshot.served_mode = StorageScanMode::InstantCached.as_str().to_owned();
+    snapshot.coverage_percent = storage_index_coverage_percent(
+        &snapshot.cache_status,
+        &snapshot.dirty_paths,
+        has_cached_facts,
+    );
+    snapshot.summary_scope = if snapshot.coverage_percent == 100 {
+        "situation_snapshot".to_owned()
+    } else {
+        "situation_snapshot_partial".to_owned()
+    };
     if snapshot.dirty_paths.unknown_gap
         && !snapshot
             .caveats
@@ -728,8 +759,25 @@ fn build_storage_situation_response_from_report(
         &mut ownership_breakdown,
         report.scan_generation.as_ref(),
     );
+    let coverage_percent = if cache_status.stale
+        || cache_status.partial
+        || dirty_summary.dirty_path_count > 0
+        || dirty_summary.unknown_gap
+    {
+        0
+    } else {
+        report.coverage_percent
+    };
     StorageSituationResponse {
         captured_at_millis: report.captured_at_millis,
+        requested_mode: report.requested_mode.clone(),
+        served_mode: report.served_mode.clone(),
+        summary_scope: if coverage_percent == 100 {
+            report.summary_scope.clone()
+        } else {
+            "situation_snapshot_partial".to_owned()
+        },
+        coverage_percent,
         snapshot_updated_at_millis: Some(report.captured_at_millis),
         scan_generation: report.scan_generation.clone(),
         cache_status,
@@ -1259,6 +1307,10 @@ pub fn storage_hygiene_actions_json(
     let report = build_storage_hygiene_projection_report(roots, max_depth, limit, mode);
     serde_json::to_string(&StorageHygieneActionsResponse {
         captured_at_millis: report.captured_at_millis,
+        requested_mode: report.requested_mode,
+        served_mode: report.served_mode,
+        summary_scope: report.summary_scope,
+        coverage_percent: report.coverage_percent,
         scan_mode: report.scan_mode,
         scan_generation: report.scan_generation.clone(),
         cache_status: report.cache_status,
@@ -1347,6 +1399,10 @@ pub fn storage_hygiene_items_page_json(
     refresh_storage_performance_budget(&mut report, table_started.elapsed().as_millis() as u64, 0);
     serde_json::to_string(&StorageHygieneItemsPageResponse {
         captured_at_millis: report.captured_at_millis,
+        requested_mode: report.requested_mode,
+        served_mode: report.served_mode,
+        summary_scope: report.summary_scope,
+        coverage_percent: report.coverage_percent,
         scan_mode: report.scan_mode,
         scan_generation: report.scan_generation.clone(),
         cache_status: report.cache_status,
@@ -1417,6 +1473,8 @@ fn storage_hygiene_items_page_from_index(
     let mut cache_status =
         storage_index_cache_status(&storage_index, now_millis, true, total_available > 0);
     apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
+    let coverage_percent =
+        storage_index_coverage_percent(&cache_status, &dirty_summary, total_available > 0);
     let diagnostics = StorageScanDiagnostics {
         mode: StorageScanMode::InstantCached.as_str().to_owned(),
         root_walk_millis: 0,
@@ -1450,6 +1508,14 @@ fn storage_hygiene_items_page_from_index(
     Some(
         serde_json::to_string(&StorageHygieneItemsPageResponse {
             captured_at_millis: now_millis,
+            requested_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+            served_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+            summary_scope: if coverage_percent == 100 {
+                "indexed_page".to_owned()
+            } else {
+                "indexed_page_partial".to_owned()
+            },
+            coverage_percent,
             scan_mode: StorageScanMode::InstantCached.as_str().to_owned(),
             scan_generation,
             cache_status,
@@ -1477,6 +1543,10 @@ pub fn storage_hygiene_repo_detail_json(repo_root: String, mode: &str) -> Result
         .cloned();
     serde_json::to_string(&StorageHygieneRepoDetailResponse {
         captured_at_millis: report.captured_at_millis,
+        requested_mode: report.requested_mode,
+        served_mode: report.served_mode,
+        summary_scope: report.summary_scope,
+        coverage_percent: report.coverage_percent,
         scan_mode: report.scan_mode,
         scan_generation: report.scan_generation.clone(),
         cache_status: report.cache_status,
