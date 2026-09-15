@@ -10,6 +10,7 @@ pub fn storage_hygiene_overview_json(
         captured_at_millis: report.captured_at_millis,
         scan_duration_millis: report.scan_duration_millis,
         scan_mode: report.scan_mode,
+        scan_generation: report.scan_generation.clone(),
         cache_status: report.cache_status,
         diagnostics: report.diagnostics,
         summary: report.summary,
@@ -391,6 +392,7 @@ fn build_storage_situation_response(
     StorageSituationResponse {
         captured_at_millis: now_millis,
         snapshot_updated_at_millis: Some(now_millis),
+        scan_generation: storage_index.latest_published_storage_scan_generation(roots),
         cache_status,
         storage_index_status: storage_index.status.clone(),
         roots: roots
@@ -707,6 +709,7 @@ fn build_storage_situation_response_from_report(
     StorageSituationResponse {
         captured_at_millis: report.captured_at_millis,
         snapshot_updated_at_millis: Some(report.captured_at_millis),
+        scan_generation: report.scan_generation.clone(),
         cache_status,
         storage_index_status,
         roots: report.roots.clone(),
@@ -1235,6 +1238,7 @@ pub fn storage_hygiene_actions_json(
     serde_json::to_string(&StorageHygieneActionsResponse {
         captured_at_millis: report.captured_at_millis,
         scan_mode: report.scan_mode,
+        scan_generation: report.scan_generation.clone(),
         cache_status: report.cache_status,
         diagnostics: report.diagnostics,
         cleanup_tiers: report.cleanup_tiers,
@@ -1322,6 +1326,7 @@ pub fn storage_hygiene_items_page_json(
     serde_json::to_string(&StorageHygieneItemsPageResponse {
         captured_at_millis: report.captured_at_millis,
         scan_mode: report.scan_mode,
+        scan_generation: report.scan_generation.clone(),
         cache_status: report.cache_status,
         diagnostics: report.diagnostics,
         offset,
@@ -1418,6 +1423,7 @@ fn storage_hygiene_items_page_from_index(
         serde_json::to_string(&StorageHygieneItemsPageResponse {
             captured_at_millis: now_millis,
             scan_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+            scan_generation: storage_index.latest_published_storage_scan_generation(&roots),
             cache_status,
             diagnostics,
             offset,
@@ -1440,11 +1446,11 @@ pub fn storage_hygiene_repo_detail_json(repo_root: String, mode: &str) -> Result
         .repository_inventory
         .iter()
         .find(|repository| repository.repo_root == repo_root)
-        .cloned()
-        .or_else(|| report.repository_inventory.first().cloned());
+        .cloned();
     serde_json::to_string(&StorageHygieneRepoDetailResponse {
         captured_at_millis: report.captured_at_millis,
         scan_mode: report.scan_mode,
+        scan_generation: report.scan_generation.clone(),
         cache_status: report.cache_status,
         diagnostics: report.diagnostics,
         repository,

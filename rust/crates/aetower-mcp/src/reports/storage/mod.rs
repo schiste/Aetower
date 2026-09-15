@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     cmp::{Ordering, Reverse},
     collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque},
     ffi::CString,
@@ -554,11 +554,11 @@ use models::{
     StorageRepoArtifactMix, StorageRepoFootprint, StorageRepositoryArtifact,
     StorageRepositoryInventoryItem, StorageRepositoryWorkspaceRefreshResponse,
     StorageRepositoryWorkspaceRollup, StorageRepositoryWorkspaceRoot, StorageScanDiagnostics,
-    StorageScanDiff, StorageScanDiffEntry, StorageScanMetrics, StorageSimilarityActionProjection,
-    StorageSituationBacklogDrain, StorageSituationDomain, StorageSituationRecoveryPlan,
-    StorageSituationResponse, StorageSituationSummary, StorageSituationTopOffender,
-    StorageSkippedRoot, StorageSourceCoverage, StorageSystemDataBucket, StorageTreemapNode,
-    StorageVolumeState, StorageWriterLedgerRecord,
+    StorageScanDiff, StorageScanDiffEntry, StorageScanGeneration, StorageScanMetrics,
+    StorageSimilarityActionProjection, StorageSituationBacklogDrain, StorageSituationDomain,
+    StorageSituationRecoveryPlan, StorageSituationResponse, StorageSituationSummary,
+    StorageSituationTopOffender, StorageSkippedRoot, StorageSourceCoverage,
+    StorageSystemDataBucket, StorageTreemapNode, StorageVolumeState, StorageWriterLedgerRecord,
 };
 pub use ownership::storage_ownership_refresh_json;
 use ownership::{STORAGE_OWNERSHIP_CATEGORIES, STORAGE_OWNERSHIP_CLASSIFIER_VERSION};

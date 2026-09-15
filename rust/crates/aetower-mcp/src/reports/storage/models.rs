@@ -5,6 +5,8 @@ pub(crate) struct StorageHygieneReport {
     pub(super) captured_at_millis: u64,
     pub(super) scan_duration_millis: u64,
     pub(super) scan_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation: Option<StorageScanGeneration>,
     pub(super) cache_status: StorageCacheStatus,
     pub(super) diagnostics: StorageScanDiagnostics,
     pub(super) summary: StorageHygieneSummary,
@@ -51,6 +53,25 @@ pub(super) struct StorageCacheStatus {
     pub(super) latest_scan_millis: Option<u64>,
     pub(super) age_millis: Option<u64>,
     pub(super) message: String,
+}
+
+/// A durable identity for one published storage view.  A scan may take many
+/// seconds (or be resumed after a restart), so consumers must be able to tell
+/// which complete or partial result they are looking at instead of inferring
+/// freshness from a wall-clock timestamp alone.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct StorageScanGeneration {
+    pub(super) generation_id: i64,
+    pub(super) root_key: String,
+    pub(super) roots: Vec<String>,
+    pub(super) mode: String,
+    pub(super) status: String,
+    pub(super) started_at_millis: u64,
+    pub(super) updated_at_millis: u64,
+    pub(super) completed_at_millis: Option<u64>,
+    pub(super) partial: bool,
+    pub(super) published: bool,
+    pub(super) error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -127,6 +148,8 @@ pub(super) struct StorageSituationResponse {
     pub(super) captured_at_millis: u64,
     #[serde(default)]
     pub(super) snapshot_updated_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation: Option<StorageScanGeneration>,
     pub(super) cache_status: StorageCacheStatus,
     pub(super) storage_index_status: String,
     pub(super) roots: Vec<String>,
@@ -1393,6 +1416,8 @@ pub(super) struct StorageHygieneOverviewResponse {
     pub(super) captured_at_millis: u64,
     pub(super) scan_duration_millis: u64,
     pub(super) scan_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation: Option<StorageScanGeneration>,
     pub(super) cache_status: StorageCacheStatus,
     pub(super) diagnostics: StorageScanDiagnostics,
     pub(super) summary: StorageHygieneSummary,
@@ -1456,6 +1481,8 @@ pub(super) struct RepositoryInventoryDiagnostics {
 pub(super) struct StorageHygieneActionsResponse {
     pub(super) captured_at_millis: u64,
     pub(super) scan_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation: Option<StorageScanGeneration>,
     pub(super) cache_status: StorageCacheStatus,
     pub(super) diagnostics: StorageScanDiagnostics,
     pub(super) cleanup_tiers: Vec<StorageCleanupTierSummary>,
@@ -1471,6 +1498,8 @@ pub(super) struct StorageHygieneActionsResponse {
 pub(super) struct StorageHygieneItemsPageResponse {
     pub(super) captured_at_millis: u64,
     pub(super) scan_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation: Option<StorageScanGeneration>,
     pub(super) cache_status: StorageCacheStatus,
     pub(super) diagnostics: StorageScanDiagnostics,
     pub(super) offset: usize,
@@ -1488,6 +1517,8 @@ pub(super) struct StorageHygieneItemsPageResponse {
 pub(super) struct StorageHygieneRepoDetailResponse {
     pub(super) captured_at_millis: u64,
     pub(super) scan_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation: Option<StorageScanGeneration>,
     pub(super) cache_status: StorageCacheStatus,
     pub(super) diagnostics: StorageScanDiagnostics,
     pub(super) repository: Option<StorageRepositoryInventoryItem>,

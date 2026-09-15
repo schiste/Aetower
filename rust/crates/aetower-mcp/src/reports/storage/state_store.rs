@@ -387,6 +387,10 @@ pub(super) struct StorageSizeIndex {
     /// index instance, so interior mutability with `RefCell` is sufficient.
     pending_rows: RefCell<Vec<StorageIndexedFileRow>>,
     budget_flush_count: RefCell<u64>,
+    /// Set only while a live scan owns a private staging generation. Readers
+    /// continue to see the last published index until this value is cleared by
+    /// `finish_storage_scan_generation`.
+    active_scan_generation: Cell<Option<i64>>,
 }
 
 impl Drop for StorageSizeIndex {
@@ -394,6 +398,9 @@ impl Drop for StorageSizeIndex {
         // End-of-scan / cancellation safety net: whatever is still buffered
         // must reach the database before the connection closes.
         self.flush_pending_rows();
+        // A dropped scan handle must never leave a half-built stage that a
+        // future process could mistake for a publishable result.
+        self.abort_storage_scan_generation("scan handle dropped");
         // Refresh the query-planner statistics when table sizes changed enough
         // to matter (SQLite's own growth heuristic); a no-op otherwise. Stale
         // or missing statistics make the planner fall back to full scans and
@@ -453,6 +460,7 @@ impl StorageSizeIndex {
             status,
             pending_rows: RefCell::new(Vec::new()),
             budget_flush_count: RefCell::new(0),
+            active_scan_generation: Cell::new(None),
         }
     }
 
@@ -509,6 +517,306 @@ impl StorageSizeIndex {
     #[cfg(test)]
     pub(super) fn disabled(reason: &str) -> Self {
         Self::with_status(None, None, format!("disabled:{reason}"))
+    }
+
+    /// Start a scan generation.  All rows produced by this handle are written
+    /// to generation-scoped staging tables until the generation is published.
+    /// This makes a report either see the previous complete view or the new
+    /// complete view; it can never observe a half-written scan.
+    pub(super) fn begin_storage_scan_generation(
+        &self,
+        roots: &[PathBuf],
+        mode: &str,
+        now_millis: u64,
+    ) -> Result<StorageScanGeneration, String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let roots = roots
+            .iter()
+            .map(|root| root.display().to_string())
+            .collect::<Vec<_>>();
+        let roots_json = serde_json::to_string(&roots)
+            .map_err(|error| format!("encode_scan_generation_roots:{error}"))?;
+        let root_key =
+            storage_situation_roots_key(&roots.iter().map(PathBuf::from).collect::<Vec<_>>());
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("begin_scan_generation_transaction:{error}"))?;
+        transaction
+            .execute(
+                "UPDATE storage_scan_generation
+                 SET status = 'failed', partial = 1, published = 0,
+                     updated_at_millis = ?2, completed_at_millis = ?2,
+                     error_message = 'superseded by a newer scan'
+                 WHERE root_key = ?1 AND status = 'running'",
+                params![&root_key, now_millis.min(i64::MAX as u64) as i64,],
+            )
+            .map_err(|error| format!("supersede_scan_generation:{error}"))?;
+        transaction
+            .execute(
+                "INSERT INTO storage_scan_generation (
+                    root_key, roots_json, mode, status, started_at_millis,
+                    updated_at_millis, completed_at_millis, partial, published,
+                    error_message
+                 ) VALUES (?1, ?2, ?3, 'running', ?4, ?4, NULL, 0, 0, NULL)",
+                params![
+                    &root_key,
+                    &roots_json,
+                    mode,
+                    now_millis.min(i64::MAX as u64) as i64,
+                ],
+            )
+            .map_err(|error| format!("insert_scan_generation:{error}"))?;
+        let generation_id = connection.last_insert_rowid();
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_scan_generation:{error}"))?;
+        self.active_scan_generation.set(Some(generation_id));
+        Ok(StorageScanGeneration {
+            generation_id,
+            root_key,
+            roots,
+            mode: mode.to_owned(),
+            status: "running".to_owned(),
+            started_at_millis: now_millis,
+            updated_at_millis: now_millis,
+            completed_at_millis: None,
+            partial: false,
+            published: false,
+            error: None,
+        })
+    }
+
+    pub(super) fn latest_published_storage_scan_generation(
+        &self,
+        roots: &[PathBuf],
+    ) -> Option<StorageScanGeneration> {
+        let connection = self.connection.as_ref()?;
+        let root_key = storage_situation_roots_key(roots);
+        connection
+            .query_row(
+                "SELECT generation_id, root_key, roots_json, mode, status,
+                        started_at_millis, updated_at_millis, completed_at_millis,
+                        partial, published, error_message
+                 FROM storage_scan_generation
+                 WHERE root_key = ?1 AND published <> 0
+                 ORDER BY updated_at_millis DESC, generation_id DESC
+                 LIMIT 1",
+                params![root_key],
+                storage_scan_generation_from_sql,
+            )
+            .ok()
+    }
+
+    pub(super) fn finish_storage_scan_generation(
+        &self,
+        generation_id: i64,
+        publish: bool,
+        partial: bool,
+        error: Option<&str>,
+        now_millis: u64,
+    ) -> Result<StorageScanGeneration, String> {
+        if self.active_scan_generation.get() != Some(generation_id) {
+            return Err("scan generation is not active on this index handle".to_owned());
+        }
+        // Flushes are still bounded transactions, but remain invisible because
+        // they target the generation stage table.
+        self.flush_pending_rows();
+        let result = self.finish_storage_scan_generation_transaction(
+            generation_id,
+            publish,
+            partial,
+            error,
+            now_millis,
+        );
+        match result {
+            Ok(generation) => {
+                self.active_scan_generation.set(None);
+                super::report::invalidate_index_report_sections_memo();
+                Ok(generation)
+            }
+            Err(error) => {
+                self.abort_storage_scan_generation(&error);
+                Err(error)
+            }
+        }
+    }
+
+    fn finish_storage_scan_generation_transaction(
+        &self,
+        generation_id: i64,
+        publish: bool,
+        partial: bool,
+        error: Option<&str>,
+        now_millis: u64,
+    ) -> Result<StorageScanGeneration, String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("finish_scan_generation_transaction:{error}"))?;
+        let generation = transaction
+            .query_row(
+                "SELECT generation_id, root_key, roots_json, mode, status,
+                        started_at_millis, updated_at_millis, completed_at_millis,
+                        partial, published, error_message
+                 FROM storage_scan_generation WHERE generation_id = ?1",
+                params![generation_id],
+                storage_scan_generation_from_sql,
+            )
+            .map_err(|error| format!("load_scan_generation:{error}"))?;
+        let roots = generation
+            .roots
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        let source_roots = generation.roots.iter().cloned().collect::<BTreeSet<_>>();
+        let status = if publish && !partial {
+            "complete"
+        } else {
+            "partial"
+        };
+        let published = publish && !partial;
+        if published {
+            record_generation_growth_deltas(
+                &transaction,
+                generation_id,
+                now_millis,
+                StorageIndexBudgetLimits::default(),
+            )
+            .map_err(|error| format!("record_generation_growth:{error}"))?;
+            delete_storage_paths_under_roots(&transaction, "storage_file_index", &roots)
+                .map_err(|error| format!("clear_published_file_index:{error}"))?;
+            delete_storage_paths_under_roots(&transaction, "storage_size_index", &roots)
+                .map_err(|error| format!("clear_published_size_index:{error}"))?;
+            delete_storage_paths_under_roots(&transaction, "storage_path_fingerprint", &roots)
+                .map_err(|error| format!("clear_published_fingerprints:{error}"))?;
+            transaction
+                .execute(
+                    "INSERT OR REPLACE INTO storage_file_index (
+                        path, device, inode, file_id, source_root, repo_root, kind,
+                        storage_role, safety, cleanup_tier, logical_bytes, physical_bytes,
+                        modified_millis, changed_millis, accessed_millis, birth_millis,
+                        is_directory, entries, truncated, last_scan_millis,
+                        previous_cleanup_tier, recommendation_score
+                     )
+                     SELECT path, device, inode, file_id, source_root, repo_root, kind,
+                            storage_role, safety, cleanup_tier, logical_bytes, physical_bytes,
+                            modified_millis, changed_millis, accessed_millis, birth_millis,
+                            is_directory, entries, truncated, last_scan_millis,
+                            previous_cleanup_tier, recommendation_score
+                     FROM storage_scan_generation_stage_file
+                     WHERE generation_id = ?1",
+                    params![generation_id],
+                )
+                .map_err(|error| format!("publish_file_index:{error}"))?;
+            transaction
+                .execute(
+                    "INSERT OR REPLACE INTO storage_size_index (
+                        path, device, inode, modified_millis, changed_millis, kind,
+                        repo_root, size_bytes, allocated_bytes, entries, truncated,
+                        last_scan_millis
+                     )
+                     SELECT path, device, inode, modified_millis, changed_millis, kind,
+                            repo_root, size_bytes, allocated_bytes, entries, truncated,
+                            last_scan_millis
+                     FROM storage_scan_generation_stage_size
+                     WHERE generation_id = ?1",
+                    params![generation_id],
+                )
+                .map_err(|error| format!("publish_size_index:{error}"))?;
+            transaction
+                .execute(
+                    "INSERT OR REPLACE INTO storage_path_fingerprint (
+                        path, fingerprint, source, measured_at_millis
+                     )
+                     SELECT path, fingerprint, source, measured_at_millis
+                     FROM storage_scan_generation_stage_fingerprint
+                     WHERE generation_id = ?1",
+                    params![generation_id],
+                )
+                .map_err(|error| format!("publish_fingerprints:{error}"))?;
+            refresh_storage_index_summaries_and_top_offenders(
+                &transaction,
+                &source_roots,
+                now_millis,
+            );
+            refresh_materialized_storage_index_for_roots(&transaction, &source_roots)
+                .map_err(|error| format!("publish_materialized_index:{error}"))?;
+            let materialized_generation = materialized_storage_index_generation(&transaction)
+                .map_err(|error| format!("publish_materialized_generation:{error}"))?;
+            set_materialized_storage_index_generation(&transaction, &materialized_generation)
+                .map_err(|error| format!("save_materialized_generation:{error}"))?;
+        }
+        transaction
+            .execute(
+                "DELETE FROM storage_scan_generation_stage_file WHERE generation_id = ?1;
+                 DELETE FROM storage_scan_generation_stage_size WHERE generation_id = ?1;
+                 DELETE FROM storage_scan_generation_stage_fingerprint WHERE generation_id = ?1",
+                params![generation_id],
+            )
+            .map_err(|error| format!("clear_scan_generation_stage:{error}"))?;
+        transaction
+            .execute(
+                "UPDATE storage_scan_generation
+                 SET status = ?2, updated_at_millis = ?3, completed_at_millis = ?3,
+                     partial = ?4, published = ?5, error_message = ?6
+                 WHERE generation_id = ?1",
+                params![
+                    generation_id,
+                    status,
+                    now_millis.min(i64::MAX as u64) as i64,
+                    if partial { 1i64 } else { 0i64 },
+                    if published { 1i64 } else { 0i64 },
+                    error,
+                ],
+            )
+            .map_err(|error| format!("finish_scan_generation:{error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_scan_generation_publication:{error}"))?;
+        let finished = connection
+            .query_row(
+                "SELECT generation_id, root_key, roots_json, mode, status,
+                        started_at_millis, updated_at_millis, completed_at_millis,
+                        partial, published, error_message
+                 FROM storage_scan_generation WHERE generation_id = ?1",
+                params![generation_id],
+                storage_scan_generation_from_sql,
+            )
+            .map_err(|error| format!("reload_scan_generation:{error}"))?;
+        Ok(finished)
+    }
+
+    fn abort_storage_scan_generation(&self, reason: &str) {
+        let Some(generation_id) = self.active_scan_generation.get() else {
+            return;
+        };
+        let Some(connection) = self.connection.as_ref() else {
+            self.active_scan_generation.set(None);
+            return;
+        };
+        if let Ok(transaction) = connection.unchecked_transaction() {
+            let _ = transaction.execute(
+                "DELETE FROM storage_scan_generation_stage_file WHERE generation_id = ?1;
+                 DELETE FROM storage_scan_generation_stage_size WHERE generation_id = ?1;
+                 DELETE FROM storage_scan_generation_stage_fingerprint WHERE generation_id = ?1;
+                 UPDATE storage_scan_generation
+                 SET status = 'failed', partial = 1, published = 0,
+                     updated_at_millis = ?2, completed_at_millis = ?2,
+                     error_message = ?3
+                 WHERE generation_id = ?1",
+                params![
+                    generation_id,
+                    storage_now_millis().min(i64::MAX as u64) as i64,
+                    reason
+                ],
+            );
+            let _ = transaction.commit();
+        }
+        self.active_scan_generation.set(None);
     }
 
     fn prepare_schema(connection: &Connection) -> rusqlite::Result<()> {
@@ -724,6 +1032,10 @@ impl StorageSizeIndex {
                  DROP TABLE IF EXISTS storage_growth_rollup;
                  DROP TABLE IF EXISTS storage_index_summary;
                  DROP TABLE IF EXISTS storage_top_offender;
+                 DROP TABLE IF EXISTS storage_scan_generation_stage_size;
+                 DROP TABLE IF EXISTS storage_scan_generation_stage_file;
+                 DROP TABLE IF EXISTS storage_scan_generation_stage_fingerprint;
+                 DROP TABLE IF EXISTS storage_scan_generation;
                  UPDATE storage_index_meta SET value = 2 WHERE key = 'schema_version';
                  CREATE TABLE storage_size_index (
                     path TEXT PRIMARY KEY,
@@ -924,6 +1236,7 @@ impl StorageSizeIndex {
         Self::ensure_storage_dirty_path_columns(connection)?;
         Self::ensure_materialized_storage_index_schema(connection)?;
         Self::ensure_repository_artifact_columns(connection)?;
+        Self::ensure_storage_scan_generation_schema(connection)?;
         Ok(())
     }
 
@@ -1329,6 +1642,87 @@ impl StorageSizeIndex {
         )
     }
 
+    /// Scan generations are additive schema.  The stage tables deliberately
+    /// mirror the two legacy index tables so a running scan can be written in
+    /// bounded transactions without exposing an incomplete view to readers.
+    fn ensure_storage_scan_generation_schema(connection: &Connection) -> rusqlite::Result<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS storage_scan_generation (
+                generation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                root_key TEXT NOT NULL,
+                roots_json TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at_millis INTEGER NOT NULL,
+                updated_at_millis INTEGER NOT NULL,
+                completed_at_millis INTEGER,
+                partial INTEGER NOT NULL DEFAULT 0,
+                published INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_scan_generation_root
+                ON storage_scan_generation(root_key, published, updated_at_millis DESC);
+             CREATE INDEX IF NOT EXISTS idx_storage_scan_generation_status
+                ON storage_scan_generation(status, updated_at_millis DESC);
+             CREATE TABLE IF NOT EXISTS storage_scan_generation_stage_size (
+                generation_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                device INTEGER NOT NULL,
+                inode INTEGER NOT NULL,
+                modified_millis INTEGER NOT NULL,
+                changed_millis INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                repo_root TEXT,
+                size_bytes INTEGER NOT NULL,
+                allocated_bytes INTEGER NOT NULL,
+                entries INTEGER NOT NULL,
+                truncated INTEGER NOT NULL,
+                last_scan_millis INTEGER NOT NULL,
+                PRIMARY KEY (generation_id, path)
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_scan_generation_stage_size_path
+                ON storage_scan_generation_stage_size(generation_id, path);
+             CREATE TABLE IF NOT EXISTS storage_scan_generation_stage_file (
+                generation_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                device INTEGER NOT NULL,
+                inode INTEGER NOT NULL,
+                file_id TEXT NOT NULL,
+                source_root TEXT NOT NULL,
+                repo_root TEXT,
+                kind TEXT NOT NULL,
+                storage_role TEXT NOT NULL,
+                safety TEXT NOT NULL,
+                cleanup_tier TEXT NOT NULL,
+                logical_bytes INTEGER NOT NULL,
+                physical_bytes INTEGER NOT NULL,
+                modified_millis INTEGER,
+                changed_millis INTEGER,
+                accessed_millis INTEGER,
+                birth_millis INTEGER,
+                is_directory INTEGER NOT NULL,
+                entries INTEGER NOT NULL,
+                truncated INTEGER NOT NULL,
+                last_scan_millis INTEGER NOT NULL,
+                previous_cleanup_tier TEXT NOT NULL DEFAULT '',
+                recommendation_score REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (generation_id, path)
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_scan_generation_stage_file_root
+                ON storage_scan_generation_stage_file(generation_id, source_root, physical_bytes DESC);
+             CREATE TABLE IF NOT EXISTS storage_scan_generation_stage_fingerprint (
+                generation_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                fingerprint BLOB NOT NULL,
+                source TEXT NOT NULL,
+                measured_at_millis INTEGER NOT NULL,
+                PRIMARY KEY (generation_id, path)
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_scan_generation_stage_fingerprint_path
+                ON storage_scan_generation_stage_fingerprint(generation_id, path);",
+        )
+    }
+
     fn ensure_storage_dirty_path_columns(connection: &Connection) -> rusqlite::Result<()> {
         let exists: i64 = connection.query_row(
             "SELECT COUNT(*)
@@ -1518,6 +1912,43 @@ impl StorageSizeIndex {
         let inode = metadata.ino() as i64;
         let modified_millis = unix_metadata_millis(metadata.mtime(), metadata.mtime_nsec());
         let changed_millis = unix_metadata_millis(metadata.ctime(), metadata.ctime_nsec());
+        if let Some(generation_id) = self.active_scan_generation.get() {
+            if connection
+                .execute(
+                    "INSERT OR REPLACE INTO storage_scan_generation_stage_size (
+                        generation_id, path, device, inode, modified_millis,
+                        changed_millis, kind, repo_root, size_bytes, allocated_bytes,
+                        entries, truncated, last_scan_millis
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    params![
+                        generation_id,
+                        &path,
+                        device,
+                        inode,
+                        modified_millis,
+                        changed_millis,
+                        kind,
+                        repo_root,
+                        size.bytes.min(i64::MAX as u64) as i64,
+                        size.allocated_bytes.min(i64::MAX as u64) as i64,
+                        size.entries.min(i64::MAX as u64) as i64,
+                        if size.truncated { 1i64 } else { 0i64 },
+                        now_millis.min(i64::MAX as u64) as i64,
+                    ],
+                )
+                .is_ok()
+            {
+                metrics.storage_index_writes = metrics.storage_index_writes.saturating_add(1);
+                self.store_path_fingerprint_for_generation(
+                    generation_id,
+                    &path,
+                    fingerprint,
+                    now_millis,
+                    "size_walk",
+                );
+            }
+            return;
+        }
         if connection
             .execute(
                 "INSERT OR REPLACE INTO storage_size_index (
@@ -2590,6 +3021,31 @@ impl StorageSizeIndex {
         );
     }
 
+    fn store_path_fingerprint_for_generation(
+        &self,
+        generation_id: i64,
+        path: &str,
+        fingerprint: Vec<u8>,
+        measured_at_millis: u64,
+        source: &str,
+    ) {
+        let Some(connection) = self.connection.as_ref() else {
+            return;
+        };
+        let _ = connection.execute(
+            "INSERT OR REPLACE INTO storage_scan_generation_stage_fingerprint (
+                generation_id, path, fingerprint, source, measured_at_millis
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                generation_id,
+                path,
+                fingerprint,
+                source,
+                measured_at_millis.min(i64::MAX as u64) as i64,
+            ],
+        );
+    }
+
     fn update_event_cursor(
         &self,
         source: &str,
@@ -2695,6 +3151,10 @@ impl StorageSizeIndex {
         let Some(connection) = self.connection.as_ref() else {
             return;
         };
+        if let Some(generation_id) = self.active_scan_generation.get() {
+            let _ = self.flush_pending_rows_to_generation(generation_id, &rows);
+            return;
+        }
         // Batched previous-values lookup, chunked to stay well under SQLite's
         // bind-variable limit. Also captures the previous cleanup tier so the
         // upsert can persist it into `previous_cleanup_tier`.
@@ -2872,6 +3332,84 @@ impl StorageSizeIndex {
         // The generation key usually changes too; this covers the
         // same-millisecond and unchanged-stamp cases.
         super::report::invalidate_index_report_sections_memo();
+    }
+
+    fn flush_pending_rows_to_generation(
+        &self,
+        generation_id: i64,
+        rows: &[StorageIndexedFileRow],
+    ) -> Result<(), String> {
+        let Some(connection) = self.connection.as_ref() else {
+            return Err(self.status.clone());
+        };
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("stage_rows_transaction:{error}"))?;
+        let mut upsert = transaction
+            .prepare(
+                "INSERT OR REPLACE INTO storage_scan_generation_stage_file (
+                    generation_id, path, device, inode, file_id, source_root, repo_root,
+                    kind, storage_role, safety, cleanup_tier, logical_bytes, physical_bytes,
+                    modified_millis, changed_millis, accessed_millis, birth_millis,
+                    is_directory, entries, truncated, last_scan_millis,
+                    previous_cleanup_tier, recommendation_score
+                 ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                    ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23
+                 )",
+            )
+            .map_err(|error| format!("prepare_stage_row_insert:{error}"))?;
+        for row in rows {
+            let previous_cleanup_tier: String = transaction
+                .query_row(
+                    "SELECT cleanup_tier FROM storage_file_index WHERE path = ?1",
+                    params![&row.path],
+                    |value| value.get(0),
+                )
+                .unwrap_or_default();
+            upsert
+                .execute(params![
+                    generation_id,
+                    &row.path,
+                    row.device,
+                    row.inode,
+                    &row.file_id,
+                    &row.source_root,
+                    row.repo_root.as_deref(),
+                    &row.kind,
+                    &row.storage_role,
+                    &row.safety,
+                    &row.cleanup_tier,
+                    row.logical_bytes.min(i64::MAX as u64) as i64,
+                    row.physical_bytes.min(i64::MAX as u64) as i64,
+                    row.modified_millis
+                        .map(|value| value.min(i64::MAX as u64) as i64),
+                    row.changed_millis
+                        .map(|value| value.min(i64::MAX as u64) as i64),
+                    row.accessed_millis
+                        .map(|value| value.min(i64::MAX as u64) as i64),
+                    row.birth_millis
+                        .map(|value| value.min(i64::MAX as u64) as i64),
+                    if row.is_directory { 1i64 } else { 0i64 },
+                    row.entries.min(i64::MAX as u64) as i64,
+                    if row.truncated { 1i64 } else { 0i64 },
+                    row.last_scan_millis.min(i64::MAX as u64) as i64,
+                    previous_cleanup_tier,
+                    storage_recommendation_score(
+                        row.physical_bytes,
+                        &row.cleanup_tier,
+                        row.modified_millis,
+                        row.accessed_millis,
+                        row.last_scan_millis,
+                    ),
+                ])
+                .map_err(|error| format!("stage_row_insert:{error}"))?;
+        }
+        drop(upsert);
+        transaction
+            .commit()
+            .map_err(|error| format!("commit_stage_rows:{error}"))?;
+        Ok(())
     }
 
     fn enforce_storage_index_budget(&self, limits: StorageIndexBudgetLimits) {
@@ -5350,6 +5888,140 @@ fn refresh_storage_index_summaries_and_top_offenders(
             params![source_root, STORAGE_TOP_OFFENDERS_PER_ROOT as i64],
         );
     }
+}
+
+fn storage_scan_generation_from_sql(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<StorageScanGeneration> {
+    let roots_json: String = row.get(2)?;
+    let started_at_millis: i64 = row.get(5)?;
+    let updated_at_millis: i64 = row.get(6)?;
+    let completed_at_millis: Option<i64> = row.get(7)?;
+    Ok(StorageScanGeneration {
+        generation_id: row.get(0)?,
+        root_key: row.get(1)?,
+        roots: serde_json::from_str(&roots_json).unwrap_or_default(),
+        mode: row.get(3)?,
+        status: row.get(4)?,
+        started_at_millis: started_at_millis.max(0) as u64,
+        updated_at_millis: updated_at_millis.max(0) as u64,
+        completed_at_millis: completed_at_millis.map(|value| value.max(0) as u64),
+        partial: row.get::<_, i64>(8)? != 0,
+        published: row.get::<_, i64>(9)? != 0,
+        error: row.get(10)?,
+    })
+}
+
+fn delete_storage_paths_under_roots(
+    transaction: &rusqlite::Transaction<'_>,
+    table: &str,
+    roots: &[PathBuf],
+) -> rusqlite::Result<()> {
+    // The table names are selected only from the fixed call sites above; do
+    // not turn this helper into a general SQL identifier interpolation API.
+    debug_assert!(matches!(
+        table,
+        "storage_file_index" | "storage_size_index" | "storage_path_fingerprint"
+    ));
+    for root in roots {
+        let root = root.display().to_string();
+        let child_prefix = format!("{root}/");
+        transaction.execute(
+            &format!(
+                "DELETE FROM {table}
+                 WHERE path = ?1 OR substr(path, 1, ?2) = ?3"
+            ),
+            params![
+                root,
+                child_prefix.len().min(i64::MAX as usize) as i64,
+                child_prefix,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn record_generation_growth_deltas(
+    transaction: &rusqlite::Transaction<'_>,
+    generation_id: i64,
+    max_scan_millis: u64,
+    limits: StorageIndexBudgetLimits,
+) -> rusqlite::Result<()> {
+    let mut statement = transaction.prepare(
+        "SELECT path, device, inode, file_id, source_root, repo_root, kind,
+                storage_role, safety, cleanup_tier, logical_bytes, physical_bytes,
+                modified_millis, changed_millis, accessed_millis, birth_millis,
+                is_directory, entries, truncated, last_scan_millis
+         FROM storage_scan_generation_stage_file
+         WHERE generation_id = ?1
+         ORDER BY path ASC",
+    )?;
+    let rows = statement
+        .query_map(params![generation_id], indexed_file_row_from_sql)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+
+    let mut insert_delta = transaction.prepare(
+        "INSERT INTO storage_growth_delta (
+            bucket_millis, scan_millis, path, source_root, repo_root, kind, cleanup_tier,
+            previous_physical_bytes, current_physical_bytes, delta_bytes
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )?;
+    let mut upsert_rollup = transaction.prepare(
+        "INSERT INTO storage_growth_rollup (
+            granularity, bucket_millis, source_root, repo_root, kind, cleanup_tier,
+            total_delta_bytes, positive_delta_bytes, negative_delta_bytes,
+            changed_path_count, max_abs_delta_bytes, updated_at_millis
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11)
+         ON CONFLICT (
+            granularity, bucket_millis, source_root, repo_root, kind, cleanup_tier
+         ) DO UPDATE SET
+            total_delta_bytes = total_delta_bytes + excluded.total_delta_bytes,
+            positive_delta_bytes = positive_delta_bytes + excluded.positive_delta_bytes,
+            negative_delta_bytes = negative_delta_bytes + excluded.negative_delta_bytes,
+            changed_path_count = changed_path_count + excluded.changed_path_count,
+            max_abs_delta_bytes = MAX(max_abs_delta_bytes, excluded.max_abs_delta_bytes),
+            updated_at_millis = MAX(updated_at_millis, excluded.updated_at_millis)",
+    )?;
+    for row in rows {
+        let previous_physical: i64 = transaction
+            .query_row(
+                "SELECT physical_bytes FROM storage_file_index WHERE path = ?1",
+                params![&row.path],
+                |value| value.get(0),
+            )
+            .unwrap_or_default();
+        let previous_physical = previous_physical.max(0) as u64;
+        if previous_physical == row.physical_bytes {
+            continue;
+        }
+        let delta = (row.physical_bytes as i128 - previous_physical as i128)
+            .clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+        if delta == 0 {
+            continue;
+        }
+        let bucket_millis =
+            (row.last_scan_millis / STORAGE_GROWTH_BUCKET_MILLIS) * STORAGE_GROWTH_BUCKET_MILLIS;
+        insert_delta.execute(params![
+            bucket_millis.min(i64::MAX as u64) as i64,
+            row.last_scan_millis.min(i64::MAX as u64) as i64,
+            &row.path,
+            &row.source_root,
+            row.repo_root.as_deref(),
+            &row.kind,
+            &row.cleanup_tier,
+            previous_physical.min(i64::MAX as u64) as i64,
+            row.physical_bytes.min(i64::MAX as u64) as i64,
+            delta,
+        ])?;
+        upsert_growth_rollups(&mut upsert_rollup, &row, bucket_millis, delta);
+    }
+    drop(insert_delta);
+    drop(upsert_rollup);
+    if max_scan_millis > 0 {
+        prune_storage_growth_history(transaction, max_scan_millis, limits);
+    }
+    Ok(())
 }
 
 fn materialized_storage_index_generation(connection: &Connection) -> rusqlite::Result<String> {

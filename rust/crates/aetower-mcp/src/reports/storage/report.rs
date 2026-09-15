@@ -400,6 +400,9 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
     // sizes (`StorageScanMode::serve_sizes_from_index`).
     let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
+    let mut scan_generation = storage_index
+        .begin_storage_scan_generation(&requested_roots, options.mode.as_str(), now_millis)
+        .ok();
     let dirty_summary = storage_index.ingest_filesystem_events(
         &load_storage_filesystem_event_records(),
         &requested_roots,
@@ -529,7 +532,35 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
         storage_walk_truncated |= root_scan.walk_truncated;
         storage_sizing_truncated |= root_scan.sizing_truncated;
     }
-    if !storage_walk_truncated && !storage_sizing_truncated && !scanned_roots.is_empty() {
+    let mut repository_inventory_completeness = repository_inventory_completeness(
+        &repository_inventory_scan.coverage,
+        repository_inventory_scan.truncated,
+    );
+    if !not_seen_repository_roots.is_empty() {
+        repository_inventory_completeness.complete = false;
+    }
+    let mut scan_partial = storage_walk_truncated
+        || storage_sizing_truncated
+        || !skipped_roots.is_empty()
+        || repository_inventory_completeness.truncated
+        || !repository_inventory_completeness.complete;
+    let mut scan_generation_error = None;
+    if let Some(generation) = scan_generation.take() {
+        match storage_index.finish_storage_scan_generation(
+            generation.generation_id,
+            !scan_partial,
+            scan_partial,
+            None,
+            now_millis,
+        ) {
+            Ok(finished) => scan_generation = Some(finished),
+            Err(error) => {
+                scan_partial = true;
+                scan_generation_error = Some(error);
+            }
+        }
+    }
+    if !scan_partial && !scanned_roots.is_empty() {
         storage_index.mark_dirty_paths_clean(&scanned_roots, now_millis);
     }
 
@@ -575,13 +606,6 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
 
     if let Some(runtime) = options.runtime.as_ref() {
         let _ = runtime.set_phase(STORAGE_SCAN_PHASE_SCORECARD_OVERLAY, None);
-    }
-    let mut repository_inventory_completeness = repository_inventory_completeness(
-        &repository_inventory_scan.coverage,
-        repository_inventory_scan.truncated,
-    );
-    if !not_seen_repository_roots.is_empty() {
-        repository_inventory_completeness.complete = false;
     }
     let repository_inventory = summarize_repository_inventory(
         repository_roots,
@@ -629,10 +653,6 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
         &items,
         &growth_deltas,
     );
-    let scan_partial = storage_walk_truncated
-        || storage_sizing_truncated
-        || repository_inventory_completeness.truncated
-        || !repository_inventory_completeness.complete;
     let cache_status = storage_live_cache_status(now_millis, options.mode, scan_partial);
     let retained_count = items.len().min(u64::MAX as usize) as u64;
     let diagnostics = StorageScanDiagnostics {
@@ -698,11 +718,17 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
             "Typed domain providers materialized {typed_domain_count} storage domain(s) for cache-first situation and reclaim views."
         ));
     }
+    if let Some(error) = scan_generation_error {
+        caveats.push(format!(
+            "The scan was computed but its persistent publication failed; the previous published generation remains authoritative: {error}."
+        ));
+    }
 
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
         scan_mode: options.mode.result_scan_mode(scan_partial).to_owned(),
+        scan_generation,
         cache_status,
         diagnostics,
         summary,
@@ -733,7 +759,7 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
         growth_deltas,
         growth_insights,
         cold_data,
-        truncated: storage_walk_truncated,
+        truncated: scan_partial,
         caveats,
     }
 }
@@ -920,6 +946,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
     };
     let storage_index = StorageSizeIndex::open();
     metrics.storage_index_status = storage_index.status.clone();
+    let scan_generation = storage_index.latest_published_storage_scan_generation(&requested_roots);
     let dirty_summary = storage_index.dirty_path_summary(&requested_roots, 5);
     let dirty_paths = storage_index.load_dirty_path_strings(&requested_roots, 512);
     let volume_states = summarize_volume_states(&requested_roots);
@@ -1057,6 +1084,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
         scan_mode: StorageScanMode::InstantCached.as_str().to_owned(),
+        scan_generation,
         cache_status,
         diagnostics,
         summary,
