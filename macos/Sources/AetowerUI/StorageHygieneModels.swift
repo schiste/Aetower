@@ -71,10 +71,38 @@ struct StorageScanJobResponseModel: Decodable, Sendable {
     }
 }
 
+struct StorageFileIdentityModel: Decodable, Equatable, Sendable {
+    let device: UInt64
+    let inode: UInt64
+    let sizeBytes: UInt64
+    let isDirectory: Bool
+    let modifiedMillis: UInt64?
+    let changedMillis: UInt64?
+}
+
+struct StorageScanGenerationModel: Decodable, Sendable {
+    let generationId: Int64
+    let rootKey: String
+    let roots: [String]
+    let mode: String
+    let status: String
+    let startedAtMillis: UInt64
+    let updatedAtMillis: UInt64
+    let completedAtMillis: UInt64?
+    let partial: Bool
+    let published: Bool
+    let error: String?
+
+    var isUsable: Bool {
+        published && !partial && status == "complete"
+    }
+}
+
 struct StorageHygieneReportModel: Decodable, Sendable {
     let capturedAtMillis: UInt64
     let scanDurationMillis: UInt64
     let scanMode: String
+    let scanGeneration: StorageScanGenerationModel?
     let cacheStatus: StorageCacheStatusModel
     var diagnostics: StorageScanDiagnosticsModel
     let summary: StorageHygieneSummaryModel
@@ -112,6 +140,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         case capturedAtMillis
         case scanDurationMillis
         case scanMode
+        case scanGeneration
         case cacheStatus
         case diagnostics
         case summary
@@ -151,6 +180,7 @@ struct StorageHygieneReportModel: Decodable, Sendable {
         capturedAtMillis = try container.decode(UInt64.self, forKey: .capturedAtMillis)
         scanDurationMillis = try container.decode(UInt64.self, forKey: .scanDurationMillis)
         scanMode = try container.decodeIfPresent(String.self, forKey: .scanMode) ?? "fast_changed_only"
+        scanGeneration = try container.decodeIfPresent(StorageScanGenerationModel.self, forKey: .scanGeneration)
         cacheStatus =
             try container.decodeIfPresent(StorageCacheStatusModel.self, forKey: .cacheStatus) ?? .unknown
         diagnostics =
@@ -221,6 +251,8 @@ struct StorageHygieneReportModel: Decodable, Sendable {
 
     var isPartialResult: Bool {
         cacheStatus.partial
+            || cacheStatus.stale
+            || scanGeneration.map { !$0.isUsable } ?? true
             || truncated
             || repositoryInventoryTruncated
             || !repositoryInventoryComplete
@@ -996,6 +1028,8 @@ struct StorageCleanupRecipeModel: Decodable, Identifiable, Sendable {
     let prerequisites: [String]
     let destructive: Bool
     let requiresReview: Bool
+    let identity: StorageFileIdentityModel?
+    let scanGenerationId: Int64?
 }
 
 struct StorageCleanupBundleModel: Decodable, Identifiable, Sendable {
@@ -1016,6 +1050,8 @@ struct StorageCleanupBundleModel: Decodable, Identifiable, Sendable {
 
 struct StorageCleanupBundleItemModel: Decodable, Identifiable, Sendable {
     let path: String
+    let identity: StorageFileIdentityModel?
+    let scanGenerationId: Int64?
     let displayName: String
     let kind: String
     let cleanupTier: String
@@ -1036,6 +1072,8 @@ struct StorageCleanupBundleItemModel: Decodable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case path
+        case identity
+        case scanGenerationId
         case displayName
         case kind
         case cleanupTier
@@ -1056,6 +1094,8 @@ struct StorageCleanupBundleItemModel: Decodable, Identifiable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         path = try container.decode(String.self, forKey: .path)
+        identity = try container.decodeIfPresent(StorageFileIdentityModel.self, forKey: .identity)
+        scanGenerationId = try container.decodeIfPresent(Int64.self, forKey: .scanGenerationId)
         displayName = try container.decode(String.self, forKey: .displayName)
         kind = try container.decode(String.self, forKey: .kind)
         cleanupTier = try container.decode(String.self, forKey: .cleanupTier)
@@ -1094,6 +1134,8 @@ struct StorageCleanupLaneModel: Decodable, Identifiable, Sendable {
 
 struct StorageCleanupLaneItemModel: Decodable, Identifiable, Sendable {
     let path: String
+    let identity: StorageFileIdentityModel?
+    let scanGenerationId: Int64?
     let displayName: String
     let kind: String
     let cleanupTier: String
@@ -1404,6 +1446,8 @@ enum StorageDuplicateConfidenceBandModel: String, Decodable, Sendable {
 
 struct StorageDuplicateItemModel: Decodable, Identifiable, Sendable {
     let path: String
+    let identity: StorageFileIdentityModel?
+    let scanGenerationId: Int64?
     let displayName: String
     let sizeBytes: UInt64
     let modifiedMillis: UInt64?
@@ -1805,6 +1849,8 @@ struct StorageRepoFootprintModel: Decodable, Identifiable, Sendable {
 
 struct StorageRepoArtifactFolderModel: Decodable, Identifiable, Sendable {
     let path: String
+    let identity: StorageFileIdentityModel?
+    let scanGenerationId: Int64?
     let displayName: String
     let kind: String
     let cleanupTier: String
@@ -1821,6 +1867,8 @@ struct StorageRepoArtifactFolderModel: Decodable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case path
+        case identity
+        case scanGenerationId
         case displayName
         case kind
         case cleanupTier
@@ -1837,6 +1885,8 @@ struct StorageRepoArtifactFolderModel: Decodable, Identifiable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         path = try container.decode(String.self, forKey: .path)
+        identity = try container.decodeIfPresent(StorageFileIdentityModel.self, forKey: .identity)
+        scanGenerationId = try container.decodeIfPresent(Int64.self, forKey: .scanGenerationId)
         displayName = try container.decode(String.self, forKey: .displayName)
         kind = try container.decode(String.self, forKey: .kind)
         cleanupTier = try container.decode(String.self, forKey: .cleanupTier)
@@ -1868,6 +1918,8 @@ struct StorageRepoArtifactMixModel: Decodable, Identifiable, Sendable {
 struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
     let id: String
     let path: String
+    let identity: StorageFileIdentityModel?
+    let scanGenerationId: Int64?
     let displayName: String
     let kind: String
     let storageRole: String
@@ -1914,6 +1966,8 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id
         case path
+        case identity
+        case scanGenerationId
         case displayName
         case kind
         case storageRole
@@ -1960,6 +2014,8 @@ struct StorageHygieneItemModel: Decodable, Identifiable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         path = try container.decode(String.self, forKey: .path)
+        identity = try container.decodeIfPresent(StorageFileIdentityModel.self, forKey: .identity)
+        scanGenerationId = try container.decodeIfPresent(Int64.self, forKey: .scanGenerationId)
         displayName = try container.decode(String.self, forKey: .displayName)
         kind = try container.decode(String.self, forKey: .kind)
         safety = try container.decode(String.self, forKey: .safety)

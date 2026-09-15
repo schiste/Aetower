@@ -3,6 +3,7 @@ import Foundation
 struct StorageSituationModel: Decodable, Sendable {
     let capturedAtMillis: UInt64
     let snapshotUpdatedAtMillis: UInt64?
+    let scanGeneration: StorageScanGenerationModel?
     let cacheStatus: StorageCacheStatusModel
     let storageIndexStatus: String
     let roots: [String]
@@ -123,6 +124,8 @@ struct StorageOwnershipSubBucketModel: Decodable, Identifiable, Sendable {
 struct StorageRepositoryArtifactModel: Decodable, Identifiable, Sendable {
     let id: String
     let path: String
+    let identity: StorageFileIdentityModel?
+    let scanGenerationId: Int64?
     let relativePath: String
     let repositoryRoot: String
     let repositoryFamilyId: String

@@ -19,7 +19,8 @@ final class TrashServiceTests: XCTestCase {
 
     func testTrashBlocksPathWithActiveWriterHolder() throws {
         let url = try makeTemporaryTrashFixture(name: "active-holder")
-        let outcome = TrashService.trash(url.path) { _ in
+        let identity = try XCTUnwrap(TrashService.identity(for: url.path))
+        let outcome = TrashService.trash(url.path, expectedIdentity: identity) { _ in
             .checked([
                 TrashService.ActiveWriterHolder(
                     pid: 42,
@@ -38,7 +39,8 @@ final class TrashServiceTests: XCTestCase {
 
     func testTrashFailsClosedWhenActiveWriterProbeIsUnavailable() throws {
         let url = try makeTemporaryTrashFixture(name: "probe-unavailable")
-        let outcome = TrashService.trash(url.path) { _ in
+        let identity = try XCTUnwrap(TrashService.identity(for: url.path))
+        let outcome = TrashService.trash(url.path, expectedIdentity: identity) { _ in
             .unavailable("lsof timed out")
         }
 
@@ -50,7 +52,8 @@ final class TrashServiceTests: XCTestCase {
 
     func testTrashAllowsPathWithoutActiveWriters() throws {
         let url = try makeTemporaryTrashFixture(name: "no-holder")
-        let outcome = TrashService.trash(url.path) { _ in
+        let identity = try XCTUnwrap(TrashService.identity(for: url.path))
+        let outcome = TrashService.trash(url.path, expectedIdentity: identity) { _ in
             .checked([])
         }
 
@@ -65,8 +68,12 @@ final class TrashServiceTests: XCTestCase {
         let requested = try makeTemporaryTrashFixture(name: "permanent-requested")
         let unrelated = try makeTemporaryTrashFixture(name: "permanent-unrelated")
         defer { try? FileManager.default.removeItem(at: unrelated) }
+        let identity = try XCTUnwrap(TrashService.identity(for: requested.path))
 
-        let outcome = TrashService.permanentlyDelete(paths: [requested.path]) { _ in
+        let outcome = TrashService.permanentlyDelete(
+            paths: [requested.path],
+            expectedIdentities: [requested.path: identity]
+        ) { _ in
             .checked([])
         }
 

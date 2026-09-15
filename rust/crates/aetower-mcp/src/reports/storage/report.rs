@@ -2467,6 +2467,8 @@ fn duplicate_group_from_items(
         .take(8)
         .map(|item| StorageDuplicateItem {
             path: item.path.clone(),
+            identity: item.identity.clone(),
+            scan_generation_id: item.scan_generation_id,
             display_name: item.display_name.clone(),
             size_bytes: item.size_bytes,
             modified_millis: item.modified_millis,
@@ -2630,6 +2632,8 @@ fn review_similarity_group_from_items(
         .take(8)
         .map(|item| StorageDuplicateItem {
             path: item.path.clone(),
+            identity: item.identity.clone(),
+            scan_generation_id: item.scan_generation_id,
             display_name: item.display_name.clone(),
             size_bytes: item.size_bytes,
             modified_millis: item.modified_millis,

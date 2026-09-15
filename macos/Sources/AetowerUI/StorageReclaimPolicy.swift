@@ -339,6 +339,8 @@ struct StorageReclaimPrimaryAction: Identifiable {
 
 struct StorageBulkCleanupTarget: Identifiable, Sendable {
     let path: String
+    let identity: StorageFileIdentityModel?
+    let scanGenerationId: Int64?
     let displayName: String
     let sizeBytes: UInt64
     let cleanupTier: String
@@ -433,6 +435,8 @@ enum StorageReclaimPolicy {
         item.cleanupAllowed
             && item.defaultCleanupAction == "trash"
             && item.cleanupBlockers.isEmpty
+            && item.identity != nil
+            && item.scanGenerationId != nil
             && item.cleanupTier != "risky"
             && !item.sizeTruncated
             && !item.cloudPlaceholder
@@ -486,14 +490,16 @@ enum StorageReclaimPolicy {
     ) -> StorageBulkCleanupTarget {
         StorageBulkCleanupTarget(
             path: item.path,
+            identity: item.identity,
+            scanGenerationId: item.scanGenerationId,
             displayName: item.displayName,
             sizeBytes: item.sizeBytes,
             cleanupTier: item.cleanupTier,
             safety: itemIsSafeDirectTrash(item) ? "safe" : "review",
             cleanupBlockers: item.cleanupBlockers,
-            cleanupConsequence: item.reason.isEmpty
-                ? "Permanently deletes this generated cleanup target."
-                : item.reason
+            cleanupConsequence: item.cleanupConsequence.isEmpty
+                ? "Moves this generated cleanup target to Finder Trash; emptying Trash is separate."
+                : item.cleanupConsequence
         )
     }
 
@@ -503,6 +509,8 @@ enum StorageReclaimPolicy {
         let verifiedSafe = artifact.cleanupAllowed
             && artifact.defaultCleanupAction == "trash"
             && artifact.cleanupBlockers.isEmpty
+            && artifact.identity != nil
+            && artifact.scanGenerationId != nil
             && artifact.gitIgnored
             && !artifact.gitTracked
             && (artifact.cleanupTier == "safe" || artifact.cleanupTier == "rebuildable")
@@ -511,6 +519,8 @@ enum StorageReclaimPolicy {
         if verifiedSafe {
             return StorageBulkCleanupTarget(
                 path: artifact.path,
+                identity: artifact.identity,
+                scanGenerationId: artifact.scanGenerationId,
                 displayName: artifact.label,
                 sizeBytes: artifact.physicalBytes,
                 cleanupTier: artifact.cleanupTier,
@@ -523,6 +533,8 @@ enum StorageReclaimPolicy {
         guard repositoryArtifactIsAggressiveReviewCandidate(artifact) else { return nil }
         return StorageBulkCleanupTarget(
             path: artifact.path,
+            identity: artifact.identity,
+            scanGenerationId: artifact.scanGenerationId,
             displayName: artifact.label,
             sizeBytes: artifact.physicalBytes,
             cleanupTier: artifact.cleanupTier,
@@ -549,6 +561,8 @@ enum StorageReclaimPolicy {
         ]
         return artifact.gitIgnored
             && !artifact.gitTracked
+            && artifact.identity != nil
+            && artifact.scanGenerationId != nil
             && (artifact.confidence == "confirmed" || artifact.confidence == "likely")
             && (artifact.cleanupTier == "safe"
                 || artifact.cleanupTier == "rebuildable"
@@ -563,8 +577,8 @@ enum StorageReclaimPolicy {
         _ artifact: StorageRepositoryArtifactModel
     ) -> String {
         artifact.rebuildInstruction.isEmpty
-            ? "Permanently deletes this generated repository artifact."
-            : "Permanently deletes this generated artifact. Rebuild with: \(artifact.rebuildInstruction)"
+            ? "Moves this generated repository artifact to Finder Trash; emptying Trash is separate."
+            : "Moves this generated artifact to Finder Trash; emptying Trash is separate. Rebuild with: \(artifact.rebuildInstruction)"
     }
 
     private static func sumItemBytes(_ items: [StorageHygieneItemModel]) -> UInt64 {

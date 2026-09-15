@@ -384,6 +384,15 @@ final class StorageReclaimPolicyTests: XCTestCase {
         var payload: [String: Any] = [
             "id": path,
             "path": path,
+            "identity": [
+                "device": 1,
+                "inode": 1,
+                "sizeBytes": sizeGB * gigabyte,
+                "isDirectory": true,
+                "modifiedMillis": 1_600_000_000_000 as UInt64,
+                "changedMillis": 1_600_000_000_000 as UInt64,
+            ],
+            "scanGenerationId": 1,
             "displayName": URL(fileURLWithPath: path).lastPathComponent,
             "kind": kind,
             "safety": safety,
@@ -423,6 +432,15 @@ final class StorageReclaimPolicyTests: XCTestCase {
         let payload: [String: Any] = [
             "id": path,
             "path": path,
+            "identity": [
+                "device": 1,
+                "inode": 1,
+                "sizeBytes": sizeGB * gigabyte,
+                "isDirectory": true,
+                "modifiedMillis": 1_600_000_000_000 as UInt64,
+                "changedMillis": 1_600_000_000_000 as UInt64,
+            ],
+            "scanGenerationId": 1,
             "relativePath": URL(fileURLWithPath: path).lastPathComponent,
             "repositoryRoot": "/repo",
             "repositoryFamilyId": "/repo",

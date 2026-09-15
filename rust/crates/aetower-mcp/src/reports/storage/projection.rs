@@ -379,7 +379,8 @@ fn build_storage_situation_response(
     let volume_states = summarize_volume_states(roots);
     let repository_rollups = storage_index.load_repository_workspace_rollups(roots);
     let ownership_generation = storage_index.load_active_ownership_generation();
-    let ownership_breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
+    let scan_generation = storage_index.latest_published_storage_scan_generation(roots);
+    let mut ownership_breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
         summaries: &summaries,
         repository_rollups: &repository_rollups,
         ownership_generation: ownership_generation.as_ref(),
@@ -389,10 +390,11 @@ fn build_storage_situation_response(
         system_volume_bytes: summarize_system_volume_usage_bytes(),
         measured_at_millis: now_millis,
     });
+    stamp_storage_scan_generation_on_ownership(&mut ownership_breakdown, scan_generation.as_ref());
     StorageSituationResponse {
         captured_at_millis: now_millis,
         snapshot_updated_at_millis: Some(now_millis),
-        scan_generation: storage_index.latest_published_storage_scan_generation(roots),
+        scan_generation,
         cache_status,
         storage_index_status: storage_index.status.clone(),
         roots: roots
@@ -419,6 +421,16 @@ fn storage_situation_backlog_drain(
 ) -> StorageSituationBacklogDrain {
     let measurement = storage_index.latest_measurement_job_debug(roots);
     storage_situation_backlog_drain_from_dirty_summary(dirty_summary, now_millis, Some(measurement))
+}
+
+fn stamp_storage_scan_generation_on_ownership(
+    ownership: &mut StorageOwnershipBreakdown,
+    scan_generation: Option<&StorageScanGeneration>,
+) {
+    let generation_id = scan_generation.map(|generation| generation.generation_id);
+    for artifact in &mut ownership.repository_artifacts {
+        artifact.scan_generation_id = generation_id;
+    }
 }
 
 fn storage_situation_backlog_drain_from_dirty_summary(
@@ -588,6 +600,7 @@ fn overlay_storage_situation_snapshot(
     snapshot.volume_states = summarize_volume_states(roots);
     let repository_rollups = storage_index.load_repository_workspace_rollups(roots);
     let ownership_generation = storage_index.load_active_ownership_generation();
+    let scan_generation = storage_index.latest_published_storage_scan_generation(roots);
     snapshot.ownership_breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
         summaries: &summaries,
         repository_rollups: &repository_rollups,
@@ -598,6 +611,11 @@ fn overlay_storage_situation_snapshot(
         system_volume_bytes: summarize_system_volume_usage_bytes(),
         measured_at_millis: storage_now_millis(),
     });
+    stamp_storage_scan_generation_on_ownership(
+        &mut snapshot.ownership_breakdown,
+        scan_generation.as_ref(),
+    );
+    snapshot.scan_generation = scan_generation;
     snapshot.snapshot_updated_at_millis = Some(storage_now_millis());
     snapshot.backlog_drain =
         storage_situation_backlog_drain(storage_index, roots, &dirty_summary, storage_now_millis());
@@ -696,7 +714,7 @@ fn build_storage_situation_response_from_report(
         review_required_bytes: report.summary.review_required_bytes,
         dangerous_user_data_bytes: report.summary.dangerous_user_data_bytes,
     };
-    let ownership_breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
+    let mut ownership_breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
         summaries: &summaries,
         repository_rollups: &repository_rollups,
         ownership_generation: ownership_generation.as_ref(),
@@ -706,6 +724,10 @@ fn build_storage_situation_response_from_report(
         system_volume_bytes: summarize_system_volume_usage_bytes(),
         measured_at_millis: report.captured_at_millis,
     });
+    stamp_storage_scan_generation_on_ownership(
+        &mut ownership_breakdown,
+        report.scan_generation.as_ref(),
+    );
     StorageSituationResponse {
         captured_at_millis: report.captured_at_millis,
         snapshot_updated_at_millis: Some(report.captured_at_millis),

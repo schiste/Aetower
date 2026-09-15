@@ -1171,6 +1171,10 @@ pub(super) enum StorageDuplicateConfidenceBand {
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct StorageDuplicateItem {
     pub(super) path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) identity: Option<StorageFileIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation_id: Option<i64>,
     pub(super) display_name: String,
     pub(super) size_bytes: u64,
     pub(super) modified_millis: Option<u64>,

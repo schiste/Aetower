@@ -60,6 +60,8 @@ private struct StorageHomeAction: Identifiable {
 private struct StorageReclaimFolderRow: Identifiable {
     let id: String
     let path: String
+    let identity: StorageFileIdentityModel?
+    let scanGenerationId: Int64?
     let displayName: String
     let kind: String
     let cleanupTier: String
@@ -100,6 +102,7 @@ private struct StorageCleanupExecutionRequest: Identifiable, Sendable {
     let title: String
     let subtitle: String
     let targetPaths: [String]
+    let targetIdentities: [String: StorageFileIdentityModel]
     let estimatedBytes: UInt64
     let requiresReview: Bool
     let prerequisites: [String]
@@ -113,6 +116,8 @@ private struct StorageCleanupBasketItem: Identifiable, Sendable {
     let id: String
     let title: String
     let path: String
+    let identity: StorageFileIdentityModel?
+    let scanGenerationId: Int64?
     let source: String
     let cleanupTier: String
     let safety: String
@@ -143,13 +148,6 @@ private struct StorageCleanupExecutionResult: Sendable {
     var partiallySucceeded: Bool {
         !movedPaths.isEmpty && !failedPaths.isEmpty
     }
-}
-
-private struct StoragePermanentCleanupResult: Sendable {
-    let reclaimedPaths: [String]
-    let pendingTrashURLs: [String: URL]
-    let alreadyMissingPaths: [String]
-    let failedPaths: [String: String]
 }
 
 private struct StorageCleanupAvailability: Equatable {
@@ -1978,6 +1976,8 @@ public struct StorageView: View {
         StorageReclaimFolderRow(
             id: "repo-folder|\(folder.path)",
             path: folder.path,
+            identity: folder.identity,
+            scanGenerationId: folder.scanGenerationId,
             displayName: folder.displayName,
             kind: folder.kind,
             cleanupTier: folder.cleanupTier,
@@ -2006,6 +2006,8 @@ public struct StorageView: View {
         return StorageReclaimFolderRow(
             id: "aggregate-folder|\(path)",
             path: path,
+            identity: nil,
+            scanGenerationId: nil,
             displayName: URL(fileURLWithPath: path).lastPathComponent.isEmpty ? path : URL(fileURLWithPath: path).lastPathComponent,
             kind: "folder",
             cleanupTier: cleanupTier,
@@ -2100,6 +2102,8 @@ public struct StorageView: View {
         folder.cleanupAllowed
             && folder.defaultCleanupAction == "trash"
             && folder.cleanupBlockers.isEmpty
+            && folder.identity != nil
+            && folder.scanGenerationId != nil
             && folder.cleanupTier != "risky"
             && !folder.sizeTruncated
             && !folder.cloudPlaceholder
@@ -3936,6 +3940,8 @@ public struct StorageView: View {
                 id: "exact-duplicate|\(group.id)|\(item.path)",
                 title: item.displayName,
                 path: item.path,
+                identity: item.identity,
+                scanGenerationId: item.scanGenerationId,
                 source: "exact duplicate",
                 cleanupTier: normalizedDuplicateCleanupTier(item.cleanupTier),
                 safety: normalizedDuplicateSafety(item.safety),
@@ -5762,6 +5768,8 @@ public struct StorageView: View {
         guard artifact.cleanupAllowed,
               artifact.defaultCleanupAction == "trash",
               artifact.cleanupBlockers.isEmpty,
+              artifact.identity != nil,
+              artifact.scanGenerationId != nil,
               !cleanupBasket.contains(where: { $0.path == artifact.path })
         else { return }
         cleanupBasket.append(
@@ -5769,6 +5777,8 @@ public struct StorageView: View {
                 id: artifact.id,
                 title: artifact.relativePath,
                 path: artifact.path,
+                identity: artifact.identity,
+                scanGenerationId: artifact.scanGenerationId,
                 source: "Repository artifact inventory",
                 cleanupTier: artifact.cleanupTier,
                 safety: "rebuildable",
@@ -7200,11 +7210,11 @@ public struct StorageView: View {
                     .foregroundStyle(AetowerDesign.Status.warning)
                     .frame(width: AetowerDesign.Size.minTouchTarget)
                 VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
-                    Text("\(formatBytes(plan.totalBytes)) will be permanently deleted")
+                    Text("\(formatBytes(plan.totalBytes)) will move to Finder Trash")
                         .font(AetowerDesign.Typography.metricValue(size: 22, weight: .semibold))
                         .foregroundStyle(AetowerDesign.Ink.primary)
                     Text(
-                        "Review the exact boundary below. Confirming permanently deletes these generated targets and cannot be undone."
+                        "Review the exact boundary below. Confirming moves these generated targets to Finder Trash; emptying Trash is a separate permanent step."
                     )
                     .font(AetowerDesign.Typography.caption)
                     .foregroundStyle(AetowerDesign.Ink.secondary)
@@ -7281,7 +7291,7 @@ public struct StorageView: View {
                 ) {
                     let items = plan.items
                     aggressiveCleanupPreview = nil
-                    cleanStorageTargetsPermanently(
+                    trashStorageTargetsDirectly(
                         items,
                         sourceTitle: "Aggressive clean",
                         scope: .aggressive
@@ -9890,7 +9900,7 @@ public struct StorageView: View {
             Spacer(minLength: AetowerDesign.Spacing.md)
 
             Button {
-                cleanStorageTargetsPermanently(plan.safeItems, sourceTitle: "Safe clean")
+                trashStorageTargetsDirectly(plan.safeItems, sourceTitle: "Safe clean")
             } label: {
                 Label(
                     storageCleanupActionTitle(bytes: plan.safeBytes, scope: .safe),
@@ -9900,7 +9910,7 @@ public struct StorageView: View {
             .buttonStyle(.borderedProminent)
             .tint(AetowerDesign.Status.ready)
             .disabled(plan.safeItems.isEmpty)
-            .help("One click: permanently delete only policy-verified safe and rebuildable data")
+            .help("One click: move only policy-verified safe and rebuildable data to Finder Trash")
             .accessibilityIdentifier("storage.clean.safe")
 
             Button {
@@ -11530,6 +11540,8 @@ public struct StorageView: View {
         item.cleanupAllowed
             && item.defaultCleanupAction == "trash"
             && item.cleanupBlockers.isEmpty
+            && item.identity != nil
+            && item.scanGenerationId != nil
             && item.cleanupTier != "risky"
     }
 
@@ -11537,6 +11549,8 @@ public struct StorageView: View {
         item.cleanupAllowed
             && item.defaultCleanupAction == "trash"
             && item.cleanupBlockers.isEmpty
+            && item.identity != nil
+            && item.scanGenerationId != nil
             && item.cleanupTier != "risky"
             && !item.sizeTruncated
             && storageCleanupPathExists(item.path)
@@ -11767,6 +11781,8 @@ public struct StorageView: View {
                 id: "bundle|\(bundle.id)|\(item.path)",
                 title: item.displayName,
                 path: item.path,
+                identity: item.identity,
+                scanGenerationId: item.scanGenerationId,
                 source: bundle.title,
                 cleanupTier: item.cleanupTier,
                 safety: item.safety,
@@ -11882,47 +11898,25 @@ public struct StorageView: View {
         guard !candidates.isEmpty else { return }
 
         let paths = candidates.map(\.path)
+        let expectedIdentities = Dictionary(uniqueKeysWithValues: candidates.compactMap { target in
+            target.identity.map { (target.path, $0) }
+        })
         for path in paths {
             directTrashInFlightPaths.insert(path)
         }
 
         let activeWriterProbe = state.cleanupActiveWriterProbe()
         Task.detached(priority: .utility) {
-            let result = Self.movePathsToTrash(paths, activeWriterProbe: activeWriterProbe)
+            let result = Self.movePathsToTrash(
+                paths,
+                expectedIdentities: expectedIdentities,
+                activeWriterProbe: activeWriterProbe
+            )
             await MainActor.run {
                 for path in paths {
                     directTrashInFlightPaths.remove(path)
                 }
                 recordDirectTrashResult(
-                    items: candidates,
-                    result: result,
-                    sourceTitle: sourceTitle
-                )
-            }
-        }
-    }
-
-    private func cleanStorageTargetsPermanently(
-        _ targets: [StorageBulkCleanupTarget],
-        sourceTitle: String,
-        scope: StorageBulkCleanupScope = .safe
-    ) {
-        let candidates = directCleanupTargets(targets, scope: scope)
-        guard !candidates.isEmpty else { return }
-
-        let paths = candidates.map(\.path)
-        for path in paths {
-            directTrashInFlightPaths.insert(path)
-        }
-
-        let activeWriterProbe = state.cleanupActiveWriterProbe()
-        Task.detached(priority: .utility) {
-            let result = Self.permanentlyCleanPaths(paths, activeWriterProbe: activeWriterProbe)
-            await MainActor.run {
-                for path in paths {
-                    directTrashInFlightPaths.remove(path)
-                }
-                recordPermanentCleanupResult(
                     items: candidates,
                     result: result,
                     sourceTitle: sourceTitle
@@ -11939,7 +11933,9 @@ public struct StorageView: View {
         return targets.filter { target in
             guard seenPaths.insert(target.path).inserted,
                   !directTrashInFlightPaths.contains(target.path),
-                  target.cleanupBlockers.isEmpty
+                  target.cleanupBlockers.isEmpty,
+                  target.identity != nil,
+                  target.scanGenerationId != nil
             else {
                 return false
             }
@@ -11949,86 +11945,6 @@ public struct StorageView: View {
             case .aggressive:
                 return target.safety == "safe" || target.safety == "review"
             }
-        }
-    }
-
-    private func recordPermanentCleanupResult(
-        items: [StorageBulkCleanupTarget],
-        result: StoragePermanentCleanupResult,
-        sourceTitle: String
-    ) {
-        let metadataByPath = Dictionary(uniqueKeysWithValues: items.map { ($0.path, $0) })
-        let reclaimed = Set(result.reclaimedPaths)
-        let pending = Set(result.pendingTrashURLs.keys)
-        let alreadyMissing = Set(result.alreadyMissingPaths)
-        let resolved = reclaimed.union(pending).union(alreadyMissing)
-
-        cleanupBasket.removeAll { resolved.contains($0.path) }
-        state.markStoragePathsMovedToTrash(Array(resolved), refresh: false)
-        if var availability = cleanupAvailability,
-           availability.signature == storageCleanupSourceSignature
-        {
-            availability.existingPaths.subtract(resolved)
-            cleanupAvailability = availability
-        }
-
-        for (path, trashURL) in result.pendingTrashURLs {
-            guard let metadata = metadataByPath[path] else { continue }
-            trashedItemURLsByOriginalPath[path] = trashURL
-            StorageTrackedTrashStore.upsert(
-                originalPath: path,
-                trashURL: trashURL,
-                bytes: metadata.sizeBytes
-            )
-        }
-        refreshTrackedTrashState()
-
-        for path in metadataByPath.keys.sorted() {
-            let metadata = metadataByPath[path]
-            let pathReclaimed = reclaimed.contains(path)
-            let pathAlreadyMissing = alreadyMissing.contains(path)
-            appendCleanupAudit(
-                action: pathReclaimed
-                    ? "direct-delete"
-                    : pathAlreadyMissing
-                    ? "already-reclaimed"
-                    : pending.contains(path) ? "pending-trash" : "failed-direct-delete",
-                path: path,
-                detail: pathReclaimed
-                    ? "\(sourceTitle) permanently reclaimed this verified target."
-                    : pathAlreadyMissing
-                    ? "Path was already absent; no additional space was reclaimed."
-                    : (result.failedPaths[path] ?? "Not attempted."),
-                bytes: pathReclaimed ? metadata?.sizeBytes ?? 0 : 0,
-                cleanupTier: metadata?.cleanupTier,
-                safety: metadata?.safety,
-                blockers: metadata?.cleanupBlockers ?? [],
-                succeeded: pathReclaimed || pathAlreadyMissing
-            )
-        }
-
-        let reclaimedBytes = reclaimed.reduce(UInt64(0)) { total, path in
-            let (sum, overflow) = total.addingReportingOverflow(metadataByPath[path]?.sizeBytes ?? 0)
-            return overflow ? UInt64.max : sum
-        }
-        let issueCount = result.failedPaths.count
-        presentDirectTrashUndo(
-            StorageDirectTrashUndo(
-                message: reclaimed.isEmpty
-                    ? "\(sourceTitle): no space reclaimed\(issueCount > 0 ? " (\(issueCount) issue\(issueCount == 1 ? "" : "s"))" : "")"
-                    : "\(sourceTitle): reclaimed \(formatBytes(reclaimedBytes)) from \(reclaimed.count) target\(reclaimed.count == 1 ? "" : "s")"
-                    + (pending.isEmpty ? "" : " · \(pending.count) remain in Trash"),
-                originalPath: sourceTitle,
-                trashURL: nil,
-                bytes: reclaimedBytes,
-                succeeded: !reclaimed.isEmpty
-            )
-        )
-
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            state.loadStorageForDisplay()
-            state.ensureStorageOwnership(roots: settings.repositoryRoots, force: true)
         }
     }
 
@@ -12111,6 +12027,8 @@ public struct StorageView: View {
                 id: "folder|\(folder.path)",
                 title: folder.displayName,
                 path: folder.path,
+                identity: folder.identity,
+                scanGenerationId: folder.scanGenerationId,
                 source: folder.source,
                 cleanupTier: folder.cleanupTier,
                 safety: folder.safety,
@@ -12433,6 +12351,8 @@ public struct StorageView: View {
             id: "item|\(item.id)",
             title: item.displayName,
             path: item.path,
+            identity: item.identity,
+            scanGenerationId: item.scanGenerationId,
             source: "artifact",
             cleanupTier: item.cleanupTier,
             safety: item.safety,
@@ -12462,6 +12382,8 @@ public struct StorageView: View {
                 id: "lane|\(lane.id)|\(item.id)",
                 title: item.displayName,
                 path: item.path,
+                identity: item.identity,
+                scanGenerationId: item.scanGenerationId,
                 source: lane.title,
                 cleanupTier: item.cleanupTier,
                 safety: item.safety,
@@ -12493,6 +12415,8 @@ public struct StorageView: View {
             id: "recipe|\(recipe.id)",
             title: recipe.title,
             path: recipe.affectedPath,
+            identity: recipe.identity,
+            scanGenerationId: recipe.scanGenerationId,
             source: recipe.category,
             cleanupTier: recipe.safety,
             safety: recipe.safety,
@@ -12535,6 +12459,32 @@ public struct StorageView: View {
             )
             return false
         }
+        guard item.identity != nil else {
+            appendCleanupAudit(
+                action: "policy-blocked",
+                path: item.path,
+                detail: "Missing filesystem identity evidence; refresh before staging.",
+                bytes: item.estimatedBytes,
+                cleanupTier: item.cleanupTier,
+                safety: item.safety,
+                blockers: ["Missing filesystem identity evidence."],
+                succeeded: false
+            )
+            return false
+        }
+        guard item.scanGenerationId != nil else {
+            appendCleanupAudit(
+                action: "policy-blocked",
+                path: item.path,
+                detail: "Missing complete scan-generation evidence; refresh before staging.",
+                bytes: item.estimatedBytes,
+                cleanupTier: item.cleanupTier,
+                safety: item.safety,
+                blockers: ["Missing complete scan-generation evidence."],
+                succeeded: false
+            )
+            return false
+        }
         guard item.blockers.isEmpty else {
             appendCleanupAudit(
                 action: "policy-blocked",
@@ -12567,10 +12517,17 @@ public struct StorageView: View {
 
     private func basketTrashExecutionRequest() -> StorageCleanupExecutionRequest {
         let prerequisites = uniqueStrings(cleanupBasket.flatMap(\.prerequisites))
+        var targetIdentities: [String: StorageFileIdentityModel] = [:]
+        for item in cleanupBasket {
+            if let identity = item.identity {
+                targetIdentities[item.path] = identity
+            }
+        }
         return StorageCleanupExecutionRequest(
             title: "Move cleanup basket to Trash",
             subtitle: "Move staged cleanup targets to Finder Trash. Nothing is permanently deleted by this action.",
             targetPaths: uniquePaths(cleanupBasket.map(\.path)),
+            targetIdentities: targetIdentities,
             estimatedBytes: cleanupBasketTotalBytes(),
             requiresReview: cleanupBasket.contains(where: \.requiresReview),
             prerequisites: prerequisites
@@ -12690,6 +12647,7 @@ public struct StorageView: View {
             return
         }
         let path = item.path
+        let identity = item.identity
         guard !directTrashInFlightPaths.contains(path) else { return }
         directTrashInFlightPaths.insert(path)
         let title = item.displayName
@@ -12698,7 +12656,11 @@ public struct StorageView: View {
         let safety = item.safety
         let activeWriterProbe = state.cleanupActiveWriterProbe()
         Task.detached(priority: .utility) {
-            let outcome = Self.trashSingleItem(path, activeWriterProbe: activeWriterProbe)
+            let outcome = Self.trashSingleItem(
+                path,
+                expectedIdentity: identity,
+                activeWriterProbe: activeWriterProbe
+            )
             await MainActor.run {
                 directTrashInFlightPaths.remove(path)
                 appendCleanupAudit(
@@ -12741,9 +12703,14 @@ public struct StorageView: View {
 
     private nonisolated static func trashSingleItem(
         _ path: String,
+        expectedIdentity: StorageFileIdentityModel?,
         activeWriterProbe: TrashService.ActiveWriterProbe?
     ) -> (trashURL: URL?, message: String) {
-        let outcome = TrashService.trash(path, activeWriterProbe: activeWriterProbe)
+        let outcome = TrashService.trash(
+            path,
+            expectedIdentity: expectedIdentity,
+            activeWriterProbe: activeWriterProbe
+        )
         return (outcome.trashURL, outcome.message)
     }
 
@@ -12773,10 +12740,7 @@ public struct StorageView: View {
             var message: String
             var succeeded: Bool
             do {
-                try FileManager.default.moveItem(
-                    at: trashURL,
-                    to: URL(fileURLWithPath: destination)
-                )
+                try TrashService.restore(from: trashURL, to: destination)
                 message = "Restored from Trash"
                 succeeded = true
             } catch {
@@ -12955,9 +12919,14 @@ public struct StorageView: View {
         cleanupExecutionIsRunning = true
         cleanupExecutionResult = nil
         let targetPaths = request.targetPaths
+        let targetIdentities = request.targetIdentities
         let activeWriterProbe = state.cleanupActiveWriterProbe()
         Task.detached(priority: .utility) {
-            let result = Self.movePathsToTrash(targetPaths, activeWriterProbe: activeWriterProbe)
+            let result = Self.movePathsToTrash(
+                targetPaths,
+                expectedIdentities: targetIdentities,
+                activeWriterProbe: activeWriterProbe
+            )
             await MainActor.run {
                 cleanupExecutionResult = result
                 cleanupExecutionIsRunning = false
@@ -13060,10 +13029,15 @@ public struct StorageView: View {
 
     private nonisolated static func movePathsToTrash(
         _ paths: [String],
+        expectedIdentities: [String: StorageFileIdentityModel],
         activeWriterProbe: TrashService.ActiveWriterProbe?
     ) -> StorageCleanupExecutionResult {
         let started = Date()
-        let outcome = TrashService.trash(paths: paths, activeWriterProbe: activeWriterProbe)
+        let outcome = TrashService.trash(
+            paths: paths,
+            expectedIdentities: expectedIdentities,
+            activeWriterProbe: activeWriterProbe
+        )
         let lines = outcome.movedPaths.map { "Moved: \($0) -> Trash" }
             + outcome.failedPaths.map { "Failed: \($0.key) - \($0.value)" }
         let movedTrashURLs = Dictionary(
@@ -13075,26 +13049,6 @@ public struct StorageView: View {
             durationSeconds: Date().timeIntervalSince(started),
             movedPaths: outcome.movedPaths,
             movedTrashURLs: movedTrashURLs,
-            failedPaths: outcome.failedPaths
-        )
-    }
-
-    private nonisolated static func permanentlyCleanPaths(
-        _ paths: [String],
-        activeWriterProbe: TrashService.ActiveWriterProbe?
-    ) -> StoragePermanentCleanupResult {
-        let outcome = TrashService.permanentlyDelete(
-            paths: paths,
-            activeWriterProbe: activeWriterProbe
-        )
-        return StoragePermanentCleanupResult(
-            reclaimedPaths: outcome.reclaimedItems.map(\.originalPath),
-            pendingTrashURLs: Dictionary(
-                uniqueKeysWithValues: outcome.pendingTrashItems.map {
-                    ($0.originalPath, $0.trashURL)
-                }
-            ),
-            alreadyMissingPaths: outcome.alreadyMissingPaths,
             failedPaths: outcome.failedPaths
         )
     }

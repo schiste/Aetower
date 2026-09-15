@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// Single source of truth for moving paths to the Finder Trash and emptying it.
 /// Extracted so every surface that reclaims disk (Storage hygiene, Repository
@@ -9,6 +10,15 @@ import Foundation
 /// reclaim defensible; emptying the Trash is the only permanent step and is
 /// always gated by an explicit confirmation at the call site.
 enum TrashService {
+    private struct RuntimeFileIdentity: Equatable {
+        let device: UInt64
+        let inode: UInt64
+        let sizeBytes: UInt64
+        let isDirectory: Bool
+        let modifiedMillis: UInt64?
+        let changedMillis: UInt64?
+    }
+
     struct ActiveWriterHolder: Sendable {
         let pid: UInt32
         let command: String
@@ -59,18 +69,65 @@ enum TrashService {
         let failedPaths: [String: String]
     }
 
-    static func trash(_ path: String, activeWriterProbe: ActiveWriterProbe? = nil) -> SingleOutcome {
+    /// Capture the same lstat-backed identity used by cleanup revalidation.
+    /// Symlinks are intentionally excluded because their target can change
+    /// without changing the path presented to the user.
+    static func identity(for path: String) -> StorageFileIdentityModel? {
+        guard let identity = runtimeIdentity(for: path) else { return nil }
+        return StorageFileIdentityModel(
+            device: identity.device,
+            inode: identity.inode,
+            sizeBytes: identity.sizeBytes,
+            isDirectory: identity.isDirectory,
+            modifiedMillis: identity.modifiedMillis,
+            changedMillis: identity.changedMillis
+        )
+    }
+
+    static func trash(
+        _ path: String,
+        expectedIdentity: StorageFileIdentityModel? = nil,
+        activeWriterProbe: ActiveWriterProbe? = nil
+    ) -> SingleOutcome {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return SingleOutcome(trashURL: nil, message: "Empty path") }
-        let url = URL(fileURLWithPath: trimmed)
+        let url = URL(fileURLWithPath: trimmed).standardizedFileURL
         if let blocker = privilegedCleanupBlocker(for: url.path) {
             return SingleOutcome(trashURL: nil, message: blocker)
         }
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return SingleOutcome(trashURL: nil, message: "Path no longer exists")
+        guard let currentIdentity = runtimeIdentity(for: url.path) else {
+            return SingleOutcome(
+                trashURL: nil,
+                message: FileManager.default.fileExists(atPath: url.path)
+                    ? "Symlink or unsupported filesystem object cannot be cleaned"
+                : "Path no longer exists"
+            )
+        }
+        guard let expectedIdentity else {
+            return SingleOutcome(
+                trashURL: nil,
+                message: "Missing filesystem identity evidence; refresh before cleanup"
+            )
+        }
+        guard identityMatches(expectedIdentity, current: currentIdentity) else {
+            return SingleOutcome(
+                trashURL: nil,
+                message: "Path identity changed since the scan; refresh before cleanup"
+            )
         }
         if let blocker = activeWriterBlocker(for: trimmed, activeWriterProbe: activeWriterProbe) {
             return SingleOutcome(trashURL: nil, message: blocker)
+        }
+        // Revalidate after the writer probe and immediately before the
+        // FileManager operation. This closes the common stale-row/replaced
+        // path race without pretending that filesystem mutation is atomic.
+        guard let latestIdentity = runtimeIdentity(for: url.path),
+            identityMatches(expectedIdentity, current: latestIdentity)
+        else {
+            return SingleOutcome(
+                trashURL: nil,
+                message: "Path identity changed while preparing cleanup; refresh before cleanup"
+            )
         }
         do {
             var resultingURL: NSURL?
@@ -81,13 +138,23 @@ enum TrashService {
         }
     }
 
-    static func trash(paths: [String], activeWriterProbe: ActiveWriterProbe? = nil) -> BatchOutcome {
+    static func trash(
+        paths: [String],
+        expectedIdentities: [String: StorageFileIdentityModel] = [:],
+        activeWriterProbe: ActiveWriterProbe? = nil
+    ) -> BatchOutcome {
         var movedItems: [MovedItem] = []
         var failedPaths: [String: String] = [:]
         for path in paths {
             let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            let outcome = trash(trimmed, activeWriterProbe: activeWriterProbe)
+            let expectedIdentity = expectedIdentities[trimmed]
+                ?? expectedIdentities[URL(fileURLWithPath: trimmed).standardizedFileURL.path]
+            let outcome = trash(
+                trimmed,
+                expectedIdentity: expectedIdentity,
+                activeWriterProbe: activeWriterProbe
+            )
             if let trashURL = outcome.trashURL {
                 movedItems.append(MovedItem(originalPath: trimmed, trashURL: trashURL))
             } else {
@@ -103,9 +170,14 @@ enum TrashService {
     /// Trash and are returned to the caller for tracking and recovery.
     static func permanentlyDelete(
         paths: [String],
+        expectedIdentities: [String: StorageFileIdentityModel] = [:],
         activeWriterProbe: ActiveWriterProbe? = nil
     ) -> PermanentBatchOutcome {
-        let trashed = trash(paths: paths, activeWriterProbe: activeWriterProbe)
+        let trashed = trash(
+            paths: paths,
+            expectedIdentities: expectedIdentities,
+            activeWriterProbe: activeWriterProbe
+        )
         var reclaimedItems: [MovedItem] = []
         var pendingTrashItems: [MovedItem] = []
         let alreadyMissingPaths = trashed.failedPaths.compactMap { path, reason in
@@ -168,7 +240,56 @@ enum TrashService {
 
     /// Restore a previously-trashed item to its original path.
     static func restore(from trashURL: URL, to originalPath: String) throws {
-        try FileManager.default.moveItem(at: trashURL, to: URL(fileURLWithPath: originalPath))
+        let destination = URL(fileURLWithPath: originalPath).standardizedFileURL
+        guard FileManager.default.fileExists(atPath: trashURL.path) else {
+            throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: trashURL.path])
+        }
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: destination.path])
+        }
+        try FileManager.default.moveItem(at: trashURL, to: destination)
+    }
+
+    private static func runtimeIdentity(for path: String) -> RuntimeFileIdentity? {
+        let url = URL(fileURLWithPath: path.trimmingCharacters(in: .whitespacesAndNewlines))
+            .standardizedFileURL
+        var metadata = stat()
+        let result = url.path.withCString { Darwin.lstat($0, &metadata) }
+        guard result == 0 else { return nil }
+        let fileType = metadata.st_mode & S_IFMT
+        guard fileType != S_IFLNK else { return nil }
+        let isDirectory = fileType == S_IFDIR
+        let sizeBytes = metadata.st_size >= 0 ? UInt64(metadata.st_size) : 0
+        return RuntimeFileIdentity(
+            device: UInt64(metadata.st_dev),
+            inode: UInt64(metadata.st_ino),
+            sizeBytes: sizeBytes,
+            isDirectory: isDirectory,
+            modifiedMillis: timestampMillis(metadata.st_mtimespec),
+            changedMillis: timestampMillis(metadata.st_ctimespec)
+        )
+    }
+
+    private static func timestampMillis(_ value: timespec) -> UInt64? {
+        guard value.tv_sec >= 0, value.tv_nsec >= 0 else { return nil }
+        let secondsMillis = UInt64(value.tv_sec).multipliedReportingOverflow(by: 1_000)
+        guard !secondsMillis.overflow else { return UInt64.max }
+        let total = secondsMillis.partialValue.addingReportingOverflow(UInt64(value.tv_nsec) / 1_000_000)
+        return total.overflow ? UInt64.max : total.partialValue
+    }
+
+    private static func identityMatches(
+        _ expected: StorageFileIdentityModel,
+        current: RuntimeFileIdentity
+    ) -> Bool {
+        expected.device == current.device
+            && expected.inode == current.inode
+            && expected.isDirectory == current.isDirectory
+            // Directory st_size is filesystem metadata, while the Rust report
+            // carries the recursively measured directory size.
+            && (expected.isDirectory || expected.sizeBytes == current.sizeBytes)
+            && (expected.modifiedMillis == nil || expected.modifiedMillis == current.modifiedMillis)
+            && (expected.changedMillis == nil || expected.changedMillis == current.changedMillis)
     }
 
     /// Empty the home Trash by deleting its entries directly (no Finder Apple

@@ -9,6 +9,8 @@ import Foundation
 struct StorageHygieneItemsPageModel: Decodable, Sendable {
     let capturedAtMillis: UInt64
     let scanMode: String
+    let scanGeneration: StorageScanGenerationModel?
+    let cacheStatus: StorageCacheStatusModel?
     let offset: Int
     let limit: Int
     let sortKey: String
@@ -24,6 +26,8 @@ struct StorageHygieneItemsPageModel: Decodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case capturedAtMillis
         case scanMode
+        case scanGeneration
+        case cacheStatus
         case offset
         case limit
         case sortKey
@@ -39,6 +43,8 @@ struct StorageHygieneItemsPageModel: Decodable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         capturedAtMillis = try container.decodeIfPresent(UInt64.self, forKey: .capturedAtMillis) ?? 0
         scanMode = try container.decodeIfPresent(String.self, forKey: .scanMode) ?? "instant_cached"
+        scanGeneration = try container.decodeIfPresent(StorageScanGenerationModel.self, forKey: .scanGeneration)
+        cacheStatus = try container.decodeIfPresent(StorageCacheStatusModel.self, forKey: .cacheStatus)
         items = try container.decodeIfPresent([StorageHygieneItemModel].self, forKey: .items) ?? []
         offset = try container.decodeIfPresent(Int.self, forKey: .offset) ?? 0
         limit = try container.decodeIfPresent(Int.self, forKey: .limit) ?? items.count

@@ -3824,11 +3824,18 @@ public final class AppState {
         let eligible = folders.filter(Self.repositoryArtifactFolderIsTrashActionable)
         guard !eligible.isEmpty else { return }
         let paths = eligible.map(\.path)
+        let expectedIdentities = Dictionary(uniqueKeysWithValues: eligible.compactMap { folder in
+            folder.identity.map { (folder.path, $0) }
+        })
         let bytesByPath = Dictionary(uniqueKeysWithValues: eligible.map { ($0.path, $0.sizeBytes) })
         let activeWriterProbe = cleanupActiveWriterProbe()
 
-        Task.detached(priority: .utility) { [bytesByPath, paths, activeWriterProbe] in
-            let outcome = TrashService.trash(paths: paths, activeWriterProbe: activeWriterProbe)
+        Task.detached(priority: .utility) { [bytesByPath, expectedIdentities, paths, activeWriterProbe] in
+            let outcome = TrashService.trash(
+                paths: paths,
+                expectedIdentities: expectedIdentities,
+                activeWriterProbe: activeWriterProbe
+            )
             let reclaimed = outcome.movedPaths.reduce(UInt64(0)) { total, path in
                 total.addingReportingOverflow(bytesByPath[path] ?? 0).partialValue
             }
@@ -3866,6 +3873,8 @@ public final class AppState {
             && folder.cleanupAllowed
             && folder.defaultCleanupAction == "trash"
             && folder.cleanupBlockers.isEmpty
+            && folder.identity != nil
+            && folder.scanGenerationId != nil
             && !folder.sizeTruncated
             && !folder.cloudPlaceholder
             && !folder.hasHardlinks

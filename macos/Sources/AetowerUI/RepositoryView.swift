@@ -762,6 +762,8 @@ public struct RepositoryView: View {
             && folder.cleanupAllowed
             && folder.defaultCleanupAction == "trash"
             && folder.cleanupBlockers.isEmpty
+            && folder.identity != nil
+            && folder.scanGenerationId != nil
             && !folder.sizeTruncated
             && !folder.cloudPlaceholder
             && !folder.hasHardlinks
