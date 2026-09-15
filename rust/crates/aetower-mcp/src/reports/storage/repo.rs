@@ -532,6 +532,8 @@ fn repo_footprint_for_items(
         .iter()
         .map(|item| StorageRepoArtifactFolder {
             path: item.path.clone(),
+            identity: item.identity.clone(),
+            scan_generation_id: item.scan_generation_id,
             display_name: item.display_name.clone(),
             kind: item.kind.clone(),
             cleanup_tier: item.cleanup_tier.clone(),

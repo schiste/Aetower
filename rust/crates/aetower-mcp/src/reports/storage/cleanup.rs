@@ -276,6 +276,12 @@ fn measured_rebuild_cost_label(seconds: u64) -> String {
 
 pub(super) fn apply_cleanup_guardrails(items: &mut [StorageHygieneItem], now_millis: u64) {
     for item in items {
+        if item.identity.is_none() {
+            block_cleanup(
+                item,
+                "Filesystem identity evidence is missing; refresh this path before cleanup.",
+            );
+        }
         if item.facts_stale {
             block_cleanup(
                 item,
@@ -2285,6 +2291,8 @@ fn cleanup_lane_for_items(
 fn cleanup_lane_item(item: &StorageHygieneItem) -> StorageCleanupLaneItem {
     StorageCleanupLaneItem {
         path: item.path.clone(),
+        identity: item.identity.clone(),
+        scan_generation_id: item.scan_generation_id,
         display_name: item.display_name.clone(),
         kind: item.kind.clone(),
         cleanup_tier: item.cleanup_tier.clone(),
@@ -2623,6 +2631,8 @@ fn cleanup_bundle_item(item: &StorageHygieneItem) -> StorageCleanupBundleItem {
         .map(|recipe| recipe.command);
     StorageCleanupBundleItem {
         path: item.path.clone(),
+        identity: item.identity.clone(),
+        scan_generation_id: item.scan_generation_id,
         display_name: item.display_name.clone(),
         kind: item.kind.clone(),
         cleanup_tier: item.cleanup_tier.clone(),
@@ -3072,6 +3082,8 @@ fn direct_reclaim_recipe(
         prerequisites,
         destructive: true,
         requires_review: requires_review || item.safety != "safe",
+        identity: item.identity.clone(),
+        scan_generation_id: item.scan_generation_id,
     }
 }
 
@@ -3113,6 +3125,8 @@ fn rust_cleanup_recipe(item: &StorageHygieneItem) -> Option<StorageCleanupRecipe
         ],
         destructive: true,
         requires_review: false,
+        identity: item.identity.clone(),
+        scan_generation_id: item.scan_generation_id,
     })
 }
 
@@ -3136,6 +3150,8 @@ fn swiftpm_cleanup_recipe(item: &StorageHygieneItem) -> Option<StorageCleanupRec
         ],
         destructive: true,
         requires_review: false,
+        identity: item.identity.clone(),
+        scan_generation_id: item.scan_generation_id,
     })
 }
 
@@ -3156,6 +3172,8 @@ fn docker_cleanup_recipe(item: &StorageHygieneItem) -> StorageCleanupRecipe {
         ],
         destructive: true,
         requires_review: true,
+        identity: item.identity.clone(),
+        scan_generation_id: item.scan_generation_id,
     }
 }
 
@@ -3178,6 +3196,8 @@ fn derived_data_cleanup_recipe(item: &StorageHygieneItem) -> StorageCleanupRecip
         ],
         destructive: true,
         requires_review: true,
+        identity: item.identity.clone(),
+        scan_generation_id: item.scan_generation_id,
     }
 }
 
@@ -3206,6 +3226,8 @@ fn log_cleanup_recipe(item: &StorageHygieneItem) -> StorageCleanupRecipe {
         ],
         destructive: true,
         requires_review: item.safety != "safe",
+        identity: item.identity.clone(),
+        scan_generation_id: item.scan_generation_id,
     }
 }
 
@@ -3231,6 +3253,8 @@ fn stale_release_artifact_recipe(item: &StorageHygieneItem) -> Option<StorageCle
         ],
         destructive: true,
         requires_review: true,
+        identity: item.identity.clone(),
+        scan_generation_id: item.scan_generation_id,
     })
 }
 

@@ -542,7 +542,7 @@ use models::{
     StorageCleanupLane, StorageCleanupLaneItem, StorageCleanupRecipe, StorageCleanupTierSummary,
     StorageColdData, StorageColdDataBand, StorageDuplicateActionability,
     StorageDuplicateConfidenceBand, StorageDuplicateDetectorKind, StorageDuplicateGroup,
-    StorageDuplicateItem, StorageFilesystemEventRecord, StorageGrowthAnomaly,
+    StorageDuplicateItem, StorageFileIdentity, StorageFilesystemEventRecord, StorageGrowthAnomaly,
     StorageGrowthAttribution, StorageGrowthDelta, StorageGrowthForecast, StorageGrowthInsights,
     StorageGrowthInsightsResponse, StorageGrowthRate, StorageHygieneActionsResponse,
     StorageHygieneItem, StorageHygieneItemsPageResponse, StorageHygieneOptions,
@@ -595,15 +595,14 @@ pub use repo::{repository_inventory_json, repository_workspace_refresh_json};
 pub(crate) use report::build_storage_hygiene_report_with_mode;
 #[cfg(test)]
 use report::{
-    CleanupPathHolder, apply_active_cleanup_holders, build_storage_cold_data,
-    mark_storage_fact_safety, per_root_walk_slice,
+    CleanupPathHolder, apply_active_cleanup_holders, build_storage_cold_data, per_root_walk_slice,
 };
 use report::{
     StorageCandidateCollector, StorageReclaimBucket, apply_dirty_summary_to_cache_status,
-    build_storage_hygiene_report_from_index,
+    apply_storage_scan_generation_guardrail, build_storage_hygiene_report_from_index,
     build_storage_hygiene_verification_report_with_options, finalize_storage_report_json,
-    highest_cleanup_tier, normalize_dirty_paths, normalize_roots, path_matches_dirty_prefix,
-    refresh_storage_performance_budget, skipped_root_permission_state,
+    highest_cleanup_tier, mark_storage_fact_safety, normalize_dirty_paths, normalize_roots,
+    path_matches_dirty_prefix, refresh_storage_performance_budget, skipped_root_permission_state,
     storage_byte_accounting_label, storage_index_cache_status, storage_item_evidence,
     storage_item_next_step, storage_local_reclaimable_bytes,
     storage_performance_budget_diagnostics, storage_reclaim_bucket, storage_source_kind,
@@ -628,5 +627,6 @@ use treemap::build_storage_treemap_roots;
 use walk::{
     SizeWalkResult, file_access_age_days, is_cloud_storage_path, is_network_storage_path,
     is_source_control_dir, scan_root, scan_root_with_source_root, should_retain_storage_item,
-    size_of_path, storage_item_for_indexed_row, storage_item_for_path, unix_metadata_millis,
+    size_of_path, storage_file_identity_for_path, storage_item_for_indexed_row,
+    storage_item_for_path, unix_metadata_millis,
 };

@@ -1492,6 +1492,12 @@ impl StorageSizeIndex {
                 file_count INTEGER NOT NULL,
                 newest_modified_millis INTEGER,
                 newest_accessed_millis INTEGER,
+                identity_device INTEGER,
+                identity_inode INTEGER,
+                identity_size_bytes INTEGER,
+                identity_modified_millis INTEGER,
+                identity_changed_millis INTEGER,
+                identity_is_directory INTEGER,
                 evidence_json TEXT NOT NULL DEFAULT '[]',
                 confidence TEXT NOT NULL,
                 git_ignored INTEGER NOT NULL,
@@ -1867,19 +1873,53 @@ impl StorageSizeIndex {
     /// time. Derived age bands stay out of SQLite so they continue aging on
     /// every cache-first projection without requiring another filesystem walk.
     fn ensure_repository_artifact_columns(connection: &Connection) -> rusqlite::Result<()> {
-        let exists: i64 = connection.query_row(
-            "SELECT COUNT(*)
-             FROM pragma_table_info('storage_repository_artifact')
-             WHERE name = 'newest_accessed_millis'",
-            [],
-            |row| row.get(0),
-        )?;
-        if exists == 0 {
-            tolerate_duplicate_column(connection.execute(
+        for (column, ddl) in [
+            (
+                "newest_accessed_millis",
                 "ALTER TABLE storage_repository_artifact
                  ADD COLUMN newest_accessed_millis INTEGER",
-                [],
-            ))?;
+            ),
+            (
+                "identity_device",
+                "ALTER TABLE storage_repository_artifact
+                 ADD COLUMN identity_device INTEGER",
+            ),
+            (
+                "identity_inode",
+                "ALTER TABLE storage_repository_artifact
+                 ADD COLUMN identity_inode INTEGER",
+            ),
+            (
+                "identity_size_bytes",
+                "ALTER TABLE storage_repository_artifact
+                 ADD COLUMN identity_size_bytes INTEGER",
+            ),
+            (
+                "identity_modified_millis",
+                "ALTER TABLE storage_repository_artifact
+                 ADD COLUMN identity_modified_millis INTEGER",
+            ),
+            (
+                "identity_changed_millis",
+                "ALTER TABLE storage_repository_artifact
+                 ADD COLUMN identity_changed_millis INTEGER",
+            ),
+            (
+                "identity_is_directory",
+                "ALTER TABLE storage_repository_artifact
+                 ADD COLUMN identity_is_directory INTEGER",
+            ),
+        ] {
+            let exists: i64 = connection.query_row(
+                "SELECT COUNT(*)
+                 FROM pragma_table_info('storage_repository_artifact')
+                 WHERE name = ?1",
+                params![column],
+                |row| row.get(0),
+            )?;
+            if exists == 0 {
+                tolerate_duplicate_column(connection.execute(ddl, []))?;
+            }
         }
         Ok(())
     }
@@ -4486,14 +4526,17 @@ impl StorageSizeIndex {
                             repository_root, repository_family_id, repository_family_root,
                             repository_family_label, worktree, kind, label, physical_bytes,
                             file_count, newest_modified_millis, newest_accessed_millis,
+                            identity_device, identity_inode, identity_size_bytes,
+                            identity_modified_millis, identity_changed_millis,
+                            identity_is_directory,
                             evidence_json, confidence,
                             git_ignored, git_tracked, cleanup_tier, cleanup_allowed,
                             cleanup_blockers_json, default_cleanup_action,
                             rebuild_instruction, estimated_rebuild_cost
                          ) VALUES (
                             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                            ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23,
-                            ?24, ?25, ?26
+                            ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22,
+                            ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32
                          )",
                         params![
                             generation_id,
@@ -4516,6 +4559,32 @@ impl StorageSizeIndex {
                             artifact
                                 .newest_accessed_millis
                                 .map(|millis| millis.min(i64::MAX as u64) as i64),
+                            artifact
+                                .identity
+                                .as_ref()
+                                .map(|identity| identity.device.min(i64::MAX as u64) as i64),
+                            artifact
+                                .identity
+                                .as_ref()
+                                .map(|identity| identity.inode.min(i64::MAX as u64) as i64),
+                            artifact
+                                .identity
+                                .as_ref()
+                                .map(|identity| identity.size_bytes.min(i64::MAX as u64) as i64),
+                            artifact.identity.as_ref().and_then(|identity| {
+                                identity
+                                    .modified_millis
+                                    .map(|millis| millis.min(i64::MAX as u64) as i64)
+                            }),
+                            artifact.identity.as_ref().and_then(|identity| {
+                                identity
+                                    .changed_millis
+                                    .map(|millis| millis.min(i64::MAX as u64) as i64)
+                            }),
+                            artifact
+                                .identity
+                                .as_ref()
+                                .map(|identity| i64::from(identity.is_directory)),
                             evidence_json,
                             &artifact.confidence,
                             i64::from(artifact.git_ignored),
@@ -4650,8 +4719,10 @@ impl StorageSizeIndex {
             "SELECT boundary_id, artifact_id, path, relative_path, repository_root,
                     repository_family_id, repository_family_root, repository_family_label,
                     worktree, kind, label, physical_bytes, file_count,
-                    newest_modified_millis, newest_accessed_millis, evidence_json,
-                    confidence, git_ignored,
+                    newest_modified_millis, newest_accessed_millis,
+                    identity_device, identity_inode, identity_size_bytes,
+                    identity_modified_millis, identity_changed_millis,
+                    identity_is_directory, evidence_json, confidence, git_ignored,
                     git_tracked, cleanup_tier, cleanup_allowed, cleanup_blockers_json,
                     default_cleanup_action, rebuild_instruction, estimated_rebuild_cost
              FROM storage_repository_artifact
@@ -4661,13 +4732,47 @@ impl StorageSizeIndex {
             return BTreeMap::new();
         };
         let Ok(rows) = statement.query_map(params![generation_id], |row| {
-            let evidence_json: String = row.get(15)?;
-            let cleanup_blockers_json: String = row.get(21)?;
+            let evidence_json: String = row.get(21)?;
+            let cleanup_blockers_json: String = row.get(27)?;
+            let identity_device = row.get::<_, Option<i64>>(15)?.filter(|value| *value > 0);
+            let identity_inode = row.get::<_, Option<i64>>(16)?.filter(|value| *value > 0);
+            let identity =
+                identity_device
+                    .zip(identity_inode)
+                    .map(|(device, inode)| StorageFileIdentity {
+                        device: device as u64,
+                        inode: inode as u64,
+                        size_bytes: row
+                            .get::<_, Option<i64>>(17)
+                            .ok()
+                            .flatten()
+                            .filter(|value| *value >= 0)
+                            .unwrap_or_default() as u64,
+                        is_directory: row
+                            .get::<_, Option<i64>>(20)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|value| value != 0),
+                        modified_millis: row
+                            .get::<_, Option<i64>>(18)
+                            .ok()
+                            .flatten()
+                            .filter(|value| *value >= 0)
+                            .map(|value| value as u64),
+                        changed_millis: row
+                            .get::<_, Option<i64>>(19)
+                            .ok()
+                            .flatten()
+                            .filter(|value| *value >= 0)
+                            .map(|value| value as u64),
+                    });
             Ok((
                 row.get::<_, String>(0)?,
                 StorageRepositoryArtifact {
                     id: row.get(1)?,
                     path: row.get(2)?,
+                    identity,
+                    scan_generation_id: None,
                     relative_path: row.get(3)?,
                     repository_root: row.get(4)?,
                     repository_family_id: row.get(5)?,
@@ -4692,16 +4797,16 @@ impl StorageSizeIndex {
                     stale_candidate: false,
                     reclaim_priority: 0,
                     evidence: serde_json::from_str(&evidence_json).unwrap_or_default(),
-                    confidence: row.get(16)?,
-                    git_ignored: row.get::<_, i64>(17)? != 0,
-                    git_tracked: row.get::<_, i64>(18)? != 0,
-                    cleanup_tier: row.get(19)?,
-                    cleanup_allowed: row.get::<_, i64>(20)? != 0,
+                    confidence: row.get(22)?,
+                    git_ignored: row.get::<_, i64>(23)? != 0,
+                    git_tracked: row.get::<_, i64>(24)? != 0,
+                    cleanup_tier: row.get(25)?,
+                    cleanup_allowed: row.get::<_, i64>(26)? != 0,
                     cleanup_blockers: serde_json::from_str(&cleanup_blockers_json)
                         .unwrap_or_default(),
-                    default_cleanup_action: row.get(22)?,
-                    rebuild_instruction: row.get(23)?,
-                    estimated_rebuild_cost: row.get(24)?,
+                    default_cleanup_action: row.get(28)?,
+                    rebuild_instruction: row.get(29)?,
+                    estimated_rebuild_cost: row.get(30)?,
                 },
             ))
         }) else {

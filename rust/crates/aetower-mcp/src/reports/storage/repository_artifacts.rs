@@ -260,6 +260,8 @@ pub(super) fn finalize_repository_artifacts(
             let mut finalized = StorageRepositoryArtifact {
                 id,
                 path: artifact.path.display().to_string(),
+                identity: storage_file_identity_for_path(&artifact.path),
+                scan_generation_id: None,
                 relative_path,
                 repository_root: repository_root.display().to_string(),
                 repository_family_id: family.id.clone(),

@@ -600,18 +600,19 @@ pub(super) fn build_storage_hygiene_verification_report_with_options(
     }
     let writer_ledger = load_storage_writer_ledger_records();
     apply_measured_rebuild_costs(&mut items, &writer_ledger);
-    apply_cleanup_guardrails(&mut items, now_millis);
-    annotate_cleanup_items_active_holders(&mut items);
-    for item in &mut items {
-        item.evidence = storage_item_evidence(item);
-        item.next_step = storage_item_next_step(item);
-    }
     let typed_domains = typed_storage_domains_for_items(&requested_roots, &items, now_millis);
     let typed_domain_count = typed_domains.len();
     if let Err(error) = storage_index.store_typed_storage_domains(&requested_roots, &typed_domains)
     {
         scan_partial = true;
         storage_index.record_write_error_for_report(&error);
+    }
+    apply_storage_scan_generation_guardrail(&mut items, scan_generation.as_ref(), scan_partial);
+    apply_cleanup_guardrails(&mut items, now_millis);
+    annotate_cleanup_items_active_holders(&mut items);
+    for item in &mut items {
+        item.evidence = storage_item_evidence(item);
+        item.next_step = storage_item_next_step(item);
     }
 
     if let Some(runtime) = options.runtime.as_ref() {
@@ -995,6 +996,7 @@ pub(super) fn build_storage_hygiene_report_from_index(
     });
     let writer_ledger = load_storage_writer_ledger_records();
     apply_measured_rebuild_costs(&mut items, &writer_ledger);
+    apply_storage_scan_generation_guardrail(&mut items, scan_generation.as_ref(), false);
     apply_cleanup_guardrails(&mut items, now_millis);
     for item in &mut items {
         item.evidence = storage_item_evidence(item);
@@ -1481,6 +1483,32 @@ fn annotate_items_source_control(items: &mut [StorageHygieneItem]) {
     }
 }
 
+pub(super) fn apply_storage_scan_generation_guardrail(
+    items: &mut [StorageHygieneItem],
+    generation: Option<&StorageScanGeneration>,
+    report_partial: bool,
+) {
+    let generation_id = generation.map(|generation| generation.generation_id);
+    let blocker = if generation.is_none() {
+        Some("No durable scan generation is available; refresh this path before cleanup.")
+    } else if report_partial {
+        Some("This report is partial; complete the scan before cleanup.")
+    } else if generation.is_some_and(|generation| {
+        generation.partial || !generation.published || generation.status != "complete"
+    }) {
+        Some("This scan generation was not fully published; refresh before cleanup.")
+    } else {
+        None
+    };
+
+    for item in items {
+        item.scan_generation_id = generation_id;
+        if let Some(blocker) = blocker {
+            block_cleanup(item, blocker);
+        }
+    }
+}
+
 pub(super) fn storage_item_evidence(item: &StorageHygieneItem) -> Vec<String> {
     let mut evidence = Vec::new();
     evidence.push(format!(
@@ -1507,6 +1535,29 @@ pub(super) fn storage_item_evidence(item: &StorageHygieneItem) -> Vec<String> {
         "Size estimate is {}.",
         human_bytes(item.size_bytes)
     ));
+    if let Some(identity) = item.identity.as_ref() {
+        evidence.push(format!(
+            "Filesystem identity is device {} inode {} with {} metadata{}.",
+            identity.device,
+            identity.inode,
+            human_bytes(identity.size_bytes),
+            identity
+                .changed_millis
+                .map(|changed| format!("; change time {changed}"))
+                .unwrap_or_default()
+        ));
+    } else {
+        evidence.push(
+            "Filesystem identity evidence is unavailable; cleanup is blocked until a fresh scan captures it."
+                .to_owned(),
+        );
+    }
+    if !item.cleanup_allowed {
+        evidence.push(format!(
+            "Cleanup blocked: {}.",
+            item.cleanup_blockers.join("; ")
+        ));
+    }
     if item.logical_bytes != item.physical_bytes {
         evidence.push(format!(
             "Logical size is {}; physical reclaim estimate is {} using {}.",
@@ -1603,12 +1654,6 @@ pub(super) fn storage_item_evidence(item: &StorageHygieneItem) -> Vec<String> {
         "Source-control status: {}.",
         git_status_label(&item.git_status)
     ));
-    if !item.cleanup_allowed {
-        evidence.push(format!(
-            "Cleanup blocked: {}.",
-            item.cleanup_blockers.join("; ")
-        ));
-    }
     if let Some(session) = item.attribution.ai_agent_session.as_deref() {
         evidence.push(format!("AI-agent directory evidence: {session}."));
     }

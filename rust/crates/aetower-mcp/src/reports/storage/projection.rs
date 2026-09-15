@@ -1362,6 +1362,9 @@ fn storage_hygiene_items_page_from_index(
         storage_index_status: storage_index.status.clone(),
         ..StorageScanMetrics::default()
     };
+    let scan_generation = storage_index.latest_published_storage_scan_generation(&roots);
+    let dirty_summary = storage_index.dirty_path_summary(&roots, 512);
+    let dirty_paths = storage_index.load_dirty_path_strings(&roots, 512);
     let page = storage_index
         .load_item_rows_page(
             &roots,
@@ -1378,8 +1381,10 @@ fn storage_hygiene_items_page_from_index(
         .into_iter()
         .map(|row| storage_item_for_indexed_row(row, now_millis))
         .collect::<Vec<_>>();
+    mark_storage_fact_safety(&mut items, &dirty_paths, &dirty_summary.unknown_gap_roots);
     let writer_ledger = load_storage_writer_ledger_records();
     apply_measured_rebuild_costs(&mut items, &writer_ledger);
+    apply_storage_scan_generation_guardrail(&mut items, scan_generation.as_ref(), false);
     apply_cleanup_guardrails(&mut items, now_millis);
     for item in &mut items {
         item.evidence = storage_item_evidence(item);
@@ -1387,8 +1392,9 @@ fn storage_hygiene_items_page_from_index(
     }
     let table_page_millis = started.elapsed().as_millis() as u64;
     let item_count = items.len().min(u64::MAX as usize) as u64;
-    let cache_status =
+    let mut cache_status =
         storage_index_cache_status(&storage_index, now_millis, true, total_available > 0);
+    apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
     let diagnostics = StorageScanDiagnostics {
         mode: StorageScanMode::InstantCached.as_str().to_owned(),
         root_walk_millis: 0,
@@ -1423,7 +1429,7 @@ fn storage_hygiene_items_page_from_index(
         serde_json::to_string(&StorageHygieneItemsPageResponse {
             captured_at_millis: now_millis,
             scan_mode: StorageScanMode::InstantCached.as_str().to_owned(),
-            scan_generation: storage_index.latest_published_storage_scan_generation(&roots),
+            scan_generation,
             cache_status,
             diagnostics,
             offset,

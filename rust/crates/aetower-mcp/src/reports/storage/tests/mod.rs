@@ -1,6 +1,6 @@
 use super::state_store::replace_storage_index_directory_for_test;
 use super::*;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
 struct StorageIndexTestGuard {
     _mutex_guard: std::sync::MutexGuard<'static, ()>,
@@ -110,6 +110,44 @@ fn storage_hygiene_detects_reclaimable_build_artifacts() {
     assert!(json.contains("\"safety\":\"safe\""));
     assert!(json.contains("\"cleanup_tier\":\"rebuildable\""));
     assert!(json.contains("\"cleanup_tiers\""));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_cleanup_evidence_rejects_symlinks_and_unpublished_scans() {
+    let root = test_root("cleanup-evidence");
+    let target = root.join("target");
+    fs::create_dir_all(&root).expect("create cleanup evidence root");
+    fs::write(&target, b"fixture").expect("write cleanup evidence target");
+    let link = root.join("target-link");
+    symlink(&target, &link).expect("create cleanup evidence symlink");
+
+    let identity = storage_file_identity_for_path(&target).expect("regular file identity");
+    assert!(identity.device > 0);
+    assert!(identity.inode > 0);
+    assert_eq!(identity.size_bytes, 7);
+    assert!(storage_file_identity_for_path(&link).is_none());
+
+    let mut item = test_storage_item(
+        &target.display().to_string(),
+        "rust-build",
+        "build-artifact",
+        "safe",
+        "rebuildable",
+        1_000,
+    );
+    item.identity = Some(identity);
+    let mut items = vec![item];
+    apply_storage_scan_generation_guardrail(&mut items, None, false);
+    assert_eq!(items[0].scan_generation_id, None);
+    assert!(!items[0].cleanup_allowed);
+    assert!(
+        items[0]
+            .cleanup_blockers
+            .iter()
+            .any(|blocker| blocker.contains("No durable scan generation"))
+    );
 
     let _ = fs::remove_dir_all(root);
 }
@@ -1366,6 +1404,8 @@ fn storage_ownership_generation_activation_is_atomic_and_durable() {
         repository_artifacts: vec![StorageRepositoryArtifact {
             id: "family:repo:target".to_owned(),
             path: guard.directory.join("target").display().to_string(),
+            identity: None,
+            scan_generation_id: None,
             relative_path: "target".to_owned(),
             repository_root: guard.directory.display().to_string(),
             repository_family_id: "family".to_owned(),
@@ -9112,6 +9152,15 @@ fn test_storage_item(
     StorageHygieneItem {
         id: path.to_owned(),
         path: path.to_owned(),
+        identity: Some(StorageFileIdentity {
+            device: 1,
+            inode: 1,
+            size_bytes: MIN_ITEM_BYTES + 128,
+            is_directory: false,
+            modified_millis: Some(modified_millis),
+            changed_millis: Some(modified_millis),
+        }),
+        scan_generation_id: Some(1),
         display_name: Path::new(path)
             .file_name()
             .and_then(|name| name.to_str())

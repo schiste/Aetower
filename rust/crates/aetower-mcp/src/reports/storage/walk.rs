@@ -301,6 +301,7 @@ pub(super) fn storage_item_for_path(
     let cold = access_age_days.is_some_and(|days| days >= COLD_AFTER_DAYS);
     let stale = age_days.is_some_and(|days| days >= STALE_AFTER_DAYS);
     let path_display = path.display().to_string();
+    let identity = storage_file_identity_for_path(path);
     let attribution = artifact_attribution(path);
     let storage_role = storage_role_for_kind(rule.kind.as_ref());
     let git_status = if attribution.repo_root.is_some() {
@@ -325,6 +326,8 @@ pub(super) fn storage_item_for_path(
     StorageHygieneItem {
         id: path_display.clone(),
         path: path_display.clone(),
+        identity,
+        scan_generation_id: None,
         display_name: path
             .file_name()
             .and_then(|name| name.to_str())
@@ -420,6 +423,14 @@ pub(super) fn storage_item_for_indexed_row(
         .unwrap_or("artifact")
         .to_owned();
     let path_display = row.path.clone();
+    let identity = (row.device > 0 && row.inode > 0).then_some(StorageFileIdentity {
+        device: row.device as u64,
+        inode: row.inode as u64,
+        size_bytes: row.logical_bytes,
+        is_directory: row.is_directory,
+        modified_millis: row.modified_millis,
+        changed_millis: row.changed_millis,
+    });
     let intelligence = artifact_intelligence(&row.kind, &path_display);
     let semantic = semantic_artifact_intelligence(
         &row.kind,
@@ -447,6 +458,8 @@ pub(super) fn storage_item_for_indexed_row(
     let mut item = StorageHygieneItem {
         id: path_display.clone(),
         path: path_display.clone(),
+        identity,
+        scan_generation_id: None,
         display_name,
         kind: row.kind,
         storage_role: row.storage_role,
@@ -500,6 +513,21 @@ pub(super) fn storage_item_for_indexed_row(
     item.evidence = storage_item_evidence(&item);
     item.next_step = storage_item_next_step(&item);
     item
+}
+
+pub(super) fn storage_file_identity_for_path(path: &Path) -> Option<StorageFileIdentity> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink() {
+        return None;
+    }
+    Some(StorageFileIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        size_bytes: metadata.len(),
+        is_directory: metadata.is_dir(),
+        modified_millis: metadata_time_millis(metadata.mtime(), metadata.mtime_nsec()),
+        changed_millis: metadata_time_millis(metadata.ctime(), metadata.ctime_nsec()),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

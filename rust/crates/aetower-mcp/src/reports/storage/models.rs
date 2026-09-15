@@ -74,6 +74,19 @@ pub(super) struct StorageScanGeneration {
     pub(super) error: Option<String>,
 }
 
+/// Metadata captured with a cleanup candidate. The UI revalidates this
+/// identity immediately before moving a path to Trash so a stale report cannot
+/// accidentally remove a replacement file at the same path.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct StorageFileIdentity {
+    pub(super) device: u64,
+    pub(super) inode: u64,
+    pub(super) size_bytes: u64,
+    pub(super) is_directory: bool,
+    pub(super) modified_millis: Option<u64>,
+    pub(super) changed_millis: Option<u64>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(super) struct StorageSituationSummary {
     pub(super) source_root_count: usize,
@@ -243,6 +256,10 @@ pub(super) struct StorageOwnershipBoundaryRollup {
 pub(super) struct StorageRepositoryArtifact {
     pub(super) id: String,
     pub(super) path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) identity: Option<StorageFileIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation_id: Option<i64>,
     pub(super) relative_path: String,
     pub(super) repository_root: String,
     pub(super) repository_family_id: String,
@@ -773,6 +790,10 @@ pub(super) struct StorageGrowthAttribution {
 pub(super) struct StorageHygieneItem {
     pub(super) id: String,
     pub(super) path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) identity: Option<StorageFileIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation_id: Option<i64>,
     pub(super) display_name: String,
     pub(super) kind: String,
     pub(super) storage_role: String,
@@ -906,6 +927,10 @@ pub(super) struct StorageCleanupRecipe {
     pub(super) prerequisites: Vec<String>,
     pub(super) destructive: bool,
     pub(super) requires_review: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) identity: Option<StorageFileIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation_id: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -928,6 +953,10 @@ pub(super) struct StorageCleanupBundle {
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct StorageCleanupBundleItem {
     pub(super) path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) identity: Option<StorageFileIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation_id: Option<i64>,
     pub(super) display_name: String,
     pub(super) kind: String,
     pub(super) cleanup_tier: String,
@@ -967,6 +996,10 @@ pub(super) struct StorageCleanupLane {
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct StorageCleanupLaneItem {
     pub(super) path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) identity: Option<StorageFileIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation_id: Option<i64>,
     pub(super) display_name: String,
     pub(super) kind: String,
     pub(super) cleanup_tier: String,
@@ -1334,6 +1367,10 @@ pub(super) struct StorageAgentGuidanceIssue {
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct StorageRepoArtifactFolder {
     pub(super) path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) identity: Option<StorageFileIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) scan_generation_id: Option<i64>,
     pub(super) display_name: String,
     pub(super) kind: String,
     pub(super) cleanup_tier: String,
