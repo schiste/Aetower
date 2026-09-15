@@ -1,5 +1,7 @@
 use super::*;
-use crate::reports::storage::report::storage_index_coverage_percent;
+use crate::reports::storage::report::{
+    storage_index_coverage_percent, storage_scan_generation_is_complete,
+};
 
 pub fn storage_hygiene_overview_json(
     roots: Vec<String>,
@@ -360,8 +362,13 @@ fn build_storage_situation_response(
     let mut cache_status =
         storage_index_cache_status(storage_index, now_millis, true, has_cached_facts);
     apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
-    let coverage_percent =
-        storage_index_coverage_percent(&cache_status, &dirty_summary, has_cached_facts);
+    let scan_generation = storage_index.latest_published_storage_scan_generation(roots);
+    let coverage_percent = storage_index_coverage_percent(
+        &cache_status,
+        &dirty_summary,
+        has_cached_facts,
+        scan_generation.as_ref(),
+    );
     let mut caveats = vec![
         "Cache-first storage situation: uses Aetower's persistent index summaries and top offenders without walking the filesystem."
             .to_owned(),
@@ -386,7 +393,6 @@ fn build_storage_situation_response(
     let volume_states = summarize_volume_states(roots);
     let repository_rollups = storage_index.load_repository_workspace_rollups(roots);
     let ownership_generation = storage_index.load_active_ownership_generation();
-    let scan_generation = storage_index.latest_published_storage_scan_generation(roots);
     let mut ownership_breakdown = summarize_storage_ownership(StorageOwnershipProjectionInput {
         summaries: &summaries,
         repository_rollups: &repository_rollups,
@@ -646,6 +652,7 @@ fn overlay_storage_situation_snapshot(
         &snapshot.cache_status,
         &snapshot.dirty_paths,
         has_cached_facts,
+        snapshot.scan_generation.as_ref(),
     );
     snapshot.summary_scope = if snapshot.coverage_percent == 100 {
         "situation_snapshot".to_owned()
@@ -763,6 +770,7 @@ fn build_storage_situation_response_from_report(
         || cache_status.partial
         || dirty_summary.dirty_path_count > 0
         || dirty_summary.unknown_gap
+        || !storage_scan_generation_is_complete(report.scan_generation.as_ref())
     {
         0
     } else {
@@ -1473,8 +1481,12 @@ fn storage_hygiene_items_page_from_index(
     let mut cache_status =
         storage_index_cache_status(&storage_index, now_millis, true, total_available > 0);
     apply_dirty_summary_to_cache_status(&mut cache_status, &dirty_summary);
-    let coverage_percent =
-        storage_index_coverage_percent(&cache_status, &dirty_summary, total_available > 0);
+    let coverage_percent = storage_index_coverage_percent(
+        &cache_status,
+        &dirty_summary,
+        total_available > 0,
+        scan_generation.as_ref(),
+    );
     let diagnostics = StorageScanDiagnostics {
         mode: StorageScanMode::InstantCached.as_str().to_owned(),
         root_walk_millis: 0,

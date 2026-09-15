@@ -344,17 +344,27 @@ pub(super) fn storage_index_coverage_percent(
     cache_status: &StorageCacheStatus,
     dirty_summary: &StorageDirtyPathSummary,
     has_cached_facts: bool,
+    scan_generation: Option<&StorageScanGeneration>,
 ) -> u8 {
     if !has_cached_facts
         || cache_status.stale
         || cache_status.partial
         || dirty_summary.dirty_path_count > 0
         || dirty_summary.unknown_gap
+        || !storage_scan_generation_is_complete(scan_generation)
     {
         0
     } else {
         100
     }
+}
+
+pub(super) fn storage_scan_generation_is_complete(
+    scan_generation: Option<&StorageScanGeneration>,
+) -> bool {
+    scan_generation.is_some_and(|generation| {
+        generation.published && !generation.partial && generation.status == "complete"
+    })
 }
 
 pub fn storage_hygiene_deep_scan_json(
@@ -1143,8 +1153,12 @@ pub(super) fn build_storage_hygiene_report_from_index(
         top_k_retained: true,
         performance_budget: StoragePerformanceBudgetDiagnostics::default(),
     };
-    let coverage_percent =
-        storage_index_coverage_percent(&cache_status, &dirty_summary, has_cached_facts);
+    let coverage_percent = storage_index_coverage_percent(
+        &cache_status,
+        &dirty_summary,
+        has_cached_facts,
+        scan_generation.as_ref(),
+    );
     StorageHygieneReport {
         captured_at_millis: now_millis,
         scan_duration_millis: started.elapsed().as_millis() as u64,
