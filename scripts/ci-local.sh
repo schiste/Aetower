@@ -611,7 +611,13 @@ run_full_shellcheck() {
         skip "shellcheck" "shellcheck is not installed (brew install shellcheck)"
         return
     fi
-    run "shellcheck" shellcheck --severity=warning "$ROOT/scripts" "$ROOT/.githooks"
+    # The linter does not recurse into directories; passing one exits 2 with
+    # "openBinaryFile: inappropriate type". Pass explicit file paths, covering
+    # both the scripts and the two git hooks, which are not *.sh.
+    # shellcheck disable=SC2046
+    set -- $(find "$ROOT/scripts" -type f -name '*.sh' | sort)
+    set -- "$@" "$ROOT/.githooks/pre-commit" "$ROOT/.githooks/pre-push"
+    run "shellcheck" shellcheck --severity=warning "$@"
 }
 
 run_full_dependency_policy() {
