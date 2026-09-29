@@ -59,6 +59,7 @@ func agentShortenPath(_ path: String) -> String {
     return path
 }
 
+@MainActor
 func agentMetricPill(_ label: String, color: Color) -> some View {
     Text(label)
         .font(.caption)
@@ -69,6 +70,7 @@ func agentMetricPill(_ label: String, color: Color) -> some View {
         .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: AetowerDesign.Radius.sm))
 }
 
+@MainActor
 func agentMetricPill(label: String, color: Color) -> some View {
     agentMetricPill(label, color: color)
 }
@@ -165,6 +167,7 @@ func agentFormatEnergy(njPerS: Double) -> String {
 }
 
 /// Small capsule status badge used across the agent views.
+@MainActor
 func agentStateBadge(_ label: String, color: Color) -> some View {
     Text(label)
         .font(.caption2)
@@ -178,6 +181,12 @@ func agentStateBadge(_ label: String, color: Color) -> some View {
 /// Shared inner content for a sampled-stack card (queue/thread, sample count,
 /// classification, and top frames). Callers wrap this with their own padding
 /// and background so each surface keeps its existing chrome.
+///
+/// `@MainActor` is required, not stylistic: these build SwiftUI layout
+/// primitives such as `Spacer`, whose initialiser is main-actor isolated.
+/// Without the annotation this only compiles on toolchains that infer the
+/// isolation from the call site, and fails on the macOS 15 CI image.
+@MainActor
 @ViewBuilder
 func sampledStackBody(_ stack: SampledStackReportModel) -> some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -201,6 +210,7 @@ func sampledStackBody(_ stack: SampledStackReportModel) -> some View {
     }
 }
 
+@MainActor
 @ViewBuilder
 func wakeupDiagnosticsBody(_ attribution: WakeupAttributionReportModel) -> some View {
     VStack(alignment: .leading, spacing: AetowerDesign.Spacing.sm) {
@@ -279,6 +289,7 @@ func wakeupDiagnosticsBody(_ attribution: WakeupAttributionReportModel) -> some 
     }
 }
 
+@MainActor
 private func wakeupDataSourceBadge(_ source: WakeupDataSourceStatusModel) -> some View {
     VStack(alignment: .leading, spacing: 2) {
         Text(source.title)
@@ -329,6 +340,7 @@ private func wakeupStatusBlock(
     }
 }
 
+@MainActor
 private func wakeupRenderViewRow(_ view: Chau7RenderViewSampleModel) -> some View {
     VStack(alignment: .leading, spacing: 4) {
         HStack {

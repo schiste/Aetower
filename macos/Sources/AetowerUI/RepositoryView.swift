@@ -309,6 +309,7 @@ private struct RepositoryRow: View {
 
 /// Shared provider metric tile (GitHub + Cloudflare cards, scorecard). File
 /// scope so both RepositoryView and the extracted provider cards call it.
+@MainActor
 private func repositoryProjectProviderMetric(_ label: String, _ value: String) -> some View {
     VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xxs) {
         Text(label.uppercased())

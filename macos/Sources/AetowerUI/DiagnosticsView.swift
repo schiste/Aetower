@@ -1501,6 +1501,7 @@ private func diagnosticsMetric(
     )
 }
 
+@MainActor
 private func diagnosticsRecommendationCard(_ recommendation: OperatorRecommendationSummary) -> some View {
     VStack(alignment: .leading, spacing: AetowerDesign.Spacing.xs) {
         HStack(alignment: .firstTextBaseline, spacing: AetowerDesign.Spacing.sm) {
