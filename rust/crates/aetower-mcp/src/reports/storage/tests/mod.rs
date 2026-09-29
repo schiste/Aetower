@@ -7165,7 +7165,14 @@ fn storage_scan_job_completes_and_returns_result() {
     assert!(start["persisted_at_millis"].as_u64().is_some());
 
     let mut terminal_status = String::new();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // Generous on purpose. This is a liveness check, not a performance
+    // budget: the assertion that matters is that the job reaches a terminal
+    // state rather than hanging forever. A 20s deadline was tight enough to
+    // fail on a loaded machine, where the background scan competes with every
+    // job thread left running by earlier tests in the same process, and the
+    // suite spends ~7 minutes in total. A genuinely stuck job still fails,
+    // just after 120s instead of 20s.
+    let deadline = Instant::now() + Duration::from_secs(120);
     while Instant::now() < deadline {
         let status = must_ok(storage_scan_status_json(&job_id), "status scan job");
         let status = parse_json_value(&status, "decode status");
