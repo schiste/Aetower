@@ -10,7 +10,12 @@ permissions:
 
 concurrency:
   group: quality-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded branch and pull-request runs so contributors get fast
+  # feedback, but never cancel a master run. Cancelling skips the "Post Cache"
+  # steps, so a cancelled run saves nothing: with `true` here, pushing twice
+  # in quick succession would leave the master cache permanently cold and the
+  # gate would rebuild from scratch on every run.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   quality:

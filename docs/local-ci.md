@@ -31,6 +31,8 @@ The hosted workflow additionally:
   `rust-toolchain.toml`
 - caches `macos/.build` and the SwiftPM cache, keyed on `macos/Package.resolved`
 - reads the Rust version from `rust-toolchain.toml` instead of repeating it
+- cancels superseded branch runs but never cancels `master`, because a
+  cancelled run skips its `Post Cache` steps and would leave the cache cold
 
 ## Installation
 
