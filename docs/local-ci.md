@@ -24,6 +24,14 @@ for pushes and pull requests. The local hook-driven runner remains the source
 of truth; the hosted workflow installs its tools and invokes that same
 `scripts/ci-local.sh --mode pre-push` entry point.
 
+The hosted workflow additionally:
+
+- pins every action to a commit SHA (Dependabot opens the PRs that move them)
+- caches `rust/target` and the cargo registry, keyed on `rust/Cargo.lock` and
+  `rust-toolchain.toml`
+- caches `macos/.build` and the SwiftPM cache, keyed on `macos/Package.resolved`
+- reads the Rust version from `rust-toolchain.toml` instead of repeating it
+
 ## Installation
 
 ```sh
@@ -165,7 +173,7 @@ commit.
 | `build Rust bridge` | FFI, generated bindings, bridge code, or Rust build scripts change | Rebuilds Rust FFI and Swift bindings. |
 | `swift build` | Swift package files are staged | SwiftPM build against the macOS package. |
 | `benchmark smoke` | Hot-path runtime crates change | Short enforced performance budget smoke. |
-| `shell hook checks` | Scripts or hooks are staged | Placeholder for shell-specific checks; currently covered by `quality-guard` syntax checks. |
+| `shellcheck` | Scripts or hooks are staged | `shellcheck --severity=warning` over the staged shell files. Skipped when the binary is absent. |
 
 ## What Pre-push Checks
 
@@ -176,6 +184,7 @@ Pre-push is intentionally full-surface. It is the local equivalent of CI.
 | `quality guard` | Full-repo quality guard, including duplicate-block detection against changed files. |
 | `gitleaks (commits)` | Commit-range secret scan from push base to `HEAD`. |
 | `swiftlint` | Full Swift source lint, excluding generated bindings. |
+| `shellcheck` | Full `shellcheck --severity=warning` over `scripts/` and `.githooks/`. Skipped when the binary is absent. |
 | `semgrep` | Full Semgrep scan across Swift UI/app/bridge code, Rust crates, and scripts when Semgrep is healthy. |
 | `cargo fmt --check` | Workspace Rust formatting. |
 | `cargo clippy` | Workspace Rust clippy with warnings denied. |

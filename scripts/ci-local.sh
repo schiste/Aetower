@@ -356,6 +356,12 @@ changed_semgrep_files() {
         || true
 }
 
+changed_shell_files() {
+    staged_files \
+        | rg '^(scripts/.*\.sh|\.githooks/pre-(commit|push))$' \
+        || true
+}
+
 fallback_push_base() {
     # This repository's default branch is `master`, not `main`. The previous
     # order checked only origin/main/main, so in CI (where actions/checkout
@@ -382,7 +388,10 @@ fallback_push_base() {
 
 push_diff_base() {
     if [ -n "$PUSH_STDIN_FILE" ] && [ -s "$PUSH_STDIN_FILE" ]; then
-        while read -r local_ref local_sha remote_ref remote_sha; do
+        # `git push --stdin` emits "<local ref> <local sha> <remote ref>
+        # <remote sha>". Only the two sha fields are used; the ref names are
+        # consumed as throwaways to keep the field positions correct.
+        while read -r _ local_sha _ remote_sha; do
             if [ -z "${local_sha:-}" ]; then
                 continue
             fi
@@ -538,10 +547,25 @@ run_precommit_benchmark() {
 
 run_precommit_shell() {
     if ! has_staged_match '(^scripts/.*\.sh$|^\.githooks/)'; then
-        skip "shell hook checks" "no staged shell or hook changes"
+        skip "shellcheck" "no staged shell or hook changes"
         return
     fi
-    skip "shell hook checks" "no shell-specific checker configured"
+    if ! command -v shellcheck >/dev/null 2>&1; then
+        skip "shellcheck" "shellcheck is not installed (brew install shellcheck)"
+        return
+    fi
+    # Warning severity and above. Scripts here are POSIX sh, so the check is
+    # scoped to real defects: quoting, unquoted expansions, portability.
+    # SC2086-style deliberate word-splitting is already annotated inline.
+    files="$(changed_shell_files)"
+    if [ -z "$files" ]; then
+        skip "shellcheck" "no staged shell files after filtering"
+        return
+    fi
+    # $files is an intentional word list of paths, not a single argument.
+    # SC2086 is an info-level check and the gate runs at --severity=warning,
+    # so it is not reported here.
+    run "shellcheck" shellcheck --severity=warning $files
 }
 
 run_precommit() {
@@ -579,6 +603,17 @@ run_full_semgrep() {
     run "semgrep" env SEMGREP_SEND_METRICS=off semgrep scan --metrics=off --error --quiet --config "$ROOT/.semgrep/local-quality.yml" "$ROOT/macos/Sources/AetowerUI" "$ROOT/macos/Sources/AetowerApp" "$ROOT/macos/Sources/AetowerBridge" "$ROOT/rust/crates" "$ROOT/scripts"
 }
 
+run_full_shellcheck() {
+    if ! should_run_label "shellcheck"; then
+        return
+    fi
+    if ! command -v shellcheck >/dev/null 2>&1; then
+        skip "shellcheck" "shellcheck is not installed (brew install shellcheck)"
+        return
+    fi
+    run "shellcheck" shellcheck --severity=warning "$ROOT/scripts" "$ROOT/.githooks"
+}
+
 run_full_dependency_policy() {
     deny_bin="$(command -v cargo-deny || true)"
     if [ -z "$deny_bin" ]; then
@@ -606,6 +641,7 @@ run_full_gate() {
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode "$MODE"
     run_full_gitleaks
     run_full_swiftlint
+    run_full_shellcheck
     run_full_semgrep
     run "cargo fmt --check" "$CARGO_BIN" fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
     run "cargo clippy" "$CARGO_BIN" clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings

@@ -38,6 +38,7 @@ printf '\nGate toolchain:\n'
 check_tool cargo "rustup toolchain install $(sed -n 's/^channel = "\(.*\)"/\1/p' "$ROOT/rust-toolchain.toml" 2>/dev/null || printf '1.92.0')"
 check_tool swiftlint "brew install swiftlint"
 check_tool semgrep "brew install semgrep"
+check_tool shellcheck "brew install shellcheck"
 check_tool gitleaks "brew install gitleaks"
 check_tool jq "brew install jq"
 
@@ -46,7 +47,7 @@ if [ "$missing" -ne 0 ]; then
     printf 'Quick start:\n\n'
     printf '  rustup toolchain install 1.92.0 --profile minimal --component rustfmt --component clippy\n'
     printf '  cargo install cargo-deny --locked\n'
-    printf '  brew install swiftlint semgrep gitleaks jq\n\n'
+    printf '  brew install swiftlint semgrep shellcheck gitleaks jq\n\n'
     exit 1
 fi
 
