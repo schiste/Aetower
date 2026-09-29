@@ -15,7 +15,7 @@ dirs = "7"
 libc = "0.2"
 image.workspace = true
 miniz_oxide.workspace = true
-rusqlite = { version = "0.34", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
