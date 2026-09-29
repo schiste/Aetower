@@ -450,6 +450,28 @@ enum StorageReclaimPolicy {
             && !item.hasHardlinks
     }
 
+    /// Whether a repository artifact folder is eligible for destructive trash
+    /// cleanup.
+    ///
+    /// This predicate decides what the Repos tab offers to delete, so it must
+    /// have exactly one definition. It previously existed twice — as a private
+    /// helper on `RepositoryView` and as a private static on `AppState` — which
+    /// meant a tightening to one copy would silently desynchronise what the UI
+    /// offers from what the cleanup path accepts. The Rust engine applies its
+    /// own verification before deleting; this is the client-side gate, and the
+    /// two client-side copies are now one.
+    static func repositoryFolderIsTrashActionable(_ folder: StorageRepoArtifactFolderModel) -> Bool {
+        ["safe", "rebuildable"].contains(folder.cleanupTier)
+            && folder.cleanupAllowed
+            && folder.defaultCleanupAction == "trash"
+            && folder.cleanupBlockers.isEmpty
+            && folder.identity != nil
+            && folder.scanGenerationId != nil
+            && !folder.sizeTruncated
+            && !folder.cloudPlaceholder
+            && !folder.hasHardlinks
+    }
+
     static func bulkCleanupPlan(
         items: [StorageHygieneItemModel],
         repositoryArtifacts: [StorageRepositoryArtifactModel] = []

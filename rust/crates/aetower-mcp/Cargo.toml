@@ -11,7 +11,7 @@ name = "aetower_mcp"
 aetower-diagnostics = { path = "../aetower-diagnostics" }
 aetower-model = { path = "../aetower-model" }
 aetower-policy = { path = "../aetower-policy" }
-dirs = "5"
+dirs = "7"
 libc = "0.2"
 image.workspace = true
 miniz_oxide.workspace = true

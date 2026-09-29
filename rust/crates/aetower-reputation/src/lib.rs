@@ -60,7 +60,19 @@ pub fn hash_file(path: &str) -> Option<String> {
             Err(_) => return None,
         }
     }
-    Some(format!("{:x}", hasher.finalize()))
+    Some(hex_digest(&hasher.finalize()))
+}
+
+/// Lowercase hex for a digest. sha2 0.11 returns `hybrid_array::Array`, which
+/// no longer gets `LowerHex` through the blanket impl `generic-array` provided,
+/// so the bytes are rendered explicitly.
+fn hex_digest(digest: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 /// Derive a single safety verdict from VirusTotal's per-engine counts. Malicious

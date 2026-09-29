@@ -3218,7 +3218,19 @@ fn file_content_hash(path: &Path) -> Option<String> {
         }
         hasher.update(&buffer[..count]);
     }
-    Some(format!("sha256:{:x}", hasher.finalize()))
+    Some(format!("sha256:{}", hex_digest(&hasher.finalize())))
+}
+
+/// Lowercase hex for a digest. sha2 0.11 returns `hybrid_array::Array`, which
+/// no longer gets `LowerHex` through the blanket impl `generic-array` provided,
+/// so the bytes are rendered explicitly.
+fn hex_digest(digest: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 fn file_partial_content_hash(path: &Path, size_bytes: u64) -> Option<String> {
