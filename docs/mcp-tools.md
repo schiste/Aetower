@@ -256,11 +256,11 @@ Example — `aetower call aetower_diff_snapshots --arg before_millis=<epoch-mill
 
 ```json
 {
- "after_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+ "after_boot_id": "<boot-uuid>",
  "after_boot_time_millis": 1783870655991,
  "after_previous_shutdown": null,
  "after_snapshot_millis": 1783970027215,
- "before_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+ "before_boot_id": "<boot-uuid>",
  "before_boot_time_millis": 1783870655991,
  "before_previous_shutdown": null,
  "before_snapshot_millis": 1783968370201,
@@ -795,13 +795,13 @@ Example — `aetower call aetower_host_summary`:
   },
   "bluetooth_devices": [
    {
-    "address": "f8-73-df-c5-93-9f",
+    "address": "<mac-address>",
     "battery_percent": 21,
     "device_type": "mouse",
     "name": "Mickey"
    },
    {
-    "address": "38-09-fb-02-17-14",
+    "address": "<mac-address>",
     "battery_percent": 100,
     "device_type": "keyboard",
     "name": "Magic Keyboard with Touch ID and Numeric Keypad"
@@ -856,11 +856,11 @@ Example — `aetower call aetower_investigation_bundle`:
   "… 4 more items"
  ],
  "history_diff": {
-  "after_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+  "after_boot_id": "<boot-uuid>",
   "after_boot_time_millis": 1783870655991,
   "after_previous_shutdown": null,
   "after_snapshot_millis": 1783970188749,
-  "before_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+  "before_boot_id": "<boot-uuid>",
   "before_boot_time_millis": 1783870655991,
   "before_previous_shutdown": null,
   "before_snapshot_millis": 1783968410211,
@@ -1155,7 +1155,7 @@ Example — `aetower call aetower_reboot_report`:
  "session_count": 1,
  "sessions": [
   {
-   "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+   "boot_id": "<boot-uuid>",
    "boot_time_millis": 1783870655990,
    "first_sequence": 328,
    "first_snapshot_millis": 1783935800200,
@@ -1298,7 +1298,7 @@ Run an explicit OpenSSF Scorecard repository readiness scan for one GitHub repos
 | `repo_root` | string | required; Absolute path to the local Git repository root. |
 | `timeout_seconds` | integer | minimum 1; maximum 120; default 30 |
 
-Example — `aetower call aetower_repository_scorecard --arg repo_root="/Users/christophehenner/.claude/plugins/cache/claude-plugins-official/sentry/1.0.0"`:
+Example — `aetower call aetower_repository_scorecard --arg repo_root="~/.claude/plugins/cache/claude-plugins-official/sentry/1.0.0"`:
 
 ```json
 {

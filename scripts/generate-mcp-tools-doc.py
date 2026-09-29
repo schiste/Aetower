@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -129,6 +130,49 @@ HOME = str(pathlib.Path.home())
 USERNAME = pathlib.Path.home().name
 EXAMPLES_CACHE = ROOT / "docs" / "mcp-tools.examples.json"
 
+# Absolute path prefixes that can appear in tool args or output but are not
+# under $HOME, so the plain HOME substitution below cannot reach them. Each
+# entry is (regex, replacement). Order matters: longer/more specific first.
+PATH_SCRUBBERS = [
+    # Any remaining /Users/<name>/... (a colleague's home, a second account).
+    (re.compile(r"/Users/[^/\s\"']+"), "~"),
+    # Other well-known absolute roots that identify a machine.
+    (re.compile(r"/private/var/folders/[^\s\"']+"), "/private/var/folders/<redacted>"),
+    (re.compile(r"/var/folders/[^\s\"']+"), "/var/folders/<redacted>"),
+    (re.compile(r"/Volumes/[^\s\"']+"), "/Volumes/<redacted>"),
+]
+
+# Hardware/OS identifiers. These are not personal data on their own, but a
+# published example carrying a real boot UUID or Bluetooth MAC links every
+# snapshot in the doc to one specific machine, which defeats the point of a
+# local-first privacy product.
+IDENTIFIER_SCRUBBERS = [
+    (re.compile(r"\b[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+                r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\b"), "<boot-uuid>"),
+    (re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b"), "<mac-address>"),
+]
+
+
+def scrub(value):
+    """Remove machine-identifying strings from a value about to be published.
+
+    Applied to BOTH tool arguments and tool output. Args were previously only
+    HOME-substituted, which left paths like
+    /Users/<name>/.claude/plugins/... verbatim in the published docs.
+    """
+    if isinstance(value, str):
+        text = value.replace(HOME, "~").replace(USERNAME, "operator")
+        for pattern, replacement in PATH_SCRUBBERS:
+            text = pattern.sub(replacement, text)
+        for pattern, replacement in IDENTIFIER_SCRUBBERS:
+            text = pattern.sub(replacement, text)
+        return text
+    if isinstance(value, dict):
+        return {k: scrub(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub(v) for v in value]
+    return value
+
 
 def load_examples_cache() -> dict:
     if EXAMPLES_CACHE.exists():
@@ -209,7 +253,7 @@ def sanitize(value, depth: int = 0):
             return [sanitize(value[0], depth + 1), f"… {len(value) - 1} more items"]
         return [sanitize(v, depth + 1) for v in value]
     if isinstance(value, str):
-        text = value.replace(HOME, "~").replace(USERNAME, "operator")
+        text = scrub(value)
         return text[:96] + "…" if len(text) > 96 else text
     return value
 
@@ -234,8 +278,12 @@ def example_block(name: str, schema: dict, seeds: dict, cache: dict) -> list[str
         # Cache the SANITIZED payload: times/paths are already normalized and
         # nothing personal is persisted. Time-window args are cached as a
         # readable placeholder so the invocation line stays meaningful.
+        # Args go through scrub() too: the invocation line is rendered into
+        # the published doc, so an unsanitized repo_root would publish the
+        # generating machine's absolute home path.
         display_args = {
-            k: ("<epoch-millis>" if k.endswith("_millis") else v) for k, v in args.items()
+            k: ("<epoch-millis>" if k.endswith("_millis") else scrub(v))
+            for k, v in args.items()
         }
         cached = {"args": display_args, "output": sanitize(payload)}
         cache[name] = cached

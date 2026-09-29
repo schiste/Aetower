@@ -219,20 +219,20 @@
      },
      "bluetooth_devices": [
       {
-       "address": "f8-73-df-c5-93-9f",
+       "address": "<mac-address>",
        "battery_percent": 21,
        "device_type": "mouse",
        "name": "Mickey"
       },
       {
-       "address": "38-09-fb-02-17-14",
+       "address": "<mac-address>",
        "battery_percent": 100,
        "device_type": "keyboard",
        "name": "Magic Keyboard with Touch ID and Numeric Keypad"
       }
      ],
      "boot_session": {
-      "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+      "boot_id": "<boot-uuid>",
       "boot_time_millis": 1783870655991,
       "host_uptime_millis": 99540767,
       "previous_shutdown": null
@@ -411,11 +411,11 @@
    "after_millis": "<epoch-millis>"
   },
   "output": {
-   "after_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+   "after_boot_id": "<boot-uuid>",
    "after_boot_time_millis": 1783870655991,
    "after_previous_shutdown": null,
    "after_snapshot_millis": 1783970027215,
-   "before_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+   "before_boot_id": "<boot-uuid>",
    "before_boot_time_millis": 1783870655991,
    "before_previous_shutdown": null,
    "before_snapshot_millis": 1783968370201,
@@ -591,20 +591,20 @@
      },
      "bluetooth_devices": [
       {
-       "address": "f8-73-df-c5-93-9f",
+       "address": "<mac-address>",
        "battery_percent": 21,
        "device_type": "mouse",
        "name": "Mickey"
       },
       {
-       "address": "38-09-fb-02-17-14",
+       "address": "<mac-address>",
        "battery_percent": 100,
        "device_type": "keyboard",
        "name": "Magic Keyboard with Touch ID and Numeric Keypad"
       }
      ],
      "boot_session": {
-      "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+      "boot_id": "<boot-uuid>",
       "boot_time_millis": 1783870655991,
       "host_uptime_millis": 99540767,
       "previous_shutdown": null
@@ -814,7 +814,7 @@
        "…"
       ],
       "boot_session": {
-       "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+       "boot_id": "<boot-uuid>",
        "boot_time_millis": 1783870655991,
        "host_uptime_millis": 97738244,
        "previous_shutdown": null
@@ -1075,20 +1075,20 @@
     },
     "bluetooth_devices": [
      {
-      "address": "f8-73-df-c5-93-9f",
+      "address": "<mac-address>",
       "battery_percent": 21,
       "device_type": "mouse",
       "name": "Mickey"
      },
      {
-      "address": "38-09-fb-02-17-14",
+      "address": "<mac-address>",
       "battery_percent": 100,
       "device_type": "keyboard",
       "name": "Magic Keyboard with Touch ID and Numeric Keypad"
      }
     ],
     "boot_session": {
-     "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+     "boot_id": "<boot-uuid>",
      "boot_time_millis": 1783870655991,
      "host_uptime_millis": 99540767,
      "previous_shutdown": null
@@ -1150,11 +1150,11 @@
     "… 4 more items"
    ],
    "history_diff": {
-    "after_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+    "after_boot_id": "<boot-uuid>",
     "after_boot_time_millis": 1783870655991,
     "after_previous_shutdown": null,
     "after_snapshot_millis": 1783970188749,
-    "before_boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+    "before_boot_id": "<boot-uuid>",
     "before_boot_time_millis": 1783870655991,
     "before_previous_shutdown": null,
     "before_snapshot_millis": 1783968410211,
@@ -1372,7 +1372,7 @@
    "session_count": 1,
    "sessions": [
     {
-     "boot_id": "0C16235D-6F67-43D0-95BE-B3C070276D90",
+     "boot_id": "<boot-uuid>",
      "boot_time_millis": 1783870655990,
      "first_sequence": 328,
      "first_snapshot_millis": 1783935800200,
@@ -1512,7 +1512,7 @@
  },
  "aetower_repository_scorecard": {
   "args": {
-   "repo_root": "/Users/christophehenner/.claude/plugins/cache/claude-plugins-official/sentry/1.0.0"
+   "repo_root": "~/.claude/plugins/cache/claude-plugins-official/sentry/1.0.0"
   },
   "output": {
    "cache_hit": false,

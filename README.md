@@ -105,6 +105,17 @@ sh scripts/ci-local.sh --mode pre-push
 sh scripts/ci-local.sh --mode full
 ```
 
+The gate runs both test suites. To run one directly while iterating:
+
+```sh
+cargo test --locked --manifest-path rust/Cargo.toml --workspace
+sh scripts/build-rust.sh   # required once before the first swift test
+/usr/bin/swift test --package-path macos --scratch-path "$PWD/macos/.build"
+```
+
+`aetower-mcp` and `aetower-helper` need `-- --test-threads=1`; the gate passes it
+for you. See [Local CI](docs/local-ci.md) for why and for the full gate list.
+
 Package a local app:
 
 ```sh

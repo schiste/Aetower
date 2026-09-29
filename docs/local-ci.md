@@ -48,6 +48,47 @@ chmod +x .githooks/pre-commit .githooks/pre-push scripts/ci-local.sh scripts/ins
 | Full local battery | `sh scripts/ci-local.sh --mode full` | `full` |
 | Hosted push/PR CI | `.github/workflows/quality.yml` | `pre-push` on `macos-15` |
 
+## Running Tests Directly
+
+The gate runner is the supported path, but the underlying suites can be run
+directly while iterating.
+
+Rust (all crates):
+
+```sh
+cargo test --locked --manifest-path rust/Cargo.toml --workspace
+```
+
+Rust (single crate, fast loop):
+
+```sh
+cargo test --locked --manifest-path rust/Cargo.toml -p aetower-core
+```
+
+`aetower-mcp` and `aetower-helper` must run with one test thread. This is not
+stylistic: `aetower-mcp`'s storage tests share a single process-wide SQLite
+index (`state_store.rs::storage_index_directory`), so parallel threads
+contaminate the global report-sections memo and fail with *different* tests on
+each run.
+
+```sh
+cargo test --locked --manifest-path rust/Cargo.toml -p aetower-mcp -- --test-threads=1
+```
+
+Swift: the `AetowerUITests` suite needs the Rust bridge to exist first, because
+`AetowerBindings` links `libaetower_ffi.dylib` and the generated
+`aetower_ffiFFI/module.modulemap`. On a clean checkout the first `swift test`
+fails with `module map file ... not found` until you run:
+
+```sh
+sh scripts/build-rust.sh
+/usr/bin/swift test --package-path macos --scratch-path "$PWD/macos/.build"
+```
+
+`--scratch-path` must be `macos/.build`. `macos/Package.swift` hardcodes that
+path in its linker `unsafeFlags`, so any other scratch path produces a link
+failure.
+
 Compatibility aliases:
 
 - `--mode prepush` maps to `pre-push`
@@ -138,10 +179,12 @@ Pre-push is intentionally full-surface. It is the local equivalent of CI.
 | `semgrep` | Full Semgrep scan across Swift UI/app/bridge code, Rust crates, and scripts when Semgrep is healthy. |
 | `cargo fmt --check` | Workspace Rust formatting. |
 | `cargo clippy` | Workspace Rust clippy with warnings denied. |
-| `cargo test (workspace)` | Workspace Rust tests excluding helper. |
+| `cargo test (workspace)` | Workspace Rust tests excluding `aetower-helper` and `aetower-mcp`. |
+| `cargo test (aetower-mcp)` | MCP crate tests with one test thread. Serial by necessity: its storage tests share one process-wide SQLite index, so parallel threads cross-contaminate the global report-sections memo and fail non-deterministically. |
 | `cargo test (aetower-helper)` | Helper tests with one test thread. |
 | `build Rust bridge` | Rust bridge and generated Swift binding rebuild. |
 | `swift build` | SwiftPM debug build. |
+| `swift test` | The `AetowerUITests` suite (model decoding, storage reclaim policy, destructive `TrashService` paths). Requires the Rust bridge, so it runs after `build Rust bridge`. |
 | `benchmark budget` | Enforced synthetic runtime budget. |
 | `telemetry smoke` | Real OTLP/HTTP loopback export verification. |
 | `package smoke` | Rebuilds and verifies packaged `dist/Aetower.app`. |

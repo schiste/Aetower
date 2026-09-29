@@ -357,13 +357,23 @@ changed_semgrep_files() {
 }
 
 fallback_push_base() {
+    # This repository's default branch is `master`, not `main`. The previous
+    # order checked only origin/main/main, so in CI (where actions/checkout
+    # leaves a detached HEAD with no @{upstream}) the range collapsed to
+    # HEAD..HEAD and `gitleaks git --log-opts` plus the quality-guard diff
+    # scan silently inspected nothing. Check master first, and treat a
+    # resolvable default branch as a hard success before falling back.
     if git rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
         printf '%s' '@{upstream}'
-    elif git rev-parse --verify 'origin/main' >/dev/null 2>&1; then
-        printf '%s' 'origin/main'
-    elif git rev-parse --verify 'main' >/dev/null 2>&1; then
-        printf '%s' 'main'
-    elif git rev-parse --verify 'HEAD~1' >/dev/null 2>&1; then
+        return
+    fi
+    for candidate in origin/HEAD origin/master origin/main master main; do
+        if git rev-parse --verify "$candidate" >/dev/null 2>&1; then
+            printf '%s' "$candidate"
+            return
+        fi
+    done
+    if git rev-parse --verify 'HEAD~1' >/dev/null 2>&1; then
         printf '%s' 'HEAD~1'
     else
         printf '%s' 'HEAD'
@@ -480,8 +490,24 @@ run_precommit_semgrep() {
 }
 
 run_workspace_tests() {
-    run "cargo test (workspace)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" --workspace --exclude aetower-helper
+    # aetower-mcp runs single-threaded on purpose. Its storage tests share one
+    # process-wide SQLite index (state_store.rs storage_index_directory), and
+    # 14 of 17 index-using tests deliberately do not override it, so parallel
+    # threads cross-contaminate the global INDEX_REPORT_SECTIONS_MEMO and
+    # fail non-deterministically with *different* tests on each run. Until
+    # every test owns its directory, serialise the crate. The suite is
+    # ~8 min, which is acceptable inside the pre-push budget.
+    run "cargo test (workspace)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" --workspace --exclude aetower-helper --exclude aetower-mcp
+    run "cargo test (aetower-mcp)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-mcp -- --test-threads=1
     run "cargo test (aetower-helper)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper -- --test-threads=1
+}
+
+# Swift tests are a real gate, not an optional extra: macos/Tests/AetowerUITests
+# covers model decoding, storage reclaim policy, and the destructive
+# TrashService paths. Requires the Rust bridge, so this must run after
+# build-rust.sh in the full gate.
+run_swift_tests() {
+    run "swift test" /usr/bin/swift test --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
 }
 
 run_precommit_swift() {
@@ -594,6 +620,7 @@ run_full_gate() {
         macos/Sources/AetowerBindings/aetower_ffi.swift \
         macos/Sources/aetower_ffiFFI/aetower_ffiFFI.h
     run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
+    run_swift_tests
     run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
     run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"
     run "package smoke" sh "$ROOT/scripts/quality-package-smoke.sh"

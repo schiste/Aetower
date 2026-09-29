@@ -13,6 +13,9 @@ tmp/
 .codex/
 .cursor/
 .aider/
+# Aethyme broker runtime state: live SQLite DB (+WAL/SHM) and telemetry
+# JSONL that embeds absolute home paths. Same class as .claude/ above.
+.aethyme/
 
 # Editor / IDE scratch
 .chau7/
