@@ -8,7 +8,7 @@ license.workspace = true
 aetower-diagnostics = { path = "../aetower-diagnostics" }
 aetower-model = { path = "../aetower-model" }
 aetower-time = { path = "../aetower-time" }
-bincode = "1"
+bincode = "3"
 libc = "0.2"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde_json.workspace = true
