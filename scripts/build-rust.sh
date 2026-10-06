@@ -48,17 +48,21 @@ find "$ROOT/macos" -type d -path '*/plugins/outputs/*/BuildRustBridgePlugin' | w
   touch "$plugin_output_dir/.plugin-ready"
 done
 
-"$CARGO_BIN" run --locked -p uniffi-bindgen-swift -- \
+# Build UniFFI once, then invoke the executable directly for all generated outputs.
+"$CARGO_BIN" build --locked -p uniffi-bindgen-swift
+UNIFFI_BINDGEN="$ROOT/rust/target/debug/uniffi-bindgen-swift"
+
+"$UNIFFI_BINDGEN" \
   --swift-sources \
   "$DEBUG_DYLIB" \
   "$ROOT/macos/Sources/AetowerBindings"
 
-"$CARGO_BIN" run --locked -p uniffi-bindgen-swift -- \
+"$UNIFFI_BINDGEN" \
   --headers \
   "$DEBUG_DYLIB" \
   "$ROOT/macos/Sources/aetower_ffiFFI"
 
-"$CARGO_BIN" run --locked -p uniffi-bindgen-swift -- \
+"$UNIFFI_BINDGEN" \
   --modulemap \
   --module-name aetower_ffiFFI \
   --modulemap-filename module.modulemap \
