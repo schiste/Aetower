@@ -29,6 +29,8 @@ The hosted workflow additionally:
 - pins every action to a commit SHA (Dependabot opens the PRs that move them)
 - caches `rust/target` and the cargo registry, keyed on `rust/Cargo.lock` and
   `rust-toolchain.toml`
+- caches the pinned `cargo-deny` executable by runner OS, Rust toolchain, and
+  version so CI does not rebuild this tool on every run
 - caches `macos/.build` and the SwiftPM cache, keyed on `macos/Package.resolved`
 - reads the Rust version from `rust-toolchain.toml` instead of repeating it
 - cancels superseded branch runs but never cancels `master`, because a
