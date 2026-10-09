@@ -1,0 +1,85 @@
+{
+  "schema_version": "aethyme-act-starter-v1",
+  "repo": {
+    "name": "Aetower",
+    "kind": "repository"
+  },
+  "recommended_mode": "repo-act",
+  "starter_checklists": {
+    "debugging": [
+      "Load repo-onboarding first if the repository or area is unfamiliar.",
+      "Run Aethyme Explore on the user task before broad manual search.",
+      "Verify answer candidates before concluding when trust_policy is not answer-safe.",
+      "Identify the nearest fast test or validation command before editing.",
+      "Inspect caution zones before changing generated or vendored areas."
+    ],
+    "change_validation": [
+      "Run the fastest relevant test command first.",
+      "Check likely entrypoints and impacted callers before finishing.",
+      "Re-run lint/build only after the focused validation passes.",
+      "Document any override-based maintainer note that affected the change plan."
+    ]
+  },
+  "commands": {
+    "fast_test": "cargo test --manifest-path rust/Cargo.toml --workspace",
+    "full_test": null,
+    "lint": null,
+    "build": "cargo build --manifest-path rust/Cargo.toml --workspace",
+    "dev": null
+  },
+  "entrypoints": [
+    {
+      "path": "rust/crates/aetower-cli/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `rust`",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "aetower",
+      "relevance": "primary"
+    },
+    {
+      "path": "rust/crates/aetower-bench/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `rust`",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "aetower-bench",
+      "relevance": "product"
+    },
+    {
+      "path": "rust/crates/aetower-helper/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `rust`",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "aetower-helper",
+      "relevance": "product"
+    }
+  ],
+  "primary_entrypoints": {
+    "cli": {
+      "path": "rust/crates/aetower-cli/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `rust`",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "aetower",
+      "relevance": "primary"
+    }
+  },
+  "caution_zones": [],
+  "telemetry": {
+    "derived_from": ".aethyme/generated/onboarding.json",
+    "entrypoint_count": 5,
+    "primary_entrypoint_count": 1,
+    "caution_zone_count": 0
+  }
+}

@@ -1,0 +1,408 @@
+{
+  "schema_version": "aethyme-onboarding-v2",
+  "repo": {
+    "name": "Aetower",
+    "root": ".",
+    "kind": "repository",
+    "languages": [
+      "rust"
+    ],
+    "primary_language": "rust",
+    "package_manager": "cargo",
+    "manifests": [
+      "rust/Cargo.toml",
+      "rust/crates/aetower-attribution/Cargo.toml",
+      "rust/crates/aetower-bench/Cargo.toml",
+      "rust/crates/aetower-cli/Cargo.toml",
+      "rust/crates/aetower-collector/Cargo.toml",
+      "rust/crates/aetower-core/Cargo.toml",
+      "rust/crates/aetower-diagnostics/Cargo.toml",
+      "rust/crates/aetower-ffi/Cargo.toml",
+      "rust/crates/aetower-friction/Cargo.toml",
+      "rust/crates/aetower-gpu/Cargo.toml",
+      "rust/crates/aetower-helper/Cargo.toml",
+      "rust/crates/aetower-history/Cargo.toml",
+      "rust/crates/aetower-identity/Cargo.toml",
+      "rust/crates/aetower-mcp/Cargo.toml",
+      "rust/crates/aetower-model/Cargo.toml",
+      "rust/crates/aetower-persistence/Cargo.toml",
+      "rust/crates/aetower-policy/Cargo.toml",
+      "rust/crates/aetower-regression/Cargo.toml",
+      "rust/crates/aetower-reputation/Cargo.toml",
+      "rust/crates/aetower-sensors/Cargo.toml",
+      "rust/crates/aetower-telemetry/Cargo.toml",
+      "rust/crates/aetower-time/Cargo.toml",
+      "rust/crates/uniffi-bindgen-swift/Cargo.toml"
+    ]
+  },
+  "workspaces": [
+    {
+      "root": "rust",
+      "manifest": {
+        "path": "rust/Cargo.toml",
+        "kind": "cargo"
+      },
+      "package_manager": "cargo",
+      "languages": [
+        "rust"
+      ],
+      "members": [
+        "rust/crates/aetower-attribution",
+        "rust/crates/aetower-bench",
+        "rust/crates/aetower-cli",
+        "rust/crates/aetower-collector",
+        "rust/crates/aetower-core",
+        "rust/crates/aetower-diagnostics",
+        "rust/crates/aetower-ffi",
+        "rust/crates/aetower-friction",
+        "rust/crates/aetower-gpu",
+        "rust/crates/aetower-helper",
+        "rust/crates/aetower-history",
+        "rust/crates/aetower-identity",
+        "rust/crates/aetower-mcp",
+        "rust/crates/aetower-model",
+        "rust/crates/aetower-persistence",
+        "rust/crates/aetower-policy",
+        "rust/crates/aetower-regression",
+        "rust/crates/aetower-reputation",
+        "rust/crates/aetower-sensors",
+        "rust/crates/aetower-telemetry",
+        "rust/crates/aetower-time",
+        "rust/crates/uniffi-bindgen-swift"
+      ],
+      "lockfiles": [
+        "rust/Cargo.lock"
+      ],
+      "candidate_commands": [
+        {
+          "kind": "fast_test",
+          "command": "cargo test --manifest-path rust/Cargo.toml --workspace",
+          "source": "rust/Cargo.toml",
+          "confidence": "high"
+        },
+        {
+          "kind": "build",
+          "command": "cargo build --manifest-path rust/Cargo.toml --workspace",
+          "source": "rust/Cargo.toml",
+          "confidence": "high"
+        }
+      ],
+      "evidence": [
+        {
+          "kind": "tracked_manifest",
+          "detail": "rust/Cargo.toml",
+          "confidence": "high"
+        },
+        {
+          "kind": "workspace_members",
+          "detail": "22 tracked member roots",
+          "confidence": "high"
+        },
+        {
+          "kind": "ci_usage",
+          "detail": "workspace root mentioned 12 time(s) in CI",
+          "confidence": "medium"
+        }
+      ],
+      "confidence": "high",
+      "primary": true,
+      "ranking": {
+        "root_manifest": false,
+        "declares_workspace": true,
+        "member_count": 22,
+        "ci_mentions": 12,
+        "executable_entrypoints": 5,
+        "source_files": 89
+      }
+    }
+  ],
+  "primary_workspace": {
+    "root": "rust",
+    "manifest": {
+      "path": "rust/Cargo.toml",
+      "kind": "cargo"
+    },
+    "package_manager": "cargo",
+    "languages": [
+      "rust"
+    ],
+    "members": [
+      "rust/crates/aetower-attribution",
+      "rust/crates/aetower-bench",
+      "rust/crates/aetower-cli",
+      "rust/crates/aetower-collector",
+      "rust/crates/aetower-core",
+      "rust/crates/aetower-diagnostics",
+      "rust/crates/aetower-ffi",
+      "rust/crates/aetower-friction",
+      "rust/crates/aetower-gpu",
+      "rust/crates/aetower-helper",
+      "rust/crates/aetower-history",
+      "rust/crates/aetower-identity",
+      "rust/crates/aetower-mcp",
+      "rust/crates/aetower-model",
+      "rust/crates/aetower-persistence",
+      "rust/crates/aetower-policy",
+      "rust/crates/aetower-regression",
+      "rust/crates/aetower-reputation",
+      "rust/crates/aetower-sensors",
+      "rust/crates/aetower-telemetry",
+      "rust/crates/aetower-time",
+      "rust/crates/uniffi-bindgen-swift"
+    ],
+    "lockfiles": [
+      "rust/Cargo.lock"
+    ],
+    "candidate_commands": [
+      {
+        "kind": "fast_test",
+        "command": "cargo test --manifest-path rust/Cargo.toml --workspace",
+        "source": "rust/Cargo.toml",
+        "confidence": "high"
+      },
+      {
+        "kind": "build",
+        "command": "cargo build --manifest-path rust/Cargo.toml --workspace",
+        "source": "rust/Cargo.toml",
+        "confidence": "high"
+      }
+    ],
+    "evidence": [
+      {
+        "kind": "tracked_manifest",
+        "detail": "rust/Cargo.toml",
+        "confidence": "high"
+      },
+      {
+        "kind": "workspace_members",
+        "detail": "22 tracked member roots",
+        "confidence": "high"
+      },
+      {
+        "kind": "ci_usage",
+        "detail": "workspace root mentioned 12 time(s) in CI",
+        "confidence": "medium"
+      }
+    ],
+    "confidence": "high",
+    "primary": true,
+    "ranking": {
+      "root_manifest": false,
+      "declares_workspace": true,
+      "member_count": 22,
+      "ci_mentions": 12,
+      "executable_entrypoints": 5,
+      "source_files": 89
+    }
+  },
+  "commands": [
+    {
+      "kind": "fast_test",
+      "command": "cargo test --manifest-path rust/Cargo.toml --workspace",
+      "source": "rust/Cargo.toml",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace manifest"
+    },
+    {
+      "kind": "build",
+      "command": "cargo build --manifest-path rust/Cargo.toml --workspace",
+      "source": "rust/Cargo.toml",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace manifest"
+    }
+  ],
+  "primary_commands": {
+    "fast_test": "cargo test --manifest-path rust/Cargo.toml --workspace",
+    "build": "cargo build --manifest-path rust/Cargo.toml --workspace"
+  },
+  "areas": [
+    {
+      "path": ".github",
+      "role": "automation",
+      "reason": "automation and CI configuration",
+      "confidence": "high"
+    },
+    {
+      "path": "assets",
+      "role": "assets",
+      "reason": "public assets or static files",
+      "confidence": "high"
+    },
+    {
+      "path": "docs",
+      "role": "docs",
+      "reason": "documentation area",
+      "confidence": "high"
+    },
+    {
+      "path": "infra",
+      "role": "infrastructure",
+      "reason": "deployment or infrastructure configuration",
+      "confidence": "high"
+    },
+    {
+      "path": "scripts",
+      "role": "tooling",
+      "reason": "developer tooling or scripts",
+      "confidence": "high"
+    }
+  ],
+  "entrypoints": [
+    {
+      "path": "rust/crates/aetower-cli/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `rust`",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "aetower",
+      "relevance": "primary"
+    },
+    {
+      "path": "rust/crates/aetower-bench/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `rust`",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "aetower-bench",
+      "relevance": "product"
+    },
+    {
+      "path": "rust/crates/aetower-helper/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `rust`",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "aetower-helper",
+      "relevance": "product"
+    },
+    {
+      "path": "rust/crates/aetower-mcp/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `rust`",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "aetower-mcp",
+      "relevance": "product"
+    },
+    {
+      "path": "rust/crates/uniffi-bindgen-swift/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `rust`",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "uniffi-bindgen-swift",
+      "relevance": "supporting"
+    }
+  ],
+  "primary_entrypoints": {
+    "cli": {
+      "path": "rust/crates/aetower-cli/src/main.rs",
+      "kind": "file",
+      "role": "cli",
+      "reason": "tracked Rust binary entrypoint in `rust`",
+      "confidence": "high",
+      "workspace_root": "rust",
+      "provenance": "derived from tracked workspace source",
+      "executable_name": "aetower",
+      "relevance": "primary"
+    }
+  },
+  "caution_zones": [],
+  "generated_paths": [
+    {
+      "path": ".aethyme/generated",
+      "reason": "tracked generated or vendored surface; verify ownership before editing",
+      "provenance": "tracked path classification"
+    }
+  ],
+  "dangerous_paths": [
+    {
+      "path": ".github/workflows",
+      "reason": "repository automation; changes can affect publication or shared CI",
+      "provenance": "tracked path classification"
+    }
+  ],
+  "navigation_recipes": [
+    {
+      "purpose": "Broad repository orientation for a user request",
+      "command": "aethyme explore --repo \"$PWD\" --request \"<task>\" --format answer-json"
+    },
+    {
+      "purpose": "Quick deterministic repo summary",
+      "command": "aethyme repo inspect \"$PWD\" --mode brief --json-output"
+    },
+    {
+      "purpose": "Trace likely impact before editing",
+      "command": "aethyme graph callers \"$PWD\" \"<symbol-or-file>\" --json-output"
+    }
+  ],
+  "summon": {
+    "description": "Use when starting work in an unfamiliar repository, when the task asks for repo overview, setup, architecture, entrypoints, test commands, or where to begin. Skip for narrow file-scoped edits once the relevant paths are already known.",
+    "recommended_when": [
+      "first task in repo",
+      "repo overview",
+      "setup or run instructions",
+      "architecture or entrypoints",
+      "where should I start",
+      "broad debugging or feature-localization request"
+    ],
+    "skip_when": [
+      "known file-scoped edit",
+      "follow-up inside already identified area",
+      "task already localized to concrete files"
+    ],
+    "task_signals": [
+      "unfamiliar repository",
+      "broad task with no path named",
+      "user asks how the repo is organized"
+    ]
+  },
+  "freshness": {
+    "source_digest": "476bbb3a2b860c88f7ded2fe2a69df2c7f0ed01f2392c8e957d4a80634ff9888",
+    "source_commit": null,
+    "source_file_count": 402,
+    "generator": "deterministic"
+  },
+  "telemetry": {
+    "sections": [
+      "repo",
+      "workspaces",
+      "primary_workspace",
+      "commands",
+      "areas",
+      "entrypoints",
+      "caution_zones",
+      "generated_paths",
+      "dangerous_paths",
+      "navigation_recipes",
+      "summon",
+      "freshness"
+    ],
+    "counts": {
+      "workspaces": 1,
+      "commands": 2,
+      "areas": 5,
+      "entrypoints": 5,
+      "caution_zones": 0,
+      "generated_paths": 1,
+      "dangerous_paths": 1,
+      "navigation_recipes": 3,
+      "notes": 0
+    },
+    "overrides_applied": false,
+    "override_source": null,
+    "override_invalid": false
+  }
+}
