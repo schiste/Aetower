@@ -83,6 +83,72 @@ final class MonitorViewModelTests: XCTestCase {
         XCTAssertEqual(model.lastDeltaRemovedRowCount, 0)
     }
 
+    func testHostDeltaRefreshesCompactThermalForecast() {
+        var model = MonitorViewModel()
+        model.host = hostSummary(forecast: nil)
+        let forecast = ThermalForecast(
+            minutesToThrottle: 4.5,
+            trendCelsiusPerMin: 1.2,
+            state: .serious,
+            topContributorEntityId: "bundle:com.example.app",
+            topContributorPid: 42,
+            topContributorLabel: "Example App"
+        )
+
+        model.apply(delta: UiSnapshotDelta(
+            updated: true,
+            sequence: 1,
+            baseSequence: 0,
+            capturedAtMillis: 1_000,
+            processLimit: 500,
+            trendPoints: 60,
+            baseAvailable: true,
+            host: hostSummary(forecast: forecast),
+            hostTrend: nil,
+            changedMetricCards: [],
+            changedProcessRows: [],
+            removedEntityIds: [],
+            selectedEntity: nil,
+            selectedEntityChanged: false,
+            selectedEntityRemoved: false,
+            totalEntityCount: 0,
+            returnedEntityCount: 0,
+            totalProcessCount: 0,
+            timelineWarningCount: 0,
+            timelineCriticalCount: 0
+        ))
+
+        XCTAssertEqual(model.host?.thermalForecast?.minutesToThrottle, 4.5)
+        XCTAssertEqual(model.host?.thermalForecast?.topContributorLabel, "Example App")
+    }
+
+    private func hostSummary(forecast: ThermalForecast?) -> UiHostSummary {
+        UiHostSummary(
+            machineFriction: 0,
+            cpuPercent: 0,
+            memoryUsedBytes: 0,
+            memoryTotalBytes: 0,
+            compressedMemoryBytes: 0,
+            swapUsedBytes: 0,
+            diskReadBps: 0,
+            diskWriteBps: 0,
+            networkReceiveBps: 0,
+            networkSendBps: 0,
+            wakeupsPerSecond: 0,
+            gpuPercent: 0,
+            gpuMemoryBytes: 0,
+            thermalState: .nominal,
+            thermalForecast: forecast,
+            onBattery: false,
+            lowPowerMode: false,
+            frontmostAppName: nil,
+            frontmostWindowTitle: nil,
+            aiAgentCount: 0,
+            entityCount: 0,
+            processCount: 0
+        )
+    }
+
     private func metricCard(id: String, displayValue: String) -> UiMetricCard {
         UiMetricCard(
             id: id,

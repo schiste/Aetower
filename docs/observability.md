@@ -78,6 +78,35 @@ series; size your collector/Prometheus retention accordingly.
 The metric-name constants are the single source of truth in
 `rust/crates/aetower-telemetry/src/lib.rs` (`pub mod metric_names`).
 
+## Local UI refresh diagnostics
+
+Aetower emits a bounded `ui-refresh-slow` diagnostic when a UI refresh takes at
+least 250 ms or publication takes at least 120 ms, and a periodic
+`ui-refresh-sample` for the intervening refreshes. The sample window records its
+actual `window_duration_millis` and `window_refreshes`; counts include updated,
+no-change, failed, and cancelled cycles, so a slow-event count can be compared
+with the observed denominator.
+
+Per-refresh timings include `full_snapshot_fetch_millis`,
+`evaluator_snapshot_fetch_millis`, `monitor_payload_fetch_millis`,
+`runtime_lag_fetch_millis`, `operator_state_fetch_millis`,
+`worker_total_millis`, `monitor_decode_millis`, `monitor_row_build_millis`,
+`publish_millis`, and `ui_refresh_millis`. Window `*_fetches` and
+`window_worker_total_attempts` count attempts; their `*_timing_samples` fields
+(and `window_worker_samples`) count only calls with measured durations. Means
+use timing-sample counts, not attempt counts; when no samples exist, the mean is
+`n/a`. An attempted call that throws therefore increments its attempt counter; its
+elapsed time is recorded when measurable, otherwise it contributes no fabricated
+zero to the mean. Per-refresh phase durations are `n/a` when unavailable, and
+`bridge_call_total_millis` is `n/a` if any attempted Bridge phase lacks a
+duration.
+
+The existing runtime metric `bridge_fetch_millis` deliberately retains its
+original scope: it measures only the full `SystemSnapshot` fetch. It does not
+include the compact Monitor delta, runtime-lag metrics, operator-state Bridge
+calls, or total refresh time. Use the local per-phase event fields to compare
+those costs; do not interpret `bridge_fetch_millis` as the whole Bridge path.
+
 ## Collector + Prometheus setup
 
 Minimal `otel-collector-config.yaml` that receives OTLP/HTTP from Aetower and

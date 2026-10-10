@@ -274,7 +274,7 @@ public struct MainListView: View {
     @State private var originFilter: ProcessOriginFilter = .all
     @State private var sortKey: SortKey = .friction
     @State private var focusedIndex: Int = 0
-    @State private var listMode: ListMode = .grouped
+    @State private var listMode: ListMode = .flat
     @State private var groupedEntitiesCache: [GroupingCacheKey: [EntityGroup]] = [:]
     @State private var expandedGroupIDs = Set<String>()
     @State private var groupingTask: Task<[EntityGroup], Never>?
@@ -289,6 +289,7 @@ public struct MainListView: View {
     @StateObject private var processOriginCacheStore = ProcessOriginSnapshotCacheStore()
     @StateObject private var monitorSectionCacheStore = MonitorEntitySectionCacheStore()
     @StateObject private var monitorGroupRowCacheStore = MonitorGroupRowCacheStore()
+    @StateObject private var liveRowsProjectionStore = MonitorLiveRowsStore()
     @FocusState private var searchFieldFocused: Bool
 
     public init(state: AppState, settings: SettingsStore) {
@@ -298,6 +299,45 @@ public struct MainListView: View {
 
     private var processOriginCache: ProcessOriginSnapshotCache {
         processOriginCacheStore.cache(sequence: state.snapshotSequence, entities: state.entitiesState)
+    }
+
+    private var liveRowsProjection: MonitorLiveRowsSnapshot {
+        liveRowsProjectionStore.snapshot(
+            rows: state.monitorViewModel.processRows,
+            sequence: state.monitorViewModel.sequence,
+            query: normalizedSearchQuery,
+            sortKey: sortKey,
+            advancedFilterEntityIds: state.advancedFilterEntityIds
+        )
+    }
+
+    private var hasCompleteLiveRows: Bool {
+        state.monitorViewModel.sequence == 0
+            || state.monitorViewModel.returnedEntityCount >= state.monitorViewModel.totalEntityCount
+    }
+
+    private var hasDetailedMonitorFilter: Bool {
+        originFilter != .all
+            || state.advancedFilterEntityIds != nil
+            || !MonitorLiveRowsProjection.supportsLiveSearch(normalizedSearchQuery)
+            || !MonitorLiveRowsProjection.supportsLiveSort(sortKey)
+    }
+
+    private var usesLightweightMonitorRows: Bool {
+        !isGroupedMode && originFilter == .all
+            && state.advancedFilterEntityIds == nil
+            && MonitorLiveRowsProjection.supportsLiveSearch(normalizedSearchQuery)
+            && MonitorLiveRowsProjection.supportsLiveSort(sortKey)
+            && hasCompleteLiveRows
+    }
+
+    private var shouldDemandFullSnapshot: Bool {
+        MonitorSnapshotPolicy.requiresFullSnapshot(
+            isGroupedMode: isGroupedMode,
+            hasSelectedEntity: selectedEntityID != nil,
+            hasDetailedFilter: hasDetailedMonitorFilter,
+            hasCompleteLiveRows: hasCompleteLiveRows
+        )
     }
 
     public var body: some View {
@@ -354,6 +394,7 @@ public struct MainListView: View {
             groupingTask = nil
             searchFieldFocused = false
         }
+        .demandsFullSnapshot(from: state, when: shouldDemandFullSnapshot, reason: "monitor.full-details")
     }
 
     @ViewBuilder
@@ -419,6 +460,26 @@ public struct MainListView: View {
                         )
                         .layoutPriority(1)
                 }
+            } else if selectedEntityID != nil {
+                HSplitView {
+                    rankingPanel
+                        .frame(
+                            minWidth: 420,
+                            idealWidth: 760,
+                            maxWidth: .infinity,
+                            maxHeight: .infinity
+                        )
+                        .layoutPriority(2)
+                    VStack(spacing: AetowerDesign.Spacing.sm) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading full entity details…")
+                            .font(AetowerDesign.Typography.caption)
+                            .foregroundStyle(AetowerDesign.Ink.secondary)
+                    }
+                    .frame(minWidth: 360, idealWidth: 760, maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(1)
+                }
             } else {
                 rankingPanel
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -445,6 +506,7 @@ public struct MainListView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .accessibilityLabel("Layout")
+            .help("Flat uses live compact rows; Grouped loads the full entity snapshot.")
             .frame(width: 86)
             .onChange(of: listMode) { _, _ in
                 focusedIndex = 0
@@ -1689,7 +1751,107 @@ public struct MainListView: View {
         }
     }
 
+    private var lightweightRankedEntitiesSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("")
+                    .frame(width: 16)
+                MonitorHeaderButton(
+                    column: .name,
+                    isActive: isActiveSortColumn(.name),
+                    indicatorSymbol: sortIndicatorSymbol(for: .name),
+                    action: { applySort(for: .name) }
+                )
+                MonitorHeaderButton(
+                    column: .cpu,
+                    isActive: isActiveSortColumn(.cpu),
+                    indicatorSymbol: sortIndicatorSymbol(for: .cpu),
+                    action: { applySort(for: .cpu) }
+                )
+                MonitorHeaderButton(
+                    column: .memory,
+                    isActive: isActiveSortColumn(.memory),
+                    indicatorSymbol: sortIndicatorSymbol(for: .memory),
+                    action: { applySort(for: .memory) }
+                )
+                MonitorHeaderButton(
+                    column: .wakeups,
+                    isActive: isActiveSortColumn(.wakeups),
+                    indicatorSymbol: sortIndicatorSymbol(for: .wakeups),
+                    action: { applySort(for: .wakeups) }
+                )
+                MonitorHeaderButton(
+                    column: .processCount,
+                    isActive: isActiveSortColumn(.processCount),
+                    indicatorSymbol: sortIndicatorSymbol(for: .processCount),
+                    action: { applySort(for: .processCount) }
+                )
+                MonitorHeaderButton(
+                    column: .friction,
+                    isActive: isActiveSortColumn(.friction),
+                    indicatorSymbol: sortIndicatorSymbol(for: .friction),
+                    action: { applySort(for: .friction) }
+                )
+                Text("")
+                    .frame(width: 16)
+            }
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, AetowerDesign.Spacing.sm)
+            .padding(.vertical, 2)
+
+            if state.monitorViewModel.sequence == 0 {
+                ProgressView("Loading live process rows…")
+                    .font(AetowerDesign.Typography.caption)
+                    .frame(maxWidth: .infinity, minHeight: 180)
+            } else if liveRowsProjection.rows.isEmpty {
+                ContentUnavailableView(
+                    "No processes match this filter",
+                    systemImage: "magnifyingglass",
+                    description: Text("Try a broader query.")
+                )
+            } else {
+                LazyVStack(spacing: 2) {
+                    listSectionHeader("Live processes")
+                    ForEach(liveRowsProjection.rows, id: \.entityId) { row in
+                        Button {
+                            selectEntity(row.entityId)
+                        } label: {
+                            MonitorLiveEntityRow(row: row, isSelected: selectedEntityID == row.entityId)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Open Detail") {
+                                selectEntity(row.entityId)
+                            }
+                            if let pid = row.primaryPid {
+                                Button("Copy Process ID") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(String(pid), forType: .string)
+                                }
+                            }
+                            Button("Copy Name") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(row.displayName, forType: .string)
+                            }
+                        }
+                    }
+                }
+                .animation(nil, value: state.monitorViewModel.sequence)
+            }
+        }
+    }
+
+    @ViewBuilder
     private var rankedEntitiesSection: some View {
+        if usesLightweightMonitorRows {
+            lightweightRankedEntitiesSection
+        } else {
+            fullSnapshotRankedEntitiesSection
+        }
+    }
+
+    private var fullSnapshotRankedEntitiesSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text("")
@@ -2075,9 +2237,16 @@ public struct MainListView: View {
         }
     }
 
+    private var activeThermalForecast: ThermalForecast? {
+        guard state.monitorViewModel.sequence > 0 else {
+            return state.thermalForecastState
+        }
+        return state.monitorViewModel.host?.thermalForecast
+    }
+
     @ViewBuilder
     private var thermalForecastBanner: some View {
-        if let forecast = state.thermalForecastState {
+        if let forecast = activeThermalForecast {
             let tone =
                 forecast.state == .nominal || forecast.state == .fair
                 ? AetowerDesign.Status.warning : AetowerDesign.Status.error
@@ -2617,6 +2786,7 @@ public struct MainListView: View {
     }
 
     private var monitorVisibleRowCount: Int {
+        if usesLightweightMonitorRows { return liveRowsProjection.rows.count }
         if isGroupedMode {
             return allProcessGroupRows.count + visibleExpandedProcessRowCount
         }
@@ -2631,14 +2801,16 @@ public struct MainListView: View {
     }
 
     private var monitorVisibleRowBuildMillis: Double {
-        monitorSections.rowBuildDurationMillis
+        if usesLightweightMonitorRows { return liveRowsProjection.buildDurationMillis }
+        return monitorSections.rowBuildDurationMillis
             + (isGroupedMode ? allProcessGroupSection.rowBuildDurationMillis : 0)
     }
 
     private var monitorUiPerformanceBudgetToken: String {
         let durationBucket = Int((monitorVisibleRowBuildMillis * 10).rounded())
+        let sequence = usesLightweightMonitorRows ? state.monitorViewModel.sequence : state.snapshotSequence
         return [
-            "\(state.snapshotSequence)",
+            "\(sequence)",
             listMode.rawValue,
             "\(monitorVisibleRowCount)",
             "\(durationBucket)",
@@ -2707,11 +2879,13 @@ public struct MainListView: View {
     }
 
     private var visibleEntityIDs: [String] {
-        let sections = monitorSections
+        if usesLightweightMonitorRows {
+            return liveRowsProjection.rows.map(\.entityId)
+        }
         if isGroupedMode {
             return visibleGroupedEntityIDs
         }
-        return sections.flatVisibleEntityIDs
+        return monitorSections.flatVisibleEntityIDs
     }
 
     private var visibleGroupedEntityIDs: [String] {
@@ -2732,13 +2906,15 @@ public struct MainListView: View {
     }
 
     private var visibleProcessCount: Int {
-        let sections = monitorSections
+        if usesLightweightMonitorRows {
+            return liveRowsProjection.rows.reduce(0) { $0 + Int($1.processCount) }
+        }
         if isGroupedMode {
             return allProcessGroupRows.reduce(0) {
                 $0 + $1.group.processCount
             }
         }
-        return sections.flatVisibleProcessCount
+        return monitorSections.flatVisibleProcessCount
     }
 
     private var groupedEntities: [EntityGroup] {
@@ -2930,7 +3106,10 @@ public struct MainListView: View {
             return
         }
 
-        if state.entitiesState.contains(where: { $0.entityId == requestedEntityID }) {
+        let entityExistsInCurrentRows = state.monitorViewModel.processRows.contains {
+            $0.entityId == requestedEntityID
+        }
+        if entityExistsInCurrentRows || state.entitiesState.contains(where: { $0.entityId == requestedEntityID }) {
             originFilter = .all
             listMode = .flat
             selectedEntityID = requestedEntityID

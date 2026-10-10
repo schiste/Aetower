@@ -7653,6 +7653,7 @@ public struct UiHostSummary {
     public var gpuPercent: Float
     public var gpuMemoryBytes: UInt64
     public var thermalState: ThermalState
+    public var thermalForecast: ThermalForecast?
     public var onBattery: Bool
     public var lowPowerMode: Bool
     public var frontmostAppName: String?
@@ -7663,7 +7664,7 @@ public struct UiHostSummary {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(machineFriction: Float, cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, compressedMemoryBytes: UInt64, swapUsedBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, gpuPercent: Float, gpuMemoryBytes: UInt64, thermalState: ThermalState, onBattery: Bool, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentCount: UInt32, entityCount: UInt32, processCount: UInt32) {
+    public init(machineFriction: Float, cpuPercent: Float, memoryUsedBytes: UInt64, memoryTotalBytes: UInt64, compressedMemoryBytes: UInt64, swapUsedBytes: UInt64, diskReadBps: UInt64, diskWriteBps: UInt64, networkReceiveBps: UInt64, networkSendBps: UInt64, wakeupsPerSecond: Float, gpuPercent: Float, gpuMemoryBytes: UInt64, thermalState: ThermalState, thermalForecast: ThermalForecast?, onBattery: Bool, lowPowerMode: Bool, frontmostAppName: String?, frontmostWindowTitle: String?, aiAgentCount: UInt32, entityCount: UInt32, processCount: UInt32) {
         self.machineFriction = machineFriction
         self.cpuPercent = cpuPercent
         self.memoryUsedBytes = memoryUsedBytes
@@ -7678,6 +7679,7 @@ public struct UiHostSummary {
         self.gpuPercent = gpuPercent
         self.gpuMemoryBytes = gpuMemoryBytes
         self.thermalState = thermalState
+        self.thermalForecast = thermalForecast
         self.onBattery = onBattery
         self.lowPowerMode = lowPowerMode
         self.frontmostAppName = frontmostAppName
@@ -7737,6 +7739,9 @@ extension UiHostSummary: Equatable, Hashable {
         if lhs.thermalState != rhs.thermalState {
             return false
         }
+        if lhs.thermalForecast != rhs.thermalForecast {
+            return false
+        }
         if lhs.onBattery != rhs.onBattery {
             return false
         }
@@ -7776,6 +7781,7 @@ extension UiHostSummary: Equatable, Hashable {
         hasher.combine(gpuPercent)
         hasher.combine(gpuMemoryBytes)
         hasher.combine(thermalState)
+        hasher.combine(thermalForecast)
         hasher.combine(onBattery)
         hasher.combine(lowPowerMode)
         hasher.combine(frontmostAppName)
@@ -7809,6 +7815,7 @@ public struct FfiConverterTypeUiHostSummary: FfiConverterRustBuffer {
                 gpuPercent: FfiConverterFloat.read(from: &buf),
                 gpuMemoryBytes: FfiConverterUInt64.read(from: &buf),
                 thermalState: FfiConverterTypeThermalState.read(from: &buf),
+                thermalForecast: FfiConverterOptionTypeThermalForecast.read(from: &buf),
                 onBattery: FfiConverterBool.read(from: &buf),
                 lowPowerMode: FfiConverterBool.read(from: &buf),
                 frontmostAppName: FfiConverterOptionString.read(from: &buf),
@@ -7834,6 +7841,7 @@ public struct FfiConverterTypeUiHostSummary: FfiConverterRustBuffer {
         FfiConverterFloat.write(value.gpuPercent, into: &buf)
         FfiConverterUInt64.write(value.gpuMemoryBytes, into: &buf)
         FfiConverterTypeThermalState.write(value.thermalState, into: &buf)
+        FfiConverterOptionTypeThermalForecast.write(value.thermalForecast, into: &buf)
         FfiConverterBool.write(value.onBattery, into: &buf)
         FfiConverterBool.write(value.lowPowerMode, into: &buf)
         FfiConverterOptionString.write(value.frontmostAppName, into: &buf)
