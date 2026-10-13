@@ -894,6 +894,8 @@ public final class AppState {
     @ObservationIgnored
     private var lastUiRefreshTelemetryEventMillis: UInt64 = 0
     @ObservationIgnored
+    private var uiRefreshTelemetryWindow = UiRefreshTelemetryWindow()
+    @ObservationIgnored
     private let uiRefreshTelemetryEventIntervalMillis: UInt64 = 120_000
 
     public init(
@@ -1990,6 +1992,15 @@ public final class AppState {
                 await MainActor.run {
                     guard let self else { return }
                     if wasCancelled {
+                        self.recordUiRefreshTelemetry(
+                            outcome: .cancelled,
+                            timings: result.timings,
+                            payload: nil,
+                            monitorFetchDiagnostics: nil,
+                            publishMillis: 0,
+                            uiRefreshMillis: (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1_000,
+                            hotSlicesPublished: false
+                        )
                         self.completeSnapshotRefresh()
                     } else {
                         self.applySnapshotRefreshResult(
@@ -2001,12 +2012,33 @@ public final class AppState {
                 }
             } catch {
                 let wasCancelled = Task.isCancelled
+                let refreshFailure = error as? SnapshotRefreshFailure
+                let failureTimings = refreshFailure?.timings ?? .zero
+                let failureMessage = refreshFailure?.message ?? error.localizedDescription
                 await MainActor.run {
                     guard let self else { return }
                     if wasCancelled {
+                        self.recordUiRefreshTelemetry(
+                            outcome: .cancelled,
+                            timings: failureTimings,
+                            payload: nil,
+                            monitorFetchDiagnostics: nil,
+                            publishMillis: 0,
+                            uiRefreshMillis: (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1_000,
+                            hotSlicesPublished: false
+                        )
                         self.completeSnapshotRefresh()
                     } else {
-                        self.lastError = error.localizedDescription
+                        self.recordUiRefreshTelemetry(
+                            outcome: .failed,
+                            timings: failureTimings,
+                            payload: nil,
+                            monitorFetchDiagnostics: nil,
+                            publishMillis: 0,
+                            uiRefreshMillis: (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1_000,
+                            hotSlicesPublished: false
+                        )
+                        self.lastError = failureMessage
                         self.completeSnapshotRefresh()
                     }
                 }
@@ -2039,7 +2071,20 @@ public final class AppState {
     ) {
         refreshLiveStorageVolumeCapacityIfNeeded(force: force)
         switch result {
-        case .noChange:
+        case let .noChange(timings, monitorPayload, updatedRuntimeLagMetrics):
+            let monitorFetchDiagnostics = monitorPayload.map(applyMonitorUiPayload)
+            if runtimeLagMetrics != updatedRuntimeLagMetrics {
+                runtimeLagMetrics = updatedRuntimeLagMetrics
+            }
+            recordUiRefreshTelemetry(
+                outcome: .noChange,
+                timings: timings,
+                payload: nil,
+                monitorFetchDiagnostics: monitorFetchDiagnostics,
+                publishMillis: 0,
+                uiRefreshMillis: (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1_000,
+                hotSlicesPublished: false
+            )
             completeSnapshotRefresh()
             return
         case let .updated(payload):
@@ -2093,10 +2138,12 @@ public final class AppState {
                 evaluateTimelineNotifications(snapshot: evaluatorInput)
             }
 
-            if lagMonitoringActive, let refreshedSnapshot = payload.snapshot {
+            if lagMonitoringActive,
+               let refreshedSnapshot = payload.snapshot,
+               let bridgeFetchMillis = payload.timings.fullSnapshotFetchMillis {
                 publishUiLagMetrics(
                     snapshot: refreshedSnapshot,
-                    bridgeFetchMillis: payload.bridgeFetchMillis,
+                    bridgeFetchMillis: bridgeFetchMillis,
                     uiRefreshMillis: (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1000.0,
                     refreshStartedAt: refreshStartedAt
                 )
@@ -2116,6 +2163,8 @@ public final class AppState {
             let publishMillis = (CFAbsoluteTimeGetCurrent() - publishStartedAt) * 1000.0
             let uiRefreshMillis = (CFAbsoluteTimeGetCurrent() - refreshStartedAt) * 1000.0
             recordUiRefreshTelemetry(
+                outcome: .updated,
+                timings: payload.timings,
                 payload: payload,
                 monitorFetchDiagnostics: monitorFetchDiagnostics,
                 publishMillis: publishMillis,
@@ -3184,61 +3233,147 @@ public final class AppState {
     }
 
     private func recordUiRefreshTelemetry(
-        payload: SnapshotRefreshPayload,
+        outcome: SnapshotRefreshOutcome,
+        timings: SnapshotRefreshPhaseTimings,
+        payload: SnapshotRefreshPayload?,
         monitorFetchDiagnostics: MonitorUiPayloadFetchDiagnostics?,
         publishMillis: Double,
         uiRefreshMillis: Double,
         hotSlicesPublished: Bool
     ) {
         let demandSummary = fullSnapshotDemandSummary()
+        let monitorPayloadKind = monitorFetchDiagnostics?.compactPayloadKind ?? "none"
+        let fullSnapshotPublished = payload?.snapshot != nil
+        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1_000)
+        uiRefreshTelemetryWindow.record(
+            outcome: outcome,
+            timings: timings,
+            fullSnapshotPublished: fullSnapshotPublished,
+            monitorPayloadKind: monitorPayloadKind,
+            publishMillis: publishMillis,
+            uiRefreshMillis: uiRefreshMillis,
+            atMillis: nowMillis
+        )
+        let window = uiRefreshTelemetryWindow.snapshot
+        func formatMilliseconds(_ duration: Double?) -> String {
+            guard let duration else { return "n/a" }
+            return String(format: "%.1f", duration)
+        }
+        let entityCount = payload?.snapshot?.entities.count
+            ?? payload?.evaluatorSnapshot?.entities.count
+            ?? entitiesState.count
         uiRefreshTelemetry = UiRefreshTelemetrySummary(
             updatedAt: Date(),
             uiRefreshMillis: uiRefreshMillis,
             publishMillis: publishMillis,
-            bridgeFetchMillis: payload.bridgeFetchMillis,
+            bridgeCallMillis: timings.bridgeCallMillis,
+            fullSnapshotFetchMillis: timings.fullSnapshotFetchMillis,
+            evaluatorSnapshotFetchMillis: timings.evaluatorSnapshotFetchMillis,
+            monitorPayloadFetchMillis: timings.monitorPayloadFetchMillis,
+            runtimeLagFetchMillis: timings.runtimeLagFetchMillis,
+            operatorStateFetchMillis: timings.operatorStateFetchMillis,
+            workerTotalMillis: timings.workerTotalMillis,
+            window: window,
             fullSnapshotDemandCount: fullSnapshotDemandReasons.count,
             fullSnapshotDemandSummary: demandSummary,
-            fullSnapshotPublished: payload.snapshot != nil,
-            evaluatorSnapshotApplied: payload.evaluatorSnapshot != nil && payload.snapshot == nil,
+            fullSnapshotPublished: fullSnapshotPublished,
+            evaluatorSnapshotApplied: payload?.evaluatorSnapshot != nil && payload?.snapshot == nil,
             hotSlicesPublished: hotSlicesPublished,
-            monitorPayloadKind: monitorFetchDiagnostics?.compactPayloadKind ?? "none",
+            monitorPayloadKind: monitorPayloadKind,
             monitorReturnedRowCount: monitorFetchDiagnostics?.returnedRowCount ?? 0,
-            entityCount: payload.snapshot?.entities.count ?? payload.evaluatorSnapshot?.entities.count ?? entitiesState.count,
+            entityCount: entityCount,
             repositoryRuntimeEntityCount: repositoryRuntimeContextState.entities.count
         )
 
-        let nowMillis = UInt64(Date().timeIntervalSince1970 * 1000)
         let slowUiPath = uiRefreshMillis >= 250 || publishMillis >= 120
         let elapsedSinceTelemetryEvent = nowMillis >= lastUiRefreshTelemetryEventMillis
             ? nowMillis - lastUiRefreshTelemetryEventMillis
             : 0
-        let periodicDemandSample = !fullSnapshotDemandReasons.isEmpty
-            && elapsedSinceTelemetryEvent >= uiRefreshTelemetryEventIntervalMillis
-        guard slowUiPath || periodicDemandSample else { return }
+        let periodicSampleDue = lastUiRefreshTelemetryEventMillis == 0
+            || elapsedSinceTelemetryEvent >= uiRefreshTelemetryEventIntervalMillis
+        guard slowUiPath || periodicSampleDue else { return }
 
+        let outcomeName: String
+        switch outcome {
+        case .updated: outcomeName = "updated"
+        case .noChange: outcomeName = "no-change"
+        case .failed: outcomeName = "failed"
+        case .cancelled: outcomeName = "cancelled"
+        }
         lastUiRefreshTelemetryEventMillis = nowMillis
         recordLocalDiagnosticsEvent(
             level: slowUiPath ? .warn : .info,
             subsystem: .ui,
-            eventType: slowUiPath ? "ui-refresh-slow" : "ui-refresh-demand-sample",
+            eventType: slowUiPath ? "ui-refresh-slow" : "ui-refresh-sample",
             message: slowUiPath
                 ? "Applied a UI refresh slower than the local budget."
-                : "Sampled active full-snapshot UI demand.",
+                : "Sampled every UI refresh since the previous telemetry window.",
             fields: [
+                DiagnosticsField(key: "outcome", value: outcomeName),
                 DiagnosticsField(key: "ui_refresh_millis", value: String(format: "%.1f", uiRefreshMillis)),
                 DiagnosticsField(key: "publish_millis", value: String(format: "%.1f", publishMillis)),
-                DiagnosticsField(key: "bridge_fetch_millis", value: String(format: "%.1f", payload.bridgeFetchMillis)),
+                DiagnosticsField(key: "full_snapshot_fetch_attempted", value: String(timings.fullSnapshotFetchAttempted)),
+                DiagnosticsField(key: "evaluator_snapshot_fetch_attempted", value: String(timings.evaluatorSnapshotFetchAttempted)),
+                DiagnosticsField(key: "monitor_payload_fetch_attempted", value: String(timings.monitorPayloadFetchAttempted)),
+                DiagnosticsField(key: "runtime_lag_fetch_attempted", value: String(timings.runtimeLagFetchAttempted)),
+                DiagnosticsField(key: "operator_state_fetch_attempted", value: String(timings.operatorStateFetchAttempted)),
+                DiagnosticsField(key: "worker_total_attempted", value: String(timings.workerTotalAttempted)),
+                DiagnosticsField(key: "full_snapshot_fetch_millis", value: formatMilliseconds(timings.fullSnapshotFetchMillis)),
+                DiagnosticsField(key: "evaluator_snapshot_fetch_millis", value: formatMilliseconds(timings.evaluatorSnapshotFetchMillis)),
+                DiagnosticsField(key: "monitor_payload_fetch_millis", value: formatMilliseconds(timings.monitorPayloadFetchMillis)),
+                DiagnosticsField(key: "runtime_lag_fetch_millis", value: formatMilliseconds(timings.runtimeLagFetchMillis)),
+                DiagnosticsField(key: "operator_state_fetch_millis", value: formatMilliseconds(timings.operatorStateFetchMillis)),
+                DiagnosticsField(key: "worker_total_millis", value: formatMilliseconds(timings.workerTotalMillis)),
+                DiagnosticsField(key: "bridge_call_total_millis", value: formatMilliseconds(timings.bridgeCallMillis)),
+                DiagnosticsField(key: "monitor_decode_millis", value: String(format: "%.1f", uiPerformanceBudgetDiagnostics.decodeMillis)),
+                DiagnosticsField(key: "monitor_row_build_millis", value: String(format: "%.1f", uiPerformanceBudgetDiagnostics.rowBuildMillis)),
                 DiagnosticsField(key: "full_snapshot_demands", value: String(fullSnapshotDemandReasons.count)),
                 DiagnosticsField(key: "full_snapshot_demand_reasons", value: demandSummary),
-                DiagnosticsField(key: "full_snapshot_published", value: payload.snapshot == nil ? "false" : "true"),
-                DiagnosticsField(key: "evaluator_snapshot_applied", value: payload.evaluatorSnapshot == nil ? "false" : "true"),
+                DiagnosticsField(key: "full_snapshot_published", value: fullSnapshotPublished ? "true" : "false"),
+                DiagnosticsField(key: "evaluator_snapshot_applied", value: payload?.evaluatorSnapshot == nil ? "false" : "true"),
                 DiagnosticsField(key: "hot_slices_published", value: hotSlicesPublished ? "true" : "false"),
-                DiagnosticsField(key: "monitor_payload_kind", value: monitorFetchDiagnostics?.compactPayloadKind ?? "none"),
+                DiagnosticsField(key: "monitor_payload_kind", value: monitorPayloadKind),
                 DiagnosticsField(key: "monitor_rows", value: String(monitorFetchDiagnostics?.returnedRowCount ?? 0)),
-                DiagnosticsField(key: "entity_count", value: String(uiRefreshTelemetry.entityCount)),
+                DiagnosticsField(key: "entity_count", value: String(entityCount)),
                 DiagnosticsField(key: "repo_runtime_entities", value: String(repositoryRuntimeContextState.entities.count)),
+                DiagnosticsField(key: "window_duration_millis", value: String(window.windowDurationMillis)),
+                DiagnosticsField(key: "window_refreshes", value: String(window.refreshCount)),
+                DiagnosticsField(key: "window_updated", value: String(window.updatedCount)),
+                DiagnosticsField(key: "window_no_change", value: String(window.noChangeCount)),
+                DiagnosticsField(key: "window_failed", value: String(window.failedCount)),
+                DiagnosticsField(key: "window_cancelled", value: String(window.cancelledCount)),
+                DiagnosticsField(key: "window_slow", value: String(window.slowCount)),
+                DiagnosticsField(key: "window_full_snapshot_fetches", value: String(window.fullSnapshotFetchCount)),
+                DiagnosticsField(key: "window_full_snapshot_fetch_timing_samples", value: String(window.fullSnapshotFetchTimingSampleCount)),
+                DiagnosticsField(key: "window_full_snapshots_published", value: String(window.fullSnapshotPublishedCount)),
+                DiagnosticsField(key: "window_evaluator_snapshot_fetches", value: String(window.evaluatorSnapshotFetchCount)),
+                DiagnosticsField(key: "window_evaluator_snapshot_fetch_timing_samples", value: String(window.evaluatorSnapshotFetchTimingSampleCount)),
+                DiagnosticsField(key: "window_monitor_payload_fetches", value: String(window.monitorPayloadFetchCount)),
+                DiagnosticsField(key: "window_monitor_payload_fetch_timing_samples", value: String(window.monitorPayloadFetchTimingSampleCount)),
+                DiagnosticsField(key: "window_monitor_deltas", value: String(window.monitorDeltaCount)),
+                DiagnosticsField(key: "window_monitor_snapshots", value: String(window.monitorSnapshotCount)),
+                DiagnosticsField(key: "window_runtime_lag_fetches", value: String(window.runtimeLagFetchCount)),
+                DiagnosticsField(key: "window_runtime_lag_fetch_timing_samples", value: String(window.runtimeLagFetchTimingSampleCount)),
+                DiagnosticsField(key: "window_operator_state_fetches", value: String(window.operatorStateFetchCount)),
+                DiagnosticsField(key: "window_operator_state_fetch_timing_samples", value: String(window.operatorStateFetchTimingSampleCount)),
+                DiagnosticsField(key: "window_worker_total_attempts", value: String(window.workerTotalCount)),
+                DiagnosticsField(key: "window_worker_samples", value: String(window.workerTotalTimingSampleCount)),
+                DiagnosticsField(key: "window_mean_full_snapshot_fetch_millis", value: formatMilliseconds(window.meanFullSnapshotFetchMillis)),
+                DiagnosticsField(key: "window_mean_evaluator_snapshot_fetch_millis", value: formatMilliseconds(window.meanEvaluatorSnapshotFetchMillis)),
+                DiagnosticsField(key: "window_mean_monitor_payload_fetch_millis", value: formatMilliseconds(window.meanMonitorPayloadFetchMillis)),
+                DiagnosticsField(key: "window_mean_runtime_lag_fetch_millis", value: formatMilliseconds(window.meanRuntimeLagFetchMillis)),
+                DiagnosticsField(key: "window_mean_operator_state_fetch_millis", value: formatMilliseconds(window.meanOperatorStateFetchMillis)),
+                DiagnosticsField(key: "window_mean_worker_total_millis", value: formatMilliseconds(window.meanWorkerTotalMillis)),
+                DiagnosticsField(key: "window_mean_publish_millis", value: formatMilliseconds(window.meanPublishMillis)),
+                DiagnosticsField(key: "window_mean_ui_refresh_millis", value: formatMilliseconds(window.meanUiRefreshMillis)),
+                DiagnosticsField(key: "window_max_ui_refresh_millis", value: String(format: "%.1f", window.maxUiRefreshMillis)),
+                DiagnosticsField(key: "window_ui_refresh_lt50", value: String(window.under50MillisCount)),
+                DiagnosticsField(key: "window_ui_refresh_50_250", value: String(window.from50To250MillisCount)),
+                DiagnosticsField(key: "window_ui_refresh_250_1000", value: String(window.from250To1000MillisCount)),
+                DiagnosticsField(key: "window_ui_refresh_gte1000", value: String(window.over1000MillisCount)),
             ]
         )
+        uiRefreshTelemetryWindow.reset()
     }
 
     private func fullSnapshotDemandSummary() -> String {

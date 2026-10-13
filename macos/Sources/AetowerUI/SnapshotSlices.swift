@@ -201,26 +201,42 @@ struct SnapshotHotSliceSignature: Equatable {
 private struct FullSnapshotDemandModifier: ViewModifier {
     let state: AppState
     let reason: String
+    let isDemanded: Bool
     @State private var token: UUID?
 
     func body(content: Content) -> some View {
         content
             .onAppear {
-                if token == nil {
-                    token = state.beginFullSnapshotDemand(reason: reason)
-                }
+                reconcileDemand(isDemanded)
+            }
+            .onChange(of: isDemanded) { _, newValue in
+                reconcileDemand(newValue)
             }
             .onDisappear {
-                if let token {
-                    state.endFullSnapshotDemand(token)
-                }
-                token = nil
+                reconcileDemand(false)
             }
+    }
+
+    private func reconcileDemand(_ demanded: Bool) {
+        if demanded, token == nil {
+            token = state.beginFullSnapshotDemand(reason: reason)
+        } else if !demanded, let token {
+            state.endFullSnapshotDemand(token)
+            self.token = nil
+        }
     }
 }
 
 extension View {
     public func demandsFullSnapshot(from state: AppState, reason: String = "unspecified") -> some View {
-        modifier(FullSnapshotDemandModifier(state: state, reason: reason))
+        demandsFullSnapshot(from: state, when: true, reason: reason)
+    }
+
+    public func demandsFullSnapshot(
+        from state: AppState,
+        when isDemanded: Bool,
+        reason: String = "unspecified"
+    ) -> some View {
+        modifier(FullSnapshotDemandModifier(state: state, reason: reason, isDemanded: isDemanded))
     }
 }

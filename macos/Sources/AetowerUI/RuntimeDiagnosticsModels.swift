@@ -97,7 +97,14 @@ public struct UiRefreshTelemetrySummary: Sendable {
     let updatedAt: Date?
     let uiRefreshMillis: Double
     let publishMillis: Double
-    let bridgeFetchMillis: Double
+    let bridgeCallMillis: Double?
+    let fullSnapshotFetchMillis: Double?
+    let evaluatorSnapshotFetchMillis: Double?
+    let monitorPayloadFetchMillis: Double?
+    let runtimeLagFetchMillis: Double?
+    let operatorStateFetchMillis: Double?
+    let workerTotalMillis: Double?
+    let window: UiRefreshTelemetryWindowSnapshot
     let fullSnapshotDemandCount: Int
     let fullSnapshotDemandSummary: String
     let fullSnapshotPublished: Bool
@@ -112,7 +119,14 @@ public struct UiRefreshTelemetrySummary: Sendable {
         updatedAt: nil,
         uiRefreshMillis: 0,
         publishMillis: 0,
-        bridgeFetchMillis: 0,
+        bridgeCallMillis: nil,
+        fullSnapshotFetchMillis: nil,
+        evaluatorSnapshotFetchMillis: nil,
+        monitorPayloadFetchMillis: nil,
+        runtimeLagFetchMillis: nil,
+        operatorStateFetchMillis: nil,
+        workerTotalMillis: nil,
+        window: UiRefreshTelemetryWindow().snapshot,
         fullSnapshotDemandCount: 0,
         fullSnapshotDemandSummary: "none",
         fullSnapshotPublished: false,

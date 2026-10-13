@@ -5,6 +5,9 @@ private enum MonitorUiPayloadSizing {
     /// Fixed graph budget for compact Monitor payloads. Rust resamples each
     /// non-empty series to exactly this count, so Swift draw cost stays stable.
     static let graphPointCount: UInt32 = 60
+    /// Request the full current entity list. Rust clamps this to its supported
+    /// maximum (500); the Monitor can then stay on compact row deltas.
+    static let processRowLimit: UInt32 = .max
 }
 
 actor SnapshotRefreshWorker {
@@ -27,10 +30,42 @@ actor SnapshotRefreshWorker {
         publishFullSnapshot: Bool = true,
         fetchEvaluatorSnapshot: Bool = true,
         monitorSelectedEntityId: String? = nil,
-        monitorProcessLimit: UInt32 = 160,
+        monitorProcessLimit: UInt32 = MonitorUiPayloadSizing.processRowLimit,
         monitorTrendPoints: UInt32 = MonitorUiPayloadSizing.graphPointCount
     ) throws -> SnapshotRefreshResult {
-        let fetchStartedAt = CFAbsoluteTimeGetCurrent()
+        let workerStartedAt = CFAbsoluteTimeGetCurrent()
+        var fullSnapshotFetchMillis: Double?
+        var evaluatorSnapshotFetchMillis: Double?
+        var monitorPayloadFetchMillis: Double?
+        var runtimeLagFetchMillis: Double?
+        var operatorStateFetchMillis: Double?
+        var fullSnapshotFetchAttempted = false
+        var evaluatorSnapshotFetchAttempted = false
+        var monitorPayloadFetchAttempted = false
+        var runtimeLagFetchAttempted = false
+        var operatorStateFetchAttempted = false
+
+        func measuredTimings() -> SnapshotRefreshPhaseTimings {
+            SnapshotRefreshPhaseTimings(
+                fullSnapshotFetchMillis: fullSnapshotFetchMillis,
+                evaluatorSnapshotFetchMillis: evaluatorSnapshotFetchMillis,
+                monitorPayloadFetchMillis: monitorPayloadFetchMillis,
+                runtimeLagFetchMillis: runtimeLagFetchMillis,
+                operatorStateFetchMillis: operatorStateFetchMillis,
+                workerTotalMillis: elapsedMillis(since: workerStartedAt),
+                workerTotalAttempted: true,
+                fullSnapshotFetchAttempted: fullSnapshotFetchAttempted,
+                evaluatorSnapshotFetchAttempted: evaluatorSnapshotFetchAttempted,
+                monitorPayloadFetchAttempted: monitorPayloadFetchAttempted,
+                runtimeLagFetchAttempted: runtimeLagFetchAttempted,
+                operatorStateFetchAttempted: operatorStateFetchAttempted
+            )
+        }
+
+        func preservedFailure(_ error: Error) -> SnapshotRefreshFailure {
+            SnapshotRefreshFailure(message: error.localizedDescription, timings: measuredTimings())
+        }
+
         // The full SystemSnapshot is the expensive deep FFI decode (every
         // entity, component, connection, badge). UI publication and evaluator
         // refresh are separately gated so automation can stay fresh without
@@ -38,11 +73,19 @@ actor SnapshotRefreshWorker {
         var refreshedSnapshot: SystemSnapshot?
         var evaluatorSnapshot: SystemSnapshot?
         if publishFullSnapshot || force {
-            if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastPublishedSnapshotSequence) {
-                refreshedSnapshot = updatedSnapshot
-            } else if force {
-                refreshedSnapshot = try bridge.latestSnapshot()
+            fullSnapshotFetchAttempted = true
+            let stageStartedAt = CFAbsoluteTimeGetCurrent()
+            do {
+                if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastPublishedSnapshotSequence) {
+                    refreshedSnapshot = updatedSnapshot
+                } else if force {
+                    refreshedSnapshot = try bridge.latestSnapshot()
+                }
+            } catch {
+                fullSnapshotFetchMillis = elapsedMillis(since: stageStartedAt)
+                throw preservedFailure(error)
             }
+            fullSnapshotFetchMillis = elapsedMillis(since: stageStartedAt)
             if let refreshedSnapshot {
                 lastPublishedSnapshotSequence = refreshedSnapshot.sequence
                 if refreshedSnapshot.sequence > lastEvaluatorSnapshotSequence {
@@ -51,13 +94,22 @@ actor SnapshotRefreshWorker {
                 }
             }
         } else if fetchEvaluatorSnapshot {
-            if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastEvaluatorSnapshotSequence) {
-                evaluatorSnapshot = updatedSnapshot
-                lastEvaluatorSnapshotSequence = updatedSnapshot.sequence
+            evaluatorSnapshotFetchAttempted = true
+            let stageStartedAt = CFAbsoluteTimeGetCurrent()
+            do {
+                if let updatedSnapshot = try bridge.latestSnapshotIfNewer(since: lastEvaluatorSnapshotSequence) {
+                    evaluatorSnapshot = updatedSnapshot
+                    lastEvaluatorSnapshotSequence = updatedSnapshot.sequence
+                }
+            } catch {
+                evaluatorSnapshotFetchMillis = elapsedMillis(since: stageStartedAt)
+                throw preservedFailure(error)
             }
+            evaluatorSnapshotFetchMillis = elapsedMillis(since: stageStartedAt)
         }
 
-        let bridgeFetchMillis = (CFAbsoluteTimeGetCurrent() - fetchStartedAt) * 1000.0
+        monitorPayloadFetchAttempted = true
+        let monitorFetchStartedAt = CFAbsoluteTimeGetCurrent()
         let monitorPayload = try? fetchMonitorPayload(
             force: force,
             processLimit: monitorProcessLimit,
@@ -65,14 +117,25 @@ actor SnapshotRefreshWorker {
             selectedEntityId: monitorSelectedEntityId,
             collectPayloadDiagnostics: collectPayloadDiagnostics
         )
+        monitorPayloadFetchMillis = elapsedMillis(since: monitorFetchStartedAt)
 
-        if refreshedSnapshot == nil, evaluatorSnapshot == nil, monitorPayload == nil, !includeOperatorState {
-            return .noChange
+        runtimeLagFetchAttempted = true
+        let runtimeLagStartedAt = CFAbsoluteTimeGetCurrent()
+        let runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
+        runtimeLagFetchMillis = elapsedMillis(since: runtimeLagStartedAt)
+
+        if refreshedSnapshot == nil,
+           evaluatorSnapshot == nil,
+           monitorPayload?.hasUpdate != true,
+           !includeOperatorState {
+            return .noChange(measuredTimings(), monitorPayload, runtimeLagMetrics)
         }
 
-        let runtimeLagMetrics = bridge.latestRuntimeLagMetrics()
-        let operatorState = includeOperatorState
-            ? SnapshotOperatorRefreshPayload(
+        var operatorState: SnapshotOperatorRefreshPayload?
+        if includeOperatorState {
+            operatorStateFetchAttempted = true
+            let operatorStateStartedAt = CFAbsoluteTimeGetCurrent()
+            operatorState = SnapshotOperatorRefreshPayload(
                 diagnosticsOverview: bridge.diagnosticsOverview(),
                 historyStoreSummary: bridge.historyRangeSummary(
                     startMillis: 0,
@@ -83,15 +146,17 @@ actor SnapshotRefreshWorker {
                     )
                 )
             )
-            : nil
+            operatorStateFetchMillis = elapsedMillis(since: operatorStateStartedAt)
+        }
 
+        let timings = measuredTimings()
         return .updated(SnapshotRefreshPayload(
             snapshot: refreshedSnapshot,
             evaluatorSnapshot: evaluatorSnapshot,
             runtimeLagMetrics: runtimeLagMetrics,
             operatorState: operatorState,
             monitorPayload: monitorPayload,
-            bridgeFetchMillis: bridgeFetchMillis
+            timings: timings
         ))
     }
 
@@ -171,8 +236,20 @@ actor SnapshotRefreshWorker {
 }
 
 enum SnapshotRefreshResult: Sendable {
-    case noChange
+    case noChange(SnapshotRefreshPhaseTimings, MonitorUiRefreshPayload?, RuntimeLagMetrics)
     case updated(SnapshotRefreshPayload)
+
+    var timings: SnapshotRefreshPhaseTimings {
+        switch self {
+        case let .noChange(timings, _, _): timings
+        case let .updated(payload): payload.timings
+        }
+    }
+}
+
+struct SnapshotRefreshFailure: Error, Sendable {
+    let message: String
+    let timings: SnapshotRefreshPhaseTimings
 }
 
 struct SnapshotRefreshPayload: Sendable {
@@ -186,7 +263,7 @@ struct SnapshotRefreshPayload: Sendable {
     let runtimeLagMetrics: RuntimeLagMetrics
     let operatorState: SnapshotOperatorRefreshPayload?
     let monitorPayload: MonitorUiRefreshPayload?
-    let bridgeFetchMillis: Double
+    let timings: SnapshotRefreshPhaseTimings
 }
 
 struct SnapshotOperatorRefreshPayload: Sendable {
@@ -197,6 +274,21 @@ struct SnapshotOperatorRefreshPayload: Sendable {
 enum MonitorUiRefreshPayload: Sendable {
     case snapshot(UiSnapshot, MonitorUiPayloadFetchDiagnostics)
     case delta(UiSnapshotDelta, MonitorUiPayloadFetchDiagnostics)
+
+    var diagnostics: MonitorUiPayloadFetchDiagnostics {
+        switch self {
+        case let .snapshot(_, diagnostics), let .delta(_, diagnostics): diagnostics
+        }
+    }
+
+    var hasUpdate: Bool {
+        switch self {
+        case .snapshot:
+            true
+        case let .delta(delta, _):
+            delta.updated
+        }
+    }
 }
 
 struct MonitorUiPayloadFetchDiagnostics: Sendable {

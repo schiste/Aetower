@@ -1137,7 +1137,6 @@ struct AetowerApp: App {
         WindowGroup {
             TabView(selection: $nav.workspace) {
                 MainListView(state: state, settings: settings)
-                    .demandsFullSnapshot(from: state, reason: "monitor")
                     .tabItem {
                         Label(WorkspaceTab.monitor.title, systemImage: WorkspaceTab.monitor.systemImage)
                     }
