@@ -124,6 +124,14 @@ else:
         self.assertEqual(self.run_build(check=False).returncode, 2)
         self.assertFalse((self.root / "rust/cargo-calls").exists())
 
+    def test_automatic_job_budget_has_cpu_memory_and_upper_bounds(self):
+        for cpus, memory_gib, expected in ((10, 4, "1"), (32, 128, "4"), (2, 64, "1")):
+            with self.subTest(cpus=cpus, memory_gib=memory_gib):
+                self.executable("sysctl", f'#!/bin/sh\ncase "$2" in hw.ncpu) echo {cpus};; hw.memsize) echo {memory_gib * 1024**3};; esac\n')
+                command = f'. "{self.root}/scripts/build-settings.sh"; printf "%s" "$AETOWER_BUILD_JOBS"'
+                result = subprocess.run(["sh", "-c", command], env=self.env, capture_output=True, text=True, check=True)
+                self.assertEqual(result.stdout, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

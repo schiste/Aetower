@@ -573,6 +573,9 @@ run_precommit_shell() {
 
 run_precommit() {
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode pre-commit
+    if has_staged_match '^scripts/(build-|measure-build|package-macos|ci-local|tests/)'; then
+        run_build_pipeline_tests
+    fi
     run_precommit_gitleaks
     run_precommit_swiftlint
     run_precommit_semgrep
@@ -581,6 +584,10 @@ run_precommit() {
     run_precommit_swift
     run_precommit_benchmark
     run_precommit_shell
+}
+
+run_build_pipeline_tests() {
+    run "build pipeline tests" env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$ROOT/scripts/tests" -v
 }
 
 run_full_gitleaks() {
@@ -648,6 +655,7 @@ run_full_gate() {
         run "quality guard (working tree)" python3 "$ROOT/scripts/quality-guard.py" --mode working-tree
     fi
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode "$MODE"
+    run_build_pipeline_tests
     run_full_gitleaks
     run_full_swiftlint
     run_full_shellcheck

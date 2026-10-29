@@ -72,6 +72,8 @@ package_cache_key() {
             rust/Cargo.lock \
             rust/crates \
             scripts/build-rust.sh \
+            scripts/build-settings.sh \
+            scripts/build-rust-ffi-for-swiftpm.sh \
             scripts/generate-app-icon.py \
             scripts/generate-app-icon.sh \
             scripts/import-app-icon.sh \
