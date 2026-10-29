@@ -185,11 +185,12 @@ if [ "${AETOWER_CLEAN_BUILD:-0}" = "1" ]; then
 fi
 mkdir -p "$CLANG_MODULE_CACHE_PATH"
 /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -c release -j "$AETOWER_BUILD_JOBS"
+SWIFT_BIN_DIR="$(/usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -c release --show-bin-path)"
 
 remove_tree "$APP_DIR"
 mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$HELPER_DIR" "$PLIST_DIR/Resources"
 
-cp "$SWIFT_BUILD_DIR/release/AetowerApp" "$BIN_DIR/Aetower"
+cp "$SWIFT_BIN_DIR/AetowerApp" "$BIN_DIR/Aetower"
 # Strip the local symbol table before signing (the Rust artifacts are already
 # stripped by the cargo release profile). Keeps dyld exports; drops ~50k local
 # symbols that only bloat the shipped binary.
@@ -209,7 +210,9 @@ cp "$ROOT/LICENSE.md" "$PLIST_DIR/Resources/LICENSE.md"
 # @rpath/Sparkle.framework but never copies it into the bundle, so it must be
 # embedded here or the app aborts at launch ("Library not loaded"). cp -R
 # preserves the framework's internal version symlinks (Versions/Current, etc.).
-cp -R "$SWIFT_BUILD_DIR/release/Sparkle.framework" "$FRAMEWORK_DIR/"
+cp -R "$SWIFT_BIN_DIR/Sparkle.framework" "$FRAMEWORK_DIR/"
+# Bundle.module resolves UI resources through the app's resource directory.
+cp -R "$SWIFT_BIN_DIR/AetowerMac_AetowerUI.bundle" "$PLIST_DIR/Resources/"
 
 cat > "$PLIST_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
