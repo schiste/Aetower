@@ -24,6 +24,14 @@ description: Use after repo-onboarding or Explore when moving from orientation i
 - Check likely entrypoints and impacted callers before finishing.
 - Re-run lint/build only after the focused validation passes.
 - Document any override-based maintainer note that affected the change plan.
+- For build-performance work, measure clean and unchanged repeat builds separately
+  with the same toolchain, profile, job count and compiler-cache settings. Record
+  background load and distinguish an empty target directory from an uncached build.
+- Report wall time and CPU seconds alongside memory. Label memory as either
+  largest-process RSS or sampled aggregate tree RSS; they are not interchangeable.
+  Shared compiler-cache servers can execute outside the measured process tree:
+  disable the wrapper for both comparison runs when complete compiler accounting
+  is required, or state that limitation explicitly.
 
 ## Useful Commands
 
