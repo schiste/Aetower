@@ -2,6 +2,7 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/build-settings.sh"
 
 if [ "${AETOWER_CI_LOGGING_ACTIVE:-0}" != "1" ]; then
     requested_mode="pre-commit"
@@ -324,7 +325,9 @@ remove_tree() {
 }
 
 clean_swift_build_dir() {
-    remove_tree "$SWIFT_BUILD_DIR"
+    if [ "${AETOWER_CLEAN_BUILD:-0}" = "1" ]; then
+        remove_tree "$SWIFT_BUILD_DIR"
+    fi
 }
 
 staged_files() {
@@ -516,7 +519,7 @@ run_workspace_tests() {
 # TrashService paths. Requires the Rust bridge, so this must run after
 # build-rust.sh in the full gate.
 run_swift_tests() {
-    run "swift test" /usr/bin/swift test --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
+    run "swift test" /usr/bin/swift test --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -j "$AETOWER_BUILD_JOBS"
 }
 
 run_precommit_swift() {
@@ -524,7 +527,7 @@ run_precommit_swift() {
         skip "swift build" "no staged Swift package changes"
         return
     fi
-    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
+    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -j "$AETOWER_BUILD_JOBS"
 }
 
 run_precommit_bridge() {
@@ -661,7 +664,7 @@ run_full_gate() {
     run "FFI binding is up to date" git -C "$ROOT" diff --exit-code --stat -- \
         macos/Sources/AetowerBindings/aetower_ffi.swift \
         macos/Sources/aetower_ffiFFI/aetower_ffiFFI.h
-    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
+    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -j "$AETOWER_BUILD_JOBS"
     run_swift_tests
     run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
     run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"

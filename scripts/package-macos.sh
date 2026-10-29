@@ -44,12 +44,7 @@ if [ -f "$ENV_FILE" ]; then
     fi
 fi
 
-CARGO_BIN="${CARGO_BIN:-$(command -v cargo || printf '%s' cargo)}"
-if [ -n "${HOME:-}" ] \
-    && [ -x "$HOME/.cargo/bin/cargo" ] \
-    && [ "$CARGO_BIN" = "$HOME/.chau7/cto_bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
+. "$ROOT/scripts/build-settings.sh"
 APP_NAME="Aetower.app"
 APP_DIR="$ROOT/dist/$APP_NAME"
 ZIP_PATH="$ROOT/dist/Aetower.zip"
@@ -179,14 +174,17 @@ notarize_app() {
     fi
 }
 
-sh "$ROOT/scripts/build-rust.sh"
+sh "$ROOT/scripts/build-rust.sh" --profile release
 if [ "$INCLUDE_PRIVILEGED_HELPER" = "1" ]; then
     "$CARGO_BIN" build --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper --release
 fi
-remove_tree "$CLANG_MODULE_CACHE_PATH"
+# Reuse compiler caches unless a clean rebuild was explicitly requested.
+if [ "${AETOWER_CLEAN_BUILD:-0}" = "1" ]; then
+    remove_tree "$CLANG_MODULE_CACHE_PATH"
+    remove_tree "$SWIFT_BUILD_DIR"
+fi
 mkdir -p "$CLANG_MODULE_CACHE_PATH"
-remove_tree "$SWIFT_BUILD_DIR"
-/usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -c release
+/usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -c release -j "$AETOWER_BUILD_JOBS"
 
 remove_tree "$APP_DIR"
 mkdir -p "$BIN_DIR" "$FRAMEWORK_DIR" "$HELPER_DIR" "$PLIST_DIR/Resources"
