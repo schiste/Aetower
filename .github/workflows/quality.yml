@@ -2,6 +2,10 @@ name: Aetower quality
 
 on:
   push:
+    # PR updates already run the full gate. Avoid a second identical build
+    # for every feature-branch push; retain trunk and release-tag checks.
+    branches: [master]
+    tags: ["**"]
   pull_request:
   workflow_dispatch:
 

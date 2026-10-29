@@ -50,6 +50,20 @@ always assembled afresh.
 Release LTO, code generation, optimization, stripping and panic behavior
 remain unchanged. This work changes build orchestration and cache reuse.
 
+| Work per invocation | Previous script | Development now | Packaging now |
+| --- | --- | --- | --- |
+| Runtime configurations | debug + release | debug | release |
+| Cargo invocations including host generator | 7 | 2 | 2 |
+| UniFFI generation invocations | 3 | 1 | 1 |
+| Rewrite unchanged generated bindings | always | no | no |
+| Clear Swift compiler cache | packaging and CI | explicit opt-in | explicit opt-in |
+
+GitHub quality checks run for pull requests, pushes to `master`, all tags and
+manual dispatch. A feature-branch update with an open PR gets one full gate
+instead of duplicate push and PR gates. A branch without a PR can use manual
+dispatch. The full gate's contents are unchanged apart from the added build
+orchestration tests.
+
 ## Measure a build
 
 ```sh
