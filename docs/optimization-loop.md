@@ -150,3 +150,31 @@ Passes two and three share one package build to avoid another release compile
 on the contended host. The retained baseline is the pass-one app; the paired
 runtime comparison therefore measures the combined collector/worker candidate,
 while focused tests and the pruning microbenchmark validate individual changes.
+
+The combined release package passed smoke and strict deep signature checks. It
+took 1,647.7s wall / 558.7 CPU-seconds / 1,047.5 MiB sampled peak tree RSS, with
+the unchanged two-job budget and substantial host contention. Both signed app
+bundles are retained locally. Four alternating app-process windows, each after
+30 seconds of settling and lasting 60 seconds, ran without compilation:
+
+| Window | CPU (one core = 100%) | Average physical footprint | Interrupt wakeups/s | Host one-minute load, start → end |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline A1 | 5.830% | 94.80 MiB | 22.278 | 38.3 → 37.3 |
+| Candidate B1 | 5.594% | 95.95 MiB | 4.165 | 35.0 → 29.8 |
+| Candidate B2 | 5.731% | 98.52 MiB | 4.262 | 26.3 → 26.7 |
+| Baseline A2 | 6.219% | 108.89 MiB | 21.019 | 25.9 → 25.1 |
+
+Mean interrupt wakeups fell from **21.65/s to 4.21/s (80.5%)**, consistent with
+removing the workers' stop polling. Mean CPU was 6.02% → 5.66% in these short
+windows; that smaller difference is tentative under changing host load. Mean
+physical footprint was 101.84 → 97.24 MiB, but baseline memory varied by 14 MiB,
+so **a memory reduction is not established**. Package-idle wakeups were zero in
+all windows on this busy host; this does not measure an idle-energy improvement.
+These are app-process counters, not a whole-machine or external-child-process
+profile. Existing settings were retained and no interactive workload was driven.
+Longer quiet-host and active-use comparisons remain useful.
+
+After profiling, one unchanged package rebuild reused the same compiler inputs:
+23.0s wall / 10.4 CPU-seconds / 177.4 MiB sampled peak tree RSS. SwiftPM's build
+stage was 3.53s. Package smoke and strict deep signing verification pass again.
+This confirms repeat-build cache reuse; it is not a clean-build speedup ratio.
