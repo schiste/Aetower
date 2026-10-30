@@ -134,6 +134,18 @@ this host. This avoids expensive work before a known rejection without waiving
 the audit. Standalone benchmark compilation also uses the shared job budget.
 All 18 build/measurement checks pass.
 
+Hosted run [41020346759](https://github.com/schiste/Aetower/actions/runs/41020346759)
+rejected the same advisories in a 31-second quality gate, before compilation,
+tests or packaging. The complete job took 3m28s including setup, cache downloads
+and saving artifacts. The previous full gate took 18m42s before discovering that
+rejection. This is faster failure feedback, not a passing CI result.
+
+The Swift cache fingerprint now includes Rust bridge sources, lockfile/toolchain
+and build scripts. Run 41017661717 hit the exact Swift key and therefore skipped
+saving its newly created release artifacts after the Rust-only change. A fresh
+key for those upstream changes permits saving that work, while compatible prefix
+restores still reuse the older Swift snapshot.
+
 Passes two and three share one package build to avoid another release compile
 on the contended host. The retained baseline is the pass-one app; the paired
 runtime comparison therefore measures the combined collector/worker candidate,
