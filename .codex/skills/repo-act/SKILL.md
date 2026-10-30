@@ -32,6 +32,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   Shared compiler-cache servers can execute outside the measured process tree:
   disable the wrapper for both comparison runs when complete compiler accounting
   is required, or state that limitation explicitly.
+- For CI ordering or cache changes, measure the entire job, including restores
+  and failure-path saves. Verify that an early rejection reports the same policy
+  findings and skips expensive transfers; faster failure is not a passing gate.
+  Confirm cold population and warm reuse separately before claiming cache gains.
 - For app-runtime comparisons, prefer cumulative CPU/wakeup counter deltas over
   smoothed `ps` CPU samples. Verify counter units against an independent OS API
   before trusting a new sampler: macOS libproc CPU counters use Mach ticks and
