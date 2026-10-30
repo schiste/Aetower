@@ -178,3 +178,96 @@ After profiling, one unchanged package rebuild reused the same compiler inputs:
 23.0s wall / 10.4 CPU-seconds / 177.4 MiB sampled peak tree RSS. SwiftPM's build
 stage was 3.53s. Package smoke and strict deep signing verification pass again.
 This confirms repeat-build cache reuse; it is not a clean-build speedup ratio.
+
+
+## Pass four: fail before compiler transfers and reuse counter storage
+
+The dependency policy command is now shared between local CI and hosted
+preflight. Hosted CI restores package sources and cargo-deny first, then audits
+before restoring Rust targets, SwiftPM artifacts or remaining quality tools.
+Sources use a separate cache; compiled targets use a v3 key with compatible v2
+fallbacks. A failed preflight still saves source downloads, but skips compiled
+cache restores and saves. Policy checks and rejection codes are unchanged.
+
+| Hosted run | Source cache | Preflight | Entire job | Compiled cache transfers |
+| --- | --- | ---: | ---: | --- |
+| 41020346759, previous ordering | In combined Rust cache | In local gate | 208s | Rust + Swift restored/saved as needed |
+| 41025764050 | Cold, populated after audit | 6s | 39s | Skipped |
+| 41026054392 | Warm, exact hit | 1s | 36s | Skipped |
+
+The warm job is **82.7% shorter** than the prior 208s job. It restores a
+107.7 MiB compressed source snapshot and the 7.0 MiB tool instead of compiled
+Rust/Swift snapshots totaling over 1.8 GiB. Both new runs reject the same
+existing lockfile advisories; bans and sources checks pass. This measures faster
+failure feedback, not full successful CI. Successful target-v3 population and
+its legacy fallback cannot be exercised until dependency policy passes.
+
+The collector now prunes and updates one retained counter table instead of
+allocating a replacement while keeping the old table alive. An entry lookup
+returns a copy of the matching-start-time baseline and its mutable slot. The
+same baseline controls new-PID CWD sampling, avoiding another lookup. Rate
+formulas, failure carry-forward, sampling cadence and published fields are
+unchanged. Capacity shrinks when process counts fall, avoiding a permanent
+high-water allocation.
+
+Twenty-four release unit tests and one doctest pass; two manual benchmarks are
+ignored by default. New coverage checks initial/zero-start PIDs, PID reuse,
+process exits, empty tables, retained slots, capacity release, and equality with
+the replacement-map algorithm across churn. Collector Clippy passes with
+warnings denied. Nineteen Python orchestration/measurement tests, ShellCheck,
+actionlint, quality guard and diff checks pass.
+
+A release operation benchmark alternates old/new execution order for 2,000
+ticks per table size, asserting identical tables after every tick. It includes
+the new-PID CWD decision, without platform syscalls:
+
+| Processes | Replacement map | Retained map | Shorter operation time |
+| ---: | ---: | ---: | ---: |
+| 1,000 | 77,142 µs | 71,127 µs | 7.8% |
+| 5,000 | 1,508,634 µs | 1,028,936 µs | 31.8% |
+| 10,000 | 4,116,675 µs | 3,289,464 µs | 20.1% |
+
+These are accumulated operation wall times on the contended host, not whole-app
+CPU savings. The code removes the second counter-table allocation; an app-wide
+physical-footprint reduction is not inferred from that structural change.
+
+
+The changed release app package took 117.6s wall / 128.1 CPU-seconds /
+780.1 MiB sampled peak tree RSS with two compiler jobs and unchanged production
+flags. Rust finished in 100s; SwiftPM reused the UI compilation and finished in
+7.12s. Smoke and strict deep signature verification pass. This Rust-only
+incremental build is not comparable to the previous package that had to rebuild
+Swift after release tests changed testability flags; no percentage build-time
+claim is made between those changed builds.
+
+
+The retained pass-two/three app and the new counter-table candidate were then
+sampled A/B/B/A, with 30s settling and 60s sampling per window and no concurrent
+compilation from this task. Existing app settings were retained. Both signed
+bundles and their executable/dylib hashes are retained locally.
+
+| Window | CPU (one core = 100%) | Average physical footprint | Interrupt wakeups/s | Host one-minute load, start → end |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline A1 | 4.367% | 109.88 MiB | 4.516 | 29.9 → 17.1 |
+| Candidate B1 | 5.034% | 119.43 MiB | 5.133 | 22.1 → 13.4 |
+| Candidate B2 | 5.076% | 114.57 MiB | 4.900 | 17.2 → 17.7 |
+| Baseline A2 | 5.280% | 112.79 MiB | 5.033 | 20.9 → 19.5 |
+
+Mean CPU is **4.824% → 5.055%**, physical footprint **111.33 → 117.00 MiB**,
+and interrupt wakeups **4.775/s → 5.016/s**. These windows show no whole-app
+improvement; the candidate means are higher. Baseline CPU itself drifted by
+0.91 percentage points, and host/workload variation prevents assigning the
+smaller mean CPU difference to counter-table reuse. The footprint increase
+also remains unresolved. The operation timing and eliminated duplicate table
+are established independently, but do not establish app-wide CPU or memory
+savings. Keep this limitation visible during review and investigate in the
+next pass before claiming a runtime improvement. Package-idle wakeups were
+zero in every window. Measurements cover the app process, excluding external
+child processes; no interactive workload was driven.
+
+
+After all runtime windows completed, an unchanged package repeat took **10.0s
+wall / 6.0 CPU-seconds / 205.0 MiB sampled peak tree RSS**, and again passed
+smoke and strict signature checks. This confirms cache reuse on the current
+inputs; host conditions differ from the earlier 23s repeat, so a causal
+percentage speedup between those two repeats is not claimed.
