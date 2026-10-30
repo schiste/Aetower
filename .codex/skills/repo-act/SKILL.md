@@ -32,6 +32,11 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   Shared compiler-cache servers can execute outside the measured process tree:
   disable the wrapper for both comparison runs when complete compiler accounting
   is required, or state that limitation explicitly.
+- For app-runtime comparisons, prefer cumulative CPU/wakeup counter deltas over
+  smoothed `ps` CPU samples. Verify counter units against an independent OS API
+  before trusting a new sampler: macOS libproc CPU counters use Mach ticks and
+  require `mach_timebase_info` conversion on Apple Silicon. Distinguish resident
+  memory from physical footprint, and keep startup settling and workloads equal.
 
 ## Useful Commands
 
