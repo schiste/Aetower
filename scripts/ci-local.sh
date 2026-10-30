@@ -574,7 +574,7 @@ run_precommit_shell() {
 
 run_precommit() {
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode pre-commit
-    if has_staged_match '^scripts/(build-|measure-build|package-macos|ci-local|tests/)'; then
+    if has_staged_match '^scripts/(build-|measure-build|package-macos|ci-local|swift-quality-checks|check-dependencies|tests/)'; then
         run_build_pipeline_tests
     fi
     run_precommit_gitleaks
@@ -674,8 +674,8 @@ run_full_gate() {
     run "FFI binding is up to date" git -C "$ROOT" diff --exit-code --stat -- \
         macos/Sources/AetowerBindings/aetower_ffi.swift \
         macos/Sources/aetower_ffiFFI/aetower_ffiFFI.h
-    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -j "$AETOWER_BUILD_JOBS"
-    run_swift_tests
+    . "$ROOT/scripts/swift-quality-checks.sh"
+    run_full_swift_checks
     run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
     run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"
     run "package smoke" sh "$ROOT/scripts/quality-package-smoke.sh"

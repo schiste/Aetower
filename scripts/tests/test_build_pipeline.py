@@ -19,7 +19,7 @@ class BuildPipelineTests(unittest.TestCase):
         (self.root / "rust").mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("build-settings.sh", "build-rust-ffi-for-swiftpm.sh", "test-rust-workspace.sh", "telemetry-smoke.sh", "measure-overhead.sh", "check-dependencies.sh"):
+        for name in ("build-settings.sh", "build-rust-ffi-for-swiftpm.sh", "test-rust-workspace.sh", "telemetry-smoke.sh", "measure-overhead.sh", "check-dependencies.sh", "swift-quality-checks.sh"):
             shutil.copyfile(SOURCE / name, self.root / "scripts" / name)
         shutil.copyfile(SOURCE / "build-rust.sh", self.root / "scripts/build-rust.sh")
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", CARGO_BIN=str(self.bin / "cargo"))
@@ -94,6 +94,28 @@ else:
         self.assertEqual(self.calls(), [
             "2 run --locked --release -p aetower-bench -- --iterations 4 --enforce"
         ])
+
+    def test_unfiltered_swift_gate_builds_and_tests_in_one_invocation(self):
+        harness = r'''run() { printf '%s\n' "$*"; }
+skip() { printf 'skip %s\n' "$*"; }
+run_swift_tests() { run "swift test" /usr/bin/swift test; }
+ROOT="$1"; SWIFT_BUILD_DIR="$ROOT/cache"; AETOWER_BUILD_JOBS=2
+INCLUDE_FILTER="$2"; SKIP_FILTER="$3"
+. "$ROOT/scripts/swift-quality-checks.sh"
+run_full_swift_checks
+'''
+        for include, skip in (("", ""), ("swift build", ""), ("", "swift test")):
+            with self.subTest(include=include, skip=skip):
+                result = subprocess.run(["sh", "-c", harness, "sh", str(self.root), include, skip],
+                                        capture_output=True, text=True, check=True)
+                lines = result.stdout.splitlines()
+                self.assertEqual(sum(line.startswith("swift test /usr/bin/swift test") for line in lines), 1)
+                if include or skip:
+                    self.assertTrue(lines[0].startswith("swift build /usr/bin/swift build"))
+                    self.assertIn(f"--scratch-path {self.root}/cache -j 2", lines[0])
+                else:
+                    self.assertEqual(lines, ["swift test /usr/bin/swift test",
+                                             "skip swift build all products built by swift test"])
 
     def test_dependency_preflight_preserves_checks_and_cargo_override(self):
         self.executable("cargo-deny", '''#!/usr/bin/env python3
