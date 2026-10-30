@@ -277,6 +277,21 @@ struct ProcessIdentitySample {
     identity: Arc<ProcessIdentity>,
 }
 
+fn retain_live_process_metadata(
+    cwd_cache: &mut HashMap<u32, String>,
+    identity_cache: &mut HashMap<u32, ProcessIdentitySample>,
+    mut start_time_for_pid: impl FnMut(u32) -> Option<u64>,
+) {
+    cwd_cache.retain(|pid, _| start_time_for_pid(*pid).is_some());
+    identity_cache.retain(|pid, cached| start_time_for_pid(*pid) == Some(cached.start_time_millis));
+}
+
+fn cache_cwd_if_changed(cache: &mut HashMap<u32, String>, pid: u32, cwd: &str) {
+    if cache.get(&pid).is_none_or(|cached| cached != cwd) {
+        cache.insert(pid, cwd.to_owned());
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct NetworkInterfaceIdentitySample {
     name: String,
@@ -776,18 +791,22 @@ impl Collector {
         if !self.config.defer_expensive_sampling
             && (full_collection || self.process_metadata_tick.is_multiple_of(2))
         {
-            let alive: std::collections::HashSet<u32> =
-                all_processes.iter().map(|p| p.pid).collect();
-            self.cwd_cache.retain(|pid, _| alive.contains(pid));
-            self.process_identity_cache.retain(|pid, cached| {
-                alive.contains(pid)
-                    && all_processes
-                        .iter()
-                        .any(|p| p.pid == *pid && p.start_time_millis == cached.start_time_millis)
-            });
+            // sysinfo already indexes the exact process set mapped above.
+            // Reuse it instead of allocating an alive set and scanning every
+            // process for every identity (quadratic on large process tables).
+            let process_table = self.system.processes();
+            retain_live_process_metadata(
+                &mut self.cwd_cache,
+                &mut self.process_identity_cache,
+                |pid| {
+                    process_table
+                        .get(&sysinfo::Pid::from_u32(pid))
+                        .map(|process| process.start_time().saturating_mul(1_000))
+                },
+            );
             for process in &all_processes {
                 if let Some(ref cwd) = process.cwd {
-                    self.cwd_cache.insert(process.pid, cwd.clone());
+                    cache_cwd_if_changed(&mut self.cwd_cache, process.pid, cwd);
                 }
             }
         }
@@ -3018,10 +3037,117 @@ mod platform {
 #[cfg(test)]
 mod top_level_tests {
     use super::{
-        HostVmRates, NetworkInterfaceIdentitySample, build_network_interface_snapshots, platform,
-        process_refresh_kind,
+        HostVmRates, NetworkInterfaceIdentitySample, ProcessIdentity, ProcessIdentitySample,
+        build_network_interface_snapshots, cache_cwd_if_changed, platform, process_refresh_kind,
+        retain_live_process_metadata,
     };
+    use std::collections::{BTreeMap, HashMap, HashSet};
+    use std::sync::Arc;
     use sysinfo::{Networks, UpdateKind};
+
+    fn cached_identity(start_time_millis: u64) -> ProcessIdentitySample {
+        ProcessIdentitySample {
+            start_time_millis,
+            identity: Arc::new(ProcessIdentity {
+                name: "fixture".to_owned(),
+                exe: None,
+                cmd: Vec::new(),
+                user: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn metadata_pruning_keeps_live_identity_and_rejects_reused_or_exited_pids() {
+        let current = HashMap::from([(10, 100), (20, 200), (40, 400)]);
+        let mut cwd = HashMap::from([(10, "a".into()), (20, "b".into()), (30, "c".into())]);
+        let mut identities = HashMap::from([
+            (10, cached_identity(100)),
+            (20, cached_identity(199)),
+            (30, cached_identity(300)),
+        ]);
+        let original_identity = Arc::clone(&identities[&10].identity);
+        let mut lookups = 0;
+        retain_live_process_metadata(&mut cwd, &mut identities, |pid| {
+            lookups += 1;
+            current.get(&pid).copied()
+        });
+        // CWD retains the existing PID-only behavior; identities must also
+        // match start time. Every cached entry needs exactly one lookup.
+        assert_eq!(cwd, HashMap::from([(10, "a".into()), (20, "b".into())]));
+        assert_eq!(identities.len(), 1);
+        assert!(Arc::ptr_eq(&identities[&10].identity, &original_identity));
+        assert_eq!(lookups, 6);
+    }
+
+    #[test]
+    fn unchanged_cwd_keeps_its_allocation_and_changed_values_are_replaced() {
+        let mut cache = HashMap::from([(10, "/old".to_owned())]);
+        let allocation = cache[&10].as_ptr();
+        cache_cwd_if_changed(&mut cache, 10, "/old");
+        assert_eq!(cache[&10].as_ptr(), allocation);
+        cache_cwd_if_changed(&mut cache, 10, "/new");
+        cache_cwd_if_changed(&mut cache, 20, "/other");
+        assert_eq!(
+            cache,
+            HashMap::from([(10, "/new".into()), (20, "/other".into())])
+        );
+    }
+
+    #[test]
+    #[ignore = "manual before/after algorithm benchmark; no timing assertion"]
+    fn metadata_cache_pruning_benchmark() {
+        for count in [1_000_u32, 5_000, 10_000] {
+            let current: HashMap<_, _> = (0..count).map(|pid| (pid, u64::from(pid))).collect();
+            let processes: Vec<_> = current.iter().map(|(pid, start)| (*pid, *start)).collect();
+            let original: HashMap<_, _> = (0..count + 100)
+                .map(|pid| {
+                    (
+                        pid,
+                        cached_identity(u64::from(pid) + u64::from(pid % 17 == 0)),
+                    )
+                })
+                .collect();
+            let original_cwd: HashMap<_, _> = (0..count + 100)
+                .map(|pid| (pid, format!("/fixture/{pid}")))
+                .collect();
+            let mut old_elapsed = std::time::Duration::ZERO;
+            let mut new_elapsed = std::time::Duration::ZERO;
+            for _ in 0..10 {
+                let mut old = original.clone();
+                let mut old_cwd = original_cwd.clone();
+                let mut new = original.clone();
+                let mut new_cwd = original_cwd.clone();
+                let started = std::time::Instant::now();
+                let alive: HashSet<_> = processes.iter().map(|(pid, _)| *pid).collect();
+                old_cwd.retain(|pid, _| alive.contains(pid));
+                old.retain(|pid, cached| {
+                    alive.contains(pid)
+                        && processes
+                            .iter()
+                            .any(|(live, start)| live == pid && *start == cached.start_time_millis)
+                });
+                old_elapsed += started.elapsed();
+                let started = std::time::Instant::now();
+                retain_live_process_metadata(&mut new_cwd, &mut new, |pid| {
+                    current.get(&pid).copied()
+                });
+                new_elapsed += started.elapsed();
+                let identities = |map: &HashMap<u32, ProcessIdentitySample>| -> BTreeMap<_, _> {
+                    map.iter()
+                        .map(|(pid, cached)| (*pid, cached.start_time_millis))
+                        .collect()
+                };
+                assert_eq!(old_cwd, new_cwd);
+                assert_eq!(identities(&old), identities(&new));
+            }
+            println!(
+                "metadata pruning: processes={count}, runs=10, old_us={}, new_us={}",
+                old_elapsed.as_micros(),
+                new_elapsed.as_micros()
+            );
+        }
+    }
 
     #[test]
     fn vm_counter_deltas_become_byte_rates() {

@@ -502,16 +502,17 @@ run_precommit_semgrep() {
 }
 
 run_workspace_tests() {
-    # aetower-mcp runs single-threaded on purpose. Its storage tests share one
-    # process-wide SQLite index (state_store.rs storage_index_directory), and
-    # 14 of 17 index-using tests deliberately do not override it, so parallel
-    # threads cross-contaminate the global INDEX_REPORT_SECTIONS_MEMO and
-    # fail non-deterministically with *different* tests on each run. Until
-    # every test owns its directory, serialise the crate. The suite is
-    # ~8 min, which is acceptable inside the pre-push budget.
-    run "cargo test (workspace)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" --workspace --exclude aetower-helper --exclude aetower-mcp
-    run "cargo test (aetower-mcp)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-mcp -- --test-threads=1
-    run "cargo test (aetower-helper)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper -- --test-threads=1
+    # Preserve crate-specific --include/--skip selections. The unfiltered
+    # full gate uses one feature graph and keeps every test serial.
+    for label in "cargo test (workspace)" "cargo test (aetower-mcp)" "cargo test (aetower-helper)"; do
+        if filter_contains "$INCLUDE_FILTER" "$label" || filter_contains "$SKIP_FILTER" "$label"; then
+            run "cargo test (workspace)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" --workspace --exclude aetower-helper --exclude aetower-mcp
+            run "cargo test (aetower-mcp)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-mcp -- --test-threads=1
+            run "cargo test (aetower-helper)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper -- --test-threads=1
+            return
+        fi
+    done
+    run "cargo test (workspace)" sh "$ROOT/scripts/test-rust-workspace.sh"
 }
 
 # Swift tests are a real gate, not an optional extra: macos/Tests/AetowerUITests

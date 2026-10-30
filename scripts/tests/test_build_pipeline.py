@@ -19,7 +19,7 @@ class BuildPipelineTests(unittest.TestCase):
         (self.root / "rust").mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("build-settings.sh", "build-rust-ffi-for-swiftpm.sh"):
+        for name in ("build-settings.sh", "build-rust-ffi-for-swiftpm.sh", "test-rust-workspace.sh", "telemetry-smoke.sh"):
             shutil.copyfile(SOURCE / name, self.root / "scripts" / name)
         shutil.copyfile(SOURCE / "build-rust.sh", self.root / "scripts/build-rust.sh")
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", CARGO_BIN=str(self.bin / "cargo"))
@@ -72,6 +72,21 @@ else:
         self.assertEqual(calls[0], "2 build --locked -p aetower-mcp -p aetower-cli -p aetower-ffi")
         self.assertEqual(calls[1], "2 build --locked -p uniffi-bindgen-swift")
         self.assertFalse((self.root / "rust/target/release").exists())
+
+    def test_workspace_tests_use_one_serial_graph_without_excluding_crates(self):
+        subprocess.run(["sh", str(self.root / "scripts/test-rust-workspace.sh")],
+                       cwd=self.root / "rust", env=self.env, check=True)
+        self.assertEqual(self.calls(), [
+            f"2 test --locked --manifest-path {self.root}/rust/Cargo.toml --workspace -- --test-threads=1"
+        ])
+
+    def test_telemetry_smoke_resolves_cargo_from_path(self):
+        self.env.pop("CARGO_BIN")
+        subprocess.run(["sh", str(self.root / "scripts/telemetry-smoke.sh")],
+                       env=self.env, check=True)
+        self.assertEqual((self.root / "cargo-calls").read_text().splitlines(), [
+            f"2 run --locked --manifest-path {self.root}/rust/Cargo.toml -p aetower-bench --release -- --verify-telemetry-loopback"
+        ])
 
     def test_release_build_does_not_compile_debug_runtime(self):
         self.env["AETOWER_BUILD_JOBS"] = "3"

@@ -18,7 +18,7 @@ env:
 concurrency:
   group: quality-${{ github.workflow }}-${{ github.ref }}
   # Cancel superseded branch and pull-request runs so contributors get fast
-  # feedback, but never cancel a master run. Cancelling skips the "Post Cache"
+  # feedback, but never cancel a master run. Cancelling skips the final cache
   # steps, so a cancelled run saves nothing: with `true` here, pushing twice
   # in quick succession would leave the master cache permanently cold and the
   # gate would rebuild from scratch on every run.
@@ -28,8 +28,8 @@ jobs:
   quality:
     name: macOS 15 quality gate
     runs-on: macos-15
-    # The gate runs the full Rust workspace test suite, the serialised
-    # aetower-mcp suite, and the Swift suite, so a cold run is long. Bump
+    # The gate runs the full Rust workspace and Swift suites, so a cold run
+    # is long. Bump
     # this if the gate outgrows it rather than letting runs be killed
     # mid-suite, which produces no diagnostic.
     timeout-minutes: 120
