@@ -158,3 +158,6 @@ stress benchmark. Runtime source was unchanged, so these figures establish a
 baseline rather than a measured runtime improvement. The raw build JSON/logs
 are in `logs/`, and runtime artifacts in `tmp/runtime-profile/`, in the isolated
 build worktree; these generated files are intentionally untracked.
+
+Further passes and their validation are recorded in the
+[optimization loop report](optimization-loop.md).
