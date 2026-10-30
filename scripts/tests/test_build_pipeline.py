@@ -19,7 +19,7 @@ class BuildPipelineTests(unittest.TestCase):
         (self.root / "rust").mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("build-settings.sh", "build-rust-ffi-for-swiftpm.sh", "test-rust-workspace.sh", "telemetry-smoke.sh"):
+        for name in ("build-settings.sh", "build-rust-ffi-for-swiftpm.sh", "test-rust-workspace.sh", "telemetry-smoke.sh", "measure-overhead.sh"):
             shutil.copyfile(SOURCE / name, self.root / "scripts" / name)
         shutil.copyfile(SOURCE / "build-rust.sh", self.root / "scripts/build-rust.sh")
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", CARGO_BIN=str(self.bin / "cargo"))
@@ -86,6 +86,13 @@ else:
                        env=self.env, check=True)
         self.assertEqual((self.root / "cargo-calls").read_text().splitlines(), [
             f"2 run --locked --manifest-path {self.root}/rust/Cargo.toml -p aetower-bench --release -- --verify-telemetry-loopback"
+        ])
+
+    def test_standalone_benchmark_uses_shared_compiler_budget(self):
+        subprocess.run(["sh", str(self.root / "scripts/measure-overhead.sh"),
+                        "--iterations", "4", "--enforce"], env=self.env, check=True)
+        self.assertEqual(self.calls(), [
+            "2 run --locked --release -p aetower-bench -- --iterations 4 --enforce"
         ])
 
     def test_release_build_does_not_compile_debug_runtime(self):

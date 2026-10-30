@@ -87,3 +87,54 @@ These are operation timings, not whole-app speedups. Run with
 `cargo test --locked --manifest-path rust/Cargo.toml -p aetower-collector --release metadata_cache_pruning_benchmark -- --ignored --nocapture`.
 The collector release suite passes 21 tests plus one doctest; the benchmark is
 ignored in ordinary test runs and has no timing threshold.
+
+The complete workspace runner subsequently passed 496 tests and doctests, with
+two manual benchmarks ignored. Its cold/debug cache-repair run took 1,724.1s
+wall and 487.5 CPU-seconds, with 728.8 MiB sampled aggregate peak RSS. Host load
+was roughly 30–46 on ten cores, and the 100,000-row SQLite fixture dominated
+test execution. This is an absolute validation cost, not a matched speedup.
+Collector Clippy passes with warnings denied.
+
+Hosted run [41017661717](https://github.com/schiste/Aetower/actions/runs/41017661717)
+restored all three caches and passed Rust/Swift tests, telemetry, benchmark
+budgets and package smoke. The unchanged lockfile still fails the mandatory
+advisory check. Observed stages compared with the previous cold run:
+
+| Stage | Previous cold cache | Restored cache + combined Rust tests |
+| --- | ---: | ---: |
+| Install quality tools | 3m43s | 27s |
+| Clippy | 2m24s | 22s |
+| Rust tests, total | 7m05s (three commands) | 3m44s (one command) |
+| Build Rust bridge | 2m01s | 23s |
+| Swift build | 2m04s | 2m26s |
+| Swift tests | 27s | 25s |
+| Benchmark budget | 2m26s | 1m40s |
+
+Rust testing is 47% shorter in these runs. Cache restoration and graph
+consolidation both changed, so this does not isolate their individual effects.
+Swift compilation did not improve despite a cache hit. The new run also reached
+package smoke for the first time (9m24s), making whole-run durations unequal in
+coverage: its full gate was 18m42s, including that package and the failed audit.
+
+## Pass 3: deadline-based worker sleep and dependency preflight
+
+Five engine workers previously woke every 250 ms solely to check the stop flag,
+even during multi-minute history maintenance and six-hour regression waits.
+They now park until their existing deadline. Stop sets the same cancellation
+flags, unparks all workers, then joins them. Spurious wakes recheck the original
+deadline, preserving work cadence. No snapshot fields or schedules change.
+Tests cover pre-cancelled waits, stop/unpark races, spurious wakes and all five
+worker handles during engine shutdown. All 64 core unit tests and six identity
+pipeline fixture tests pass, as does Clippy with warnings denied.
+
+The mandatory dependency-policy check now precedes compilation, tests and
+packaging. Existing lockfile advisories are still rejected; the reordered
+selected audit takes 3.0s wall / 1.4 CPU-seconds / 50.8 MiB sampled tree RSS on
+this host. This avoids expensive work before a known rejection without waiving
+the audit. Standalone benchmark compilation also uses the shared job budget.
+All 18 build/measurement checks pass.
+
+Passes two and three share one package build to avoid another release compile
+on the contended host. The retained baseline is the pass-one app; the paired
+runtime comparison therefore measures the combined collector/worker candidate,
+while focused tests and the pruning microbenchmark validate individual changes.

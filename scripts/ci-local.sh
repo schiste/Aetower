@@ -662,6 +662,9 @@ run_full_gate() {
     run_full_shellcheck
     run_full_semgrep
     run "cargo fmt --check" "$CARGO_BIN" fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
+    # Reject dependency-policy failures before spending time on compilation,
+    # tests and packaging. Keep the same mandatory audit and selected labels.
+    run_full_dependency_policy
     run "cargo clippy" "$CARGO_BIN" clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
     run_workspace_tests
     clean_swift_build_dir
@@ -681,7 +684,6 @@ run_full_gate() {
     if [ "$MODE" = "full" ]; then
         run "local operator smoke" sh "$ROOT/scripts/local-operator-smoke.sh"
     fi
-    run_full_dependency_policy
     if [ "$MODE" = "full" ]; then
         if command -v cargo-audit >/dev/null 2>&1; then
             run "cargo audit" cargo audit --file "$ROOT/rust/Cargo.lock" --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0097
