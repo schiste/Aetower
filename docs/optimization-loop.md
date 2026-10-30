@@ -271,3 +271,56 @@ wall / 6.0 CPU-seconds / 205.0 MiB sampled peak tree RSS**, and again passed
 smoke and strict signature checks. This confirms cache reuse on the current
 inputs; host conditions differ from the earlier 23s repeat, so a causal
 percentage speedup between those two repeats is not claimed.
+
+
+## Pass five: avoid redundant Swift planning and attribution formatting
+
+The unfiltered full gate now uses `swift test` to build all products and run the
+suite, rather than planning/building the package immediately before asking
+SwiftPM to plan/build it for tests. Explicit include/skip labels retain separate
+commands. Pre-commit changes to the new helper and dependency helper trigger the
+orchestration regression suite.
+
+A minimal package whose tests depend only on a library confirms that `swift
+test` also builds its independent executable product. The real Aetower check
+then starts with no executable at SwiftPM's reported debug product path: all
+**212 Swift tests pass and the app executable is created**. That initial build
+and suite takes 172.7s wall / 198.3 CPU-seconds / 1,028.4 MiB sampled peak tree
+RSS. A subsequent standalone `swift build` performs no compilation, but still
+costs **5.2s wall / 3.5 CPU-seconds / 141.2 MiB sampled peak tree RSS**. Removing
+that redundant invocation avoids its planning/plugin work; this is not a
+measured hosted full-job percentage reduction. Hosted preflight still rejects
+existing dependency advisories before Swift work.
+
+Attribution now joins each process command once and uses a clone for the second
+owned output field, rather than joining it separately for the preview, component
+and lineage. Launcher deduplication borrows labels; formatting borrows process
+names. Long previews inspect at most 161 Unicode scalars instead of counting
+the entire command, and build the truncated result in one buffer. Published
+command lines, preview content, whitespace trimming, ordering and all field
+types are unchanged.
+
+Nine attribution release tests pass, including Unicode, whitespace and the
+160-scalar boundary; its manual benchmark is ignored normally. Clippy passes
+with warnings denied. Complete entity output for fixed 501-process fixtures
+with 32-, 1,024- and 16,384-byte arguments is byte-identical between retained
+baseline and candidate test binaries. All 64 core tests and six identity-pipeline
+fixtures pass. Twenty Python orchestration/measurement tests and shell lint pass.
+
+Twelve alternating retained-binary runs (A/B/B/A repeated three times), each
+executing all three fixed attribution fixtures, measure CPU and peak RSS via
+macOS per-child `wait4` accounting. Six baseline runs use **1.365 CPU-seconds**;
+six candidate runs use **1.271 CPU-seconds**, **6.9% less CPU** on this controlled
+workload. Mean peak RSS is 59.33 → 58.92 MiB; that small difference does not
+establish a memory improvement. Operation wall times were sensitive to host
+scheduling, so CPU seconds are the comparison here. These figures are not
+whole-app CPU or memory savings.
+
+
+The signed attribution candidate packages in **244.2s wall / 228.1 CPU-seconds /
+1,970.3 MiB sampled peak build-tree RSS**, passing smoke and strict signature
+checks. Rust finishes in 120s. Release Swift recompilation follows the debug
+suite despite unchanged Swift sources and generated bindings. That invalidation
+path remains under investigation; this build does not demonstrate lower build
+pressure. The earlier attribution operation comparison measures the retained
+Rust implementation directly and is independent of these package timings.
