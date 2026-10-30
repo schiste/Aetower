@@ -632,12 +632,10 @@ run_full_shellcheck() {
 }
 
 run_full_dependency_policy() {
-    deny_bin="$(command -v cargo-deny || true)"
-    if [ -z "$deny_bin" ]; then
-        echo "missing required tool: cargo-deny (install with: cargo install cargo-deny --locked)" >&2
-        exit 1
+    if ! should_run_label "cargo deny"; then
+        return
     fi
-    run "cargo deny" sh -c 'cd "$1/rust" && CARGO="$2" "$3" check advisories bans sources --disable-fetch --config "$1/deny.toml"' sh "$ROOT" "$CARGO_BIN" "$deny_bin"
+    run "cargo deny" sh "$ROOT/scripts/check-dependencies.sh"
 }
 
 run_full_gate() {

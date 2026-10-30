@@ -58,17 +58,51 @@ jobs:
           echo "rust=$rust_id" >> "$GITHUB_OUTPUT"
           echo "swift=$swift_id" >> "$GITHUB_OUTPUT"
 
-      - name: Restore Rust build artifacts
-        id: rust-cache
+      # Dependency metadata needs package sources, but not compiled targets.
+      - name: Restore Cargo dependency sources
+        id: registry-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
+            ~/.cargo/registry/src
             ~/.cargo/git/db
-            rust/target
-          key: rust-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.toml', 'rust/crates/**') }}
+          key: cargo-registry-v1-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-
+
+      # Cache just the version-pinned tool; keep its advisory database fetch fresh.
+      - name: Restore cargo-deny
+        id: deny-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${{ env.CARGO_DENY_VERSION }}
+
+      - name: Install dependency policy tool
+        run: |
+          if ! command -v cargo-deny >/dev/null 2>&1 \
+              || [ "$(cargo-deny --version)" != "cargo-deny $CARGO_DENY_VERSION" ]; then
+            cargo install cargo-deny --version "$CARGO_DENY_VERSION" --locked --force
+          fi
+          cargo deny fetch db --config ../deny.toml
+        working-directory: rust
+
+      # Reject policy failures before large target/Swift cache transfers.
+      - name: Dependency policy preflight
+        run: sh scripts/check-dependencies.sh
+
+      - name: Restore Rust build artifacts
+        id: rust-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            rust/target
+          key: rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.toml', 'rust/crates/**') }}
+          restore-keys: |
+            rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}-
+            rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-
             rust-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}-
             rust-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-
 
@@ -87,23 +121,8 @@ jobs:
             swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('macos/Package.swift', 'macos/Package.resolved') }}-
             swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-
 
-      # Cache just the version-pinned tool; keep its advisory database fetch fresh.
-      - name: Restore cargo-deny
-        id: deny-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/bin/cargo-deny
-          key: cargo-deny-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${{ env.CARGO_DENY_VERSION }}
-
-      - name: Install quality tools
-        run: |
-          brew install gitleaks swiftlint semgrep shellcheck
-          if ! command -v cargo-deny >/dev/null 2>&1 \
-              || [ "$(cargo-deny --version)" != "cargo-deny $CARGO_DENY_VERSION" ]; then
-            cargo install cargo-deny --version "$CARGO_DENY_VERSION" --locked --force
-          fi
-          cargo deny fetch db --config ../deny.toml
-        working-directory: rust
+      - name: Install remaining quality tools
+        run: brew install gitleaks swiftlint semgrep shellcheck
 
       - name: Run the full local pre-push gate
         env:
@@ -112,14 +131,22 @@ jobs:
 
       # Preserve compiler work even when a test or the dependency audit fails.
       # Cached artifacts are inputs to the next gate, never evidence of a pass.
-      - name: Save Rust build artifacts
-        if: ${{ !cancelled() && steps.rust-cache.outputs.cache-hit != 'true' && steps.rust-cache.outputs.cache-primary-key != '' }}
+      - name: Save Cargo dependency sources
+        if: ${{ !cancelled() && steps.registry-cache.outputs.cache-hit != 'true' && steps.registry-cache.outputs.cache-primary-key != '' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
+            ~/.cargo/registry/src
             ~/.cargo/git/db
+          key: ${{ steps.registry-cache.outputs.cache-primary-key }}
+
+      - name: Save Rust build artifacts
+        if: ${{ !cancelled() && steps.rust-cache.outputs.cache-hit != 'true' && steps.rust-cache.outputs.cache-primary-key != '' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
             rust/target
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
 

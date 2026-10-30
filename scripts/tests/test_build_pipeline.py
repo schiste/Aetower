@@ -19,7 +19,7 @@ class BuildPipelineTests(unittest.TestCase):
         (self.root / "rust").mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("build-settings.sh", "build-rust-ffi-for-swiftpm.sh", "test-rust-workspace.sh", "telemetry-smoke.sh", "measure-overhead.sh"):
+        for name in ("build-settings.sh", "build-rust-ffi-for-swiftpm.sh", "test-rust-workspace.sh", "telemetry-smoke.sh", "measure-overhead.sh", "check-dependencies.sh"):
             shutil.copyfile(SOURCE / name, self.root / "scripts" / name)
         shutil.copyfile(SOURCE / "build-rust.sh", self.root / "scripts/build-rust.sh")
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", CARGO_BIN=str(self.bin / "cargo"))
@@ -94,6 +94,27 @@ else:
         self.assertEqual(self.calls(), [
             "2 run --locked --release -p aetower-bench -- --iterations 4 --enforce"
         ])
+
+    def test_dependency_preflight_preserves_checks_and_cargo_override(self):
+        self.executable("cargo-deny", '''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+Path("deny-call.json").write_text(json.dumps({"args": sys.argv[1:], "cargo": os.environ["CARGO"], "jobs": os.environ["CARGO_BUILD_JOBS"]}))
+sys.exit(int(os.environ.get("FAKE_DENY_EXIT", "0")))
+''')
+        import json
+        for status in (0, 7):
+            with self.subTest(exit_status=status):
+                self.env["FAKE_DENY_EXIT"] = str(status)
+                result = subprocess.run(["sh", str(self.root / "scripts/check-dependencies.sh")],
+                                        env=self.env, check=False)
+                self.assertEqual(result.returncode, status)
+                call = json.loads((self.root / "rust/deny-call.json").read_text())
+                self.assertEqual(call, {
+                    "args": ["check", "advisories", "bans", "sources", "--disable-fetch",
+                             "--config", str(self.root / "deny.toml")],
+                    "cargo": str(self.bin / "cargo"), "jobs": "2",
+                })
 
     def test_release_build_does_not_compile_debug_runtime(self):
         self.env["AETOWER_BUILD_JOBS"] = "3"
