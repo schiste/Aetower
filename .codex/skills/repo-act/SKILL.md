@@ -25,7 +25,7 @@ description: Use after repo-onboarding or Explore when moving from orientation i
 - Re-run lint/build only after the focused validation passes.
 - Document any override-based maintainer note that affected the change plan.
 - For build-performance work, measure clean and unchanged repeat builds separately
-  with the same toolchain, profile, job count and compiler-cache settings. Record
+  with the same toolchain, Cargo package/feature selection, profile, job count and compiler-cache settings. Record
   background load and distinguish an empty target directory from an uncached build.
 - Report wall time and CPU seconds alongside memory. Label memory as either
   largest-process RSS or sampled aggregate tree RSS; they are not interchangeable.
@@ -37,6 +37,8 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   before trusting a new sampler: macOS libproc CPU counters use Mach ticks and
   require `mach_timebase_info` conversion on Apple Silicon. Distinguish resident
   memory from physical footprint, and keep startup settling and workloads equal.
+  Retain baseline and candidate app bundles so changed host load can be retested
+  without recompilation; alternate them without builds running during sampling.
 
 ## Useful Commands
 
