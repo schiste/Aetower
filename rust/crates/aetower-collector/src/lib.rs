@@ -219,7 +219,7 @@ pub struct CollectorTimings {
     pub deferred_expensive_sampling: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct ProcessCounterSample {
     start_time_millis: u64,
     wakeups: u64,
@@ -236,6 +236,34 @@ struct ProcessCounterSample {
     /// baseline, not by a single nominal tick — otherwise a 5-tick sample reads
     /// 5x too high. `None` until the first fresh read.
     counters_sampled_at: Option<std::time::Instant>,
+}
+
+// Keep one counter table between ticks. Pruning before sampling makes room for
+// new PIDs without retaining departed processes or allocating a second table.
+fn prepare_process_counters(
+    counters: &mut HashMap<u32, ProcessCounterSample>,
+    live_count: usize,
+    mut is_live: impl FnMut(u32) -> bool,
+) {
+    counters.retain(|pid, _| is_live(*pid));
+    counters.shrink_to(live_count);
+    counters.reserve(live_count.saturating_sub(counters.len()));
+}
+
+fn process_counter_slot(
+    counters: &mut HashMap<u32, ProcessCounterSample>,
+    pid: u32,
+    start_time_millis: u64,
+) -> (Option<ProcessCounterSample>, &mut ProcessCounterSample) {
+    use std::collections::hash_map::Entry;
+    match counters.entry(pid) {
+        Entry::Occupied(entry) => {
+            let slot = entry.into_mut();
+            let previous = (slot.start_time_millis == start_time_millis).then_some(*slot);
+            (previous, slot)
+        }
+        Entry::Vacant(entry) => (None, entry.insert(ProcessCounterSample::default())),
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -581,7 +609,12 @@ impl Collector {
         }
 
         let process_sampling_started = std::time::Instant::now();
-        let mut next_process_counters = HashMap::with_capacity(self.system.processes().len());
+        let process_table = self.system.processes();
+        prepare_process_counters(
+            &mut self.previous_process_counters,
+            process_table.len(),
+            |pid| process_table.contains_key(&sysinfo::Pid::from_u32(pid)),
+        );
         let all_processes: Vec<_> = self
             .system
             .processes()
@@ -589,10 +622,11 @@ impl Collector {
             .map(|process| {
                 let pid = process.pid().as_u32();
                 let start_time_millis = process.start_time().saturating_mul(1_000);
-                let previous = self
-                    .previous_process_counters
-                    .get(&pid)
-                    .filter(|prev| prev.start_time_millis == start_time_millis);
+                let (previous, counter_slot) = process_counter_slot(
+                    &mut self.previous_process_counters,
+                    pid,
+                    start_time_millis,
+                );
                 // Wakeups and energy come from the same syscall
                 // (`proc_pid_rusage`). We sample them on the same slow cadence
                 // (every `WAKEUPS_SAMPLE_INTERVAL_TICKS` ticks, ~10 s) to avoid
@@ -694,21 +728,18 @@ impl Collector {
                 let disk_read_bps = (disk_read_delta as f64 / elapsed_seconds) as u64;
                 let disk_write_bps = (disk_write_delta as f64 / elapsed_seconds) as u64;
 
-                next_process_counters.insert(
-                    pid,
-                    ProcessCounterSample {
-                        start_time_millis,
-                        wakeups,
-                        energy_nj,
-                        physical_footprint_bytes,
-                        disk_read_bytes: disk_read_total,
-                        disk_write_bytes: disk_write_total,
-                        wakeups_per_second,
-                        energy_nj_per_s,
-                        thread_count,
-                        counters_sampled_at,
-                    },
-                );
+                *counter_slot = ProcessCounterSample {
+                    start_time_millis,
+                    wakeups,
+                    energy_nj,
+                    physical_footprint_bytes,
+                    disk_read_bytes: disk_read_total,
+                    disk_write_bytes: disk_write_total,
+                    wakeups_per_second,
+                    energy_nj_per_s,
+                    thread_count,
+                    counters_sampled_at,
+                };
 
                 let identity = match self.process_identity_cache.get(&pid) {
                     Some(cached)
@@ -768,10 +799,7 @@ impl Collector {
                         && (full_collection || self.process_metadata_tick.is_multiple_of(2))
                     {
                         // Only probe new PIDs; return cached cwd for known ones.
-                        let is_new = self
-                            .previous_process_counters
-                            .get(&pid)
-                            .is_none_or(|prev| prev.start_time_millis != start_time_millis);
+                        let is_new = previous.is_none();
                         if is_new {
                             platform::process_cwd(pid)
                         } else {
@@ -785,7 +813,6 @@ impl Collector {
             })
             .collect();
         let process_sampling_millis = process_sampling_started.elapsed().as_secs_f64() * 1000.0;
-        self.previous_process_counters = next_process_counters;
 
         // Update CWD cache: insert fresh values, prune dead PIDs.
         if !self.config.defer_expensive_sampling
@@ -3037,8 +3064,9 @@ mod platform {
 #[cfg(test)]
 mod top_level_tests {
     use super::{
-        HostVmRates, NetworkInterfaceIdentitySample, ProcessIdentity, ProcessIdentitySample,
-        build_network_interface_snapshots, cache_cwd_if_changed, platform, process_refresh_kind,
+        HostVmRates, NetworkInterfaceIdentitySample, ProcessCounterSample, ProcessIdentity,
+        ProcessIdentitySample, build_network_interface_snapshots, cache_cwd_if_changed, platform,
+        prepare_process_counters, process_counter_slot, process_refresh_kind,
         retain_live_process_metadata,
     };
     use std::collections::{BTreeMap, HashMap, HashSet};
@@ -3145,6 +3173,154 @@ mod top_level_tests {
                 "metadata pruning: processes={count}, runs=10, old_us={}, new_us={}",
                 old_elapsed.as_micros(),
                 new_elapsed.as_micros()
+            );
+        }
+    }
+
+    #[test]
+    fn counter_slots_preserve_live_baselines_and_reject_new_or_reused_pids() {
+        let sample = ProcessCounterSample {
+            start_time_millis: 100,
+            wakeups: 17,
+            energy_nj: 1234,
+            disk_read_bytes: 55,
+            counters_sampled_at: Some(std::time::Instant::now()),
+            ..Default::default()
+        };
+        let mut counters = HashMap::from([(10, sample)]);
+        let (previous, slot) = process_counter_slot(&mut counters, 10, 100);
+        assert_eq!(previous, Some(sample));
+        slot.wakeups = 18;
+        assert_eq!(counters[&10].wakeups, 18);
+        assert!(process_counter_slot(&mut counters, 10, 101).0.is_none());
+        // A new PID can legitimately have a zero start time; the default
+        // inserted slot must never be mistaken for an existing baseline.
+        assert!(process_counter_slot(&mut counters, 20, 0).0.is_none());
+    }
+
+    #[test]
+    fn counter_table_prunes_exits_and_releases_excess_capacity() {
+        let mut counters: HashMap<_, _> = (0..1000)
+            .map(|pid| (pid, ProcessCounterSample::default()))
+            .collect();
+        let capacity = counters.capacity();
+        prepare_process_counters(&mut counters, 2, |pid| pid < 2);
+        assert_eq!(counters.len(), 2);
+        assert!(counters.capacity() < capacity);
+        let slot_address = &counters[&0] as *const _;
+        prepare_process_counters(&mut counters, 2, |pid| pid < 2);
+        assert_eq!(&counters[&0] as *const _, slot_address);
+        prepare_process_counters(&mut counters, 0, |_| false);
+        assert_eq!(counters.capacity(), 0);
+    }
+
+    #[test]
+    fn counter_table_matches_replacement_table_across_process_churn() {
+        let mut old = HashMap::<u32, ProcessCounterSample>::new();
+        let mut new = old.clone();
+        for processes in [
+            vec![(10, 100), (20, 200)],
+            vec![(10, 100), (20, 201), (30, 0)],
+            vec![(30, 0)],
+            vec![],
+            vec![(10, 100)],
+        ] {
+            prepare_process_counters(&mut new, processes.len(), |pid| {
+                processes.iter().any(|&(live, _)| live == pid)
+            });
+            let mut next = HashMap::with_capacity(processes.len());
+            for (pid, start) in processes {
+                let expected = old
+                    .get(&pid)
+                    .filter(|sample| sample.start_time_millis == start)
+                    .copied();
+                let (actual, slot) = process_counter_slot(&mut new, pid, start);
+                assert_eq!(actual, expected);
+                let updated = ProcessCounterSample {
+                    start_time_millis: start,
+                    wakeups: expected.map_or(1, |sample| sample.wakeups + 3),
+                    disk_read_bytes: expected.map_or(0, |sample| sample.disk_read_bytes + 10),
+                    ..Default::default()
+                };
+                *slot = updated;
+                next.insert(pid, updated);
+            }
+            old = next;
+            assert_eq!(old, new);
+        }
+    }
+
+    #[test]
+    #[ignore = "manual before/after counter-table benchmark; no timing assertion"]
+    fn counter_table_reuse_benchmark() {
+        for count in [1_000_u32, 5_000, 10_000] {
+            let processes: HashMap<_, _> = (0..count).map(|pid| (pid, u64::from(pid))).collect();
+            let original: HashMap<_, _> = processes
+                .iter()
+                .map(|(&pid, &start)| {
+                    (
+                        pid,
+                        ProcessCounterSample {
+                            start_time_millis: start,
+                            wakeups: 100,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect();
+            let mut old = original.clone();
+            let mut new = original;
+            let mut old_elapsed = std::time::Duration::ZERO;
+            let mut new_elapsed = std::time::Duration::ZERO;
+            for tick in 0..2_000 {
+                let update = |previous: Option<ProcessCounterSample>, start| ProcessCounterSample {
+                    start_time_millis: start,
+                    wakeups: previous.map_or(1, |sample| sample.wakeups + 1),
+                    ..Default::default()
+                };
+                let mut run_old = || {
+                    let started = std::time::Instant::now();
+                    let mut next = HashMap::with_capacity(processes.len());
+                    for (&pid, &start) in &processes {
+                        let previous = old
+                            .get(&pid)
+                            .filter(|s| s.start_time_millis == start)
+                            .copied();
+                        next.insert(pid, update(previous, start));
+                        std::hint::black_box(
+                            old.get(&pid).is_none_or(|s| s.start_time_millis != start),
+                        );
+                    }
+                    old = next;
+                    started.elapsed()
+                };
+                let mut run_new = || {
+                    let started = std::time::Instant::now();
+                    prepare_process_counters(&mut new, processes.len(), |pid| {
+                        processes.contains_key(&pid)
+                    });
+                    for (&pid, &start) in &processes {
+                        let (previous, slot) = process_counter_slot(&mut new, pid, start);
+                        *slot = update(previous, start);
+                        std::hint::black_box(previous.is_none());
+                    }
+                    started.elapsed()
+                };
+                if tick % 2 == 0 {
+                    old_elapsed += run_old();
+                    new_elapsed += run_new();
+                } else {
+                    new_elapsed += run_new();
+                    old_elapsed += run_old();
+                }
+                assert_eq!(old, new);
+            }
+            println!(
+                "counter table: processes={count}, ticks=2000, old_us={}, new_us={}, sample_bytes={}, capacity={}",
+                old_elapsed.as_micros(),
+                new_elapsed.as_micros(),
+                std::mem::size_of::<ProcessCounterSample>(),
+                new.capacity()
             );
         }
     }
