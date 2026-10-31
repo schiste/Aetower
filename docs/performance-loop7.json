@@ -364,7 +364,7 @@
     "interpretation": "legacy ignores already-warmed requested cache and creates a separate default cache; candidate uses requested cache; warm-repeat CPU similar; no whole-app or hosted-CI speedup claimed"
   },
   "app_comparison": {
-    "status": "verified isolated pair prepared; fresh ABBA in progress",
+    "status": "complete; fixture gain not confirmed app-wide; candidate CPU and wakeup means higher",
     "pair": [
       {
         "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-baseline/Aetower.app",
@@ -385,7 +385,183 @@
         "loaded_bundled_rust_verified": true
       }
     ],
-    "construction": "same candidate app copied; baseline replaces only Rust dylib and reseals it and outer app; common compiled Swift UUID, production Cargo roots and release settings"
+    "construction": "same candidate app copied; baseline replaces only Rust dylib and reseals it and outer app; common compiled Swift UUID, production Cargo roots and release settings",
+    "abba": {
+      "status": "complete",
+      "controller_pid": 61034,
+      "apps": [
+        {
+          "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-baseline/Aetower.app",
+          "source": "9fdd2ddb2b6b FFI; common Swift/dependencies f41e21c11211; production MCP/CLI/FFI roots; relocated d9d6ff8675ad",
+          "executable_sha256": "9fe9aecb7f25e1986c7cb96b62c734659fc465e5872911b34d98deb209942b29",
+          "rust_sha256": "9a637d8a2e1a30779ecf245c3a0d5616ef1ca0c697594f9f416e973d97b751e2",
+          "rust_uuid": "A2104D6A-2F1F-3983-9330-586B4084A9C0",
+          "variant": "baseline"
+        },
+        {
+          "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-candidate/Aetower.app",
+          "source": "f41e21c11211 FFI; common Swift/dependencies f41e21c11211; production MCP/CLI/FFI roots; relocated d9d6ff8675ad",
+          "executable_sha256": "99afc7a2b56c177e21f1365fb13438bec096be8f884d78e0792809f0a8f0cdad",
+          "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+          "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+          "variant": "candidate"
+        }
+      ],
+      "configuration": {
+        "sequence": "ABBA",
+        "settle_seconds": 60.0,
+        "duration_seconds": 90.0,
+        "interval_seconds": 2.0
+      },
+      "scope": "app-process counters; existing settings; no driven interaction; image inspection after sampling",
+      "windows": [
+        {
+          "label": "A1",
+          "variant": "baseline",
+          "status": "complete",
+          "pid": 61626,
+          "host_processes_start": 765,
+          "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+          "host_load_start": [
+            14.33642578125,
+            16.1669921875,
+            19.6640625
+          ],
+          "host_load_end": [
+            12.22900390625,
+            14.708984375,
+            18.73193359375
+          ],
+          "wall_seconds": 90.00436437499593,
+          "samples": 46,
+          "user_time_seconds": 2.666655833,
+          "system_time_seconds": 1.02387,
+          "average_cpu_percent": 4.100385418671168,
+          "pkg_idle_wakeups": 0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "interrupt_wakeups": 396,
+          "interrupt_wakeups_per_second": 4.399786640902189,
+          "average_resident_size_bytes": 191075550.60869566,
+          "peak_resident_size_bytes": 240041984,
+          "average_phys_footprint_bytes": 141164546.08695653,
+          "peak_phys_footprint_bytes": 178046032,
+          "host_processes_end": 791,
+          "loaded_rust_image_verified": true
+        },
+        {
+          "label": "B1",
+          "variant": "candidate",
+          "status": "complete",
+          "pid": 99107,
+          "host_processes_start": 764,
+          "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+          "host_load_start": [
+            21.8125,
+            16.87548828125,
+            19.236328125
+          ],
+          "host_load_end": [
+            18.12548828125,
+            16.8779296875,
+            18.994140625
+          ],
+          "wall_seconds": 90.00869533300283,
+          "samples": 46,
+          "user_time_seconds": 3.38471525,
+          "system_time_seconds": 1.415806083,
+          "average_cpu_percent": 5.333397307048655,
+          "pkg_idle_wakeups": 1,
+          "pkg_idle_wakeups_per_second": 0.011110037716915305,
+          "interrupt_wakeups": 458,
+          "interrupt_wakeups_per_second": 5.0883972743472095,
+          "average_resident_size_bytes": 140305808.6956522,
+          "peak_resident_size_bytes": 198492160,
+          "average_phys_footprint_bytes": 123750823.30434783,
+          "peak_phys_footprint_bytes": 155354168,
+          "host_processes_end": 741,
+          "loaded_rust_image_verified": true
+        },
+        {
+          "label": "B2",
+          "variant": "candidate",
+          "status": "complete",
+          "pid": 32652,
+          "host_processes_start": 735,
+          "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+          "host_load_start": [
+            15.08154296875,
+            16.40234375,
+            18.66845703125
+          ],
+          "host_load_end": [
+            12.861328125,
+            15.23486328125,
+            17.9814453125
+          ],
+          "wall_seconds": 90.003639750008,
+          "samples": 46,
+          "user_time_seconds": 2.911800209,
+          "system_time_seconds": 1.224753875,
+          "average_cpu_percent": 4.595985335137107,
+          "pkg_idle_wakeups": 0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "interrupt_wakeups": 429,
+          "interrupt_wakeups_per_second": 4.766473902517502,
+          "average_resident_size_bytes": 129184990.60869566,
+          "peak_resident_size_bytes": 211746816,
+          "average_phys_footprint_bytes": 116615948.52173913,
+          "peak_phys_footprint_bytes": 142672952,
+          "host_processes_end": 734,
+          "loaded_rust_image_verified": true
+        },
+        {
+          "label": "A2",
+          "variant": "baseline",
+          "status": "complete",
+          "pid": 69515,
+          "host_processes_start": 750,
+          "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+          "host_load_start": [
+            16.2509765625,
+            15.7685546875,
+            17.9921875
+          ],
+          "host_load_end": [
+            18.11474609375,
+            16.58056640625,
+            18.0859375
+          ],
+          "wall_seconds": 90.00480625001364,
+          "samples": 46,
+          "user_time_seconds": 2.347804625,
+          "system_time_seconds": 1.024138291,
+          "average_cpu_percent": 3.7464031716633897,
+          "pkg_idle_wakeups": 0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "interrupt_wakeups": 380,
+          "interrupt_wakeups_per_second": 4.22199675586705,
+          "average_resident_size_bytes": 111328211.47826087,
+          "peak_resident_size_bytes": 208355328,
+          "average_phys_footprint_bytes": 116142245.04347827,
+          "peak_phys_footprint_bytes": 146031696,
+          "host_processes_end": 738,
+          "loaded_rust_image_verified": true
+        }
+      ],
+      "window_means": {
+        "baseline": {
+          "average_cpu_percent": 3.923394295167279,
+          "average_phys_footprint_bytes": 128653395.5652174,
+          "interrupt_wakeups_per_second": 4.310891698384619
+        },
+        "candidate": {
+          "average_cpu_percent": 4.9646913210928805,
+          "average_phys_footprint_bytes": 120183385.91304347,
+          "interrupt_wakeups_per_second": 4.927435588432356
+        }
+      },
+      "interpretation": "candidate CPU +26.5%, physical footprint -6.6%, interrupt wakeups +14.3%; baseline physical memory drifts 134.63 to 110.76 MiB; shared host load and process counts vary; no causal app-wide improvement established; higher CPU/wakeup readings unresolved; draft only"
+    }
   },
   "package_build": {
     "configuration": "two jobs; production MCP/CLI/FFI Cargo roots; RUSTC_WRAPPER empty; current FFI rebuilt with reused dependencies and external Swift scratch; ad-hoc signing; no notarization",

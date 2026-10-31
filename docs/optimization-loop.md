@@ -28,7 +28,15 @@ not establish app-wide CPU, physical footprint or wakeup gains. The signed
 production package passes strict deep signature, bundle-path smoke and loaded
 Rust UUID plus bundled-mapping preflights; committed FFI bindings stay unchanged.
 The matched pair has identical compiled Swift UUIDs, dependencies and production
-Cargo roots. Fresh A/B/B/A sampling is in progress.
+Cargo roots. All four fresh A/B/B/A windows complete and verify their images.
+App means are CPU **3.923% → 4.965%**, physical footprint **122.69 →
+114.62 MiB**, and interrupt wakeups **4.311 → 4.927/s**. Candidate means
+are +26.5% CPU, -6.6% physical footprint and +14.3% interrupt wakeups.
+Baseline memory itself falls from 134.63 to 110.76 MiB across its two windows;
+host load and process population also vary. The fixture improvement is **not
+confirmed app-wide**. Lower memory is not a causal saving, and the higher
+CPU/wakeup readings remain unresolved. The change remains a draft pending
+further profiling.
 
 Rebuilding the FFI and reusing the external Swift cache costs **98.528s wall /
 106.944 CPU-seconds / 883.84 MiB sampled peak tree RSS**. An immediate unchanged
