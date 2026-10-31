@@ -29,6 +29,17 @@ CPU is 1.275s versus 1.208s. These are fixture measurements on a shared host,
 with outliers retained in the accompanying data; **no whole-app build speedup
 is inferred**. The structural removal of the copies and plugin is verified.
 
+The signed production app builds with the external Swift scratch path, passes
+strict deep signature verification and passes package/launch smoke. With a
+fresh Swift cache and partially reused Rust dependencies, packaging takes
+611.287s wall / 611.320 CPU-seconds / 2,012.98 MiB sampled peak build-tree RSS.
+The runtime Cargo graph takes 5m01s, host bindgen 49.27s and Swift 226.57s.
+An immediate unchanged package takes 18.433s / 9.255 CPU-seconds / 562.23 MiB;
+Swift uses its on-disk description and finishes in 9.43s. These are absolute
+build costs, **not** an improvement over earlier repeat-package measurements.
+The compiler cache and retained app pair now live in a session-owned directory
+on the repository volume, outside temporary storage.
+
 Compact UI deltas previously formatted both base and current process rows into
 Debug strings to detect changes. They now index borrowed base rows and compare
 all fields directly. Exhaustive destructuring requires any future field to be
@@ -66,7 +77,11 @@ retained test executable directly to measure each process separately.
 The longer six-window app comparison started after pass five has no verified
 aggregate: its worktree artifacts were absent on resume and its process handle
 no longer resolved. It contributes no completed-comparison claim. The published
-source was restored, and fresh baseline/candidate app construction is underway.
+source was restored, and a fresh signed baseline/candidate pair is prepared.
+Both use the production MCP/CLI/FFI Cargo roots, the same release options and
+two-job budget. They share the same compiled Swift code and Rust dependencies;
+only the baseline Rust library is replaced before resealing the baseline app.
+The initial narrower-root baseline is ineligible for this comparison.
 Historical measurements below remain historical. The new
 `scripts/compare-runtime.py` records app hashes, Rust UUIDs, source identifiers
 and configuration before launching A/B/B/A windows; it saves each completed

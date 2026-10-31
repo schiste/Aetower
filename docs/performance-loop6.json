@@ -189,7 +189,64 @@
     ]
   },
   "app_comparison": {
-    "status": "pending fresh retained app builds",
+    "status": "prepared; awaiting measured windows",
+    "pair": {
+      "baseline_ffi_source": "833ca2afaf77f75ede2b3bfddbc354df743aab46",
+      "candidate_ffi_source": "9fdd2ddb2b6b7ce27189e18b8d27c147340b871c",
+      "common_swift_source": "ecc7c586953d33056fe8871516c2abbe3346c7b8",
+      "common_rust_dependencies_source": "ecc7c586953d33056fe8871516c2abbe3346c7b8",
+      "rust_roots": [
+        "aetower-mcp",
+        "aetower-cli",
+        "aetower-ffi"
+      ],
+      "profile": "release",
+      "jobs": 2,
+      "rustc_wrapper": "",
+      "pair_construction": "same signed candidate bundle; baseline replaces only Rust dylib then reseals dylib and outer app"
+    },
     "prior_six_window_comparison": "unverified; final artifacts unavailable on resume"
+  },
+  "package_build": {
+    "configuration": "two jobs; batched MCP/CLI/FFI runtime roots; debug bindgen; fresh external Swift scratch/cache; reused some Rust dependencies; RUSTC_WRAPPER empty; ad-hoc signature; no notarization",
+    "measurement": {
+      "command": [
+        "sh",
+        "scripts/package-macos.sh"
+      ],
+      "cwd": "/private/tmp/aetower-build-performance",
+      "exit_status": 0,
+      "wall_seconds": 611.287,
+      "user_cpu_seconds": 567.339,
+      "system_cpu_seconds": 43.981,
+      "average_cpu_percent": 100.0,
+      "sampled_peak_tree_rss_bytes": 2110767104,
+      "rss_samples": 588,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    },
+    "smoke": "passed",
+    "signing": "strict deep verification passed inside package script",
+    "comparison_note": "absolute cost, not a matched build speedup",
+    "launch_smoke": "passed: owned app remained alive for three seconds, then stopped by smoke trap"
+  },
+  "package_repeat": {
+    "configuration": "identical inputs and settings immediately after package_build; same external Swift scratch path",
+    "measurement": {
+      "command": [
+        "sh",
+        "scripts/package-macos.sh"
+      ],
+      "cwd": "/private/tmp/aetower-build-performance",
+      "exit_status": 0,
+      "wall_seconds": 18.433,
+      "user_cpu_seconds": 6.347,
+      "system_cpu_seconds": 2.908,
+      "average_cpu_percent": 50.2,
+      "sampled_peak_tree_rss_bytes": 589545472,
+      "rss_samples": 18,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    },
+    "signing": "strict deep verification passed inside package script",
+    "smoke": "launch smoke and strict signing passed"
   }
 }

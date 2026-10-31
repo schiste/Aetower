@@ -71,6 +71,8 @@ def run_window(identity, label, output, args, report):
     with (output / f"{label}-app.log").open("w") as app_log:
         process = subprocess.Popen([str(Path(identity["app"]) / "Contents/MacOS/Aetower")], stdout=app_log, stderr=subprocess.STDOUT)
         try:
+            window["pid"] = process.pid
+            save_json(output / "summary.json", report)
             time.sleep(args.settle)
             if process.poll() is not None:
                 raise RuntimeError(f"{label}: app exited during settling")
@@ -130,7 +132,7 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     report = {
-        "status": "running", "apps": identities,
+        "status": "running", "controller_pid": os.getpid(), "apps": identities,
         "configuration": {"sequence": "ABBA", "settle_seconds": args.settle, "duration_seconds": args.duration, "interval_seconds": args.interval},
         "scope": "app-process counters; existing settings; no driven interaction; image inspection after sampling",
         "windows": [],
