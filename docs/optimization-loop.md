@@ -96,7 +96,7 @@ source was restored. A corrected signed baseline/candidate pair passes strict si
 smoke and loaded-library UUID plus mapped-path preflights. The corrected
 package takes 101.313s wall / 113.995 CPU-seconds / 814.05 MiB sampled peak tree
 RSS while recompiling the FFI and reusing the Swift cache. This is an absolute
-rebuild cost, not a matched improvement. Fresh ABBA windows are in progress.
+rebuild cost, not a matched improvement. All four fresh ABBA windows complete and verify the expected bundled images.
 Both use the production MCP/CLI/FFI Cargo roots, the same release options and
 two-job budget. They share the same compiled Swift code and Rust dependencies;
 only the baseline Rust library is replaced before resealing the baseline app.
@@ -105,8 +105,15 @@ Historical measurements below remain historical. The new
 `scripts/compare-runtime.py` records app hashes, Rust UUIDs, source identifiers
 and configuration before launching A/B/B/A windows; it saves each completed
 window, verifies the loaded Rust UUID and bundled path after sampling and stops its own app
-child on failure. Whole-app CPU, memory and wakeup effects of pass six remain
-to be measured.
+child on failure. The verified ABBA means are CPU **4.045% → 4.467%**, average physical
+footprint **119.45 → 121.94 MiB**, and interrupt wakeups **4.750 → 4.766/s**.
+Candidate means are higher: +10.4% CPU, +2.1% physical footprint and +0.3%
+interrupt wakeups. Both variants have zero package-idle wakeups. Individual
+CPU windows vary from 3.49% to 4.60% for the baseline and 3.71% to 5.23%
+for the candidate, while host load changes. This establishes **no app-wide
+gain** and does not isolate a causal regression. The operation-level CPU
+improvement remains a fixture result. All window summaries, identities,
+configuration and host loads are retained in the accompanying JSON.
 
 ## Pass 1 — compiler caches and duplicate capacity queries
 
