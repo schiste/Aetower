@@ -313,12 +313,14 @@ change_install_name_if_present "$SWIFTPM_PLUGIN_DIR/debug/libaetower_ffi.dylib" 
 change_install_name_if_present "$SWIFTPM_PLUGIN_DIR/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
 delete_rpath_if_present "$SWIFTPM_PLUGIN_DIR/debug" "$BIN_DIR/Aetower"
 delete_rpath_if_present "$SWIFTPM_PLUGIN_DIR/release" "$BIN_DIR/Aetower"
+delete_rpath_if_present "$ROOT/rust/target/debug" "$BIN_DIR/Aetower"
+delete_rpath_if_present "$ROOT/rust/target/release" "$BIN_DIR/Aetower"
 
 if otool -l "$BIN_DIR/Aetower" | grep -F "$ROOT/macos/.build" >/dev/null; then
     echo "packaged app still references local SwiftPM build paths" >&2
     exit 1
 fi
-if otool -L "$BIN_DIR/Aetower" | grep -F "$ROOT/rust/target" >/dev/null; then
+if otool -l "$BIN_DIR/Aetower" | grep -F "$ROOT/rust/target" >/dev/null; then
     echo "packaged app still links against local Rust target artifacts" >&2
     exit 1
 fi

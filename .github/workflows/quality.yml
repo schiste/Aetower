@@ -116,7 +116,7 @@ jobs:
             ~/Library/Caches/org.swift.swiftpm
           # Rust bridge changes also change SwiftPM plugin artifacts. Include
           # those inputs so Rust-only updates can save fresh Swift snapshots.
-          key: swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('macos/Package.swift', 'macos/Package.resolved') }}-${{ hashFiles('macos/Sources/**', 'macos/Tests/**', 'macos/Plugins/**', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rust-toolchain.toml', 'rust/crates/**', 'scripts/build-rust.sh', 'scripts/build-settings.sh', 'scripts/build-rust-ffi-for-swiftpm.sh', 'scripts/package-macos.sh') }}
+          key: swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('macos/Package.swift', 'macos/Package.resolved') }}-${{ hashFiles('macos/Sources/**', 'macos/Tests/**', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rust-toolchain.toml', 'rust/crates/**', 'scripts/build-rust.sh', 'scripts/build-settings.sh', 'scripts/package-macos.sh') }}
           restore-keys: |
             swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('macos/Package.swift', 'macos/Package.resolved') }}-
             swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-

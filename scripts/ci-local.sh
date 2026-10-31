@@ -438,7 +438,7 @@ confirm_dirty_worktree_for_push() {
 }
 
 should_run_full_rust_gate() {
-    if has_staged_match '^(rust/Cargo\.toml|rust/Cargo\.lock|rustfmt\.toml|rust-toolchain\.toml|scripts/build-rust\.sh|scripts/build-rust-ffi-for-swiftpm\.sh)$'; then
+    if has_staged_match '^(rust/Cargo\.toml|rust/Cargo\.lock|rustfmt\.toml|rust-toolchain\.toml|scripts/build-rust\.sh)$'; then
         return 0
     fi
     return 1

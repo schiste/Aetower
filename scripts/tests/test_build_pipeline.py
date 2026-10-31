@@ -19,7 +19,7 @@ class BuildPipelineTests(unittest.TestCase):
         (self.root / "rust").mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("build-settings.sh", "build-rust-ffi-for-swiftpm.sh", "test-rust-workspace.sh", "telemetry-smoke.sh", "measure-overhead.sh", "check-dependencies.sh", "swift-quality-checks.sh"):
+        for name in ("build-settings.sh", "test-rust-workspace.sh", "telemetry-smoke.sh", "measure-overhead.sh", "check-dependencies.sh", "swift-quality-checks.sh"):
             shutil.copyfile(SOURCE / name, self.root / "scripts" / name)
         shutil.copyfile(SOURCE / "build-rust.sh", self.root / "scripts/build-rust.sh")
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", CARGO_BIN=str(self.bin / "cargo"))
@@ -165,22 +165,6 @@ sys.exit(int(os.environ.get("FAKE_DENY_EXIT", "0")))
         binding.write_text("stale binding")
         self.run_build()
         self.assertEqual(binding.read_text(), "binding data\n")
-
-    def test_staging_accepts_one_profile_and_preserves_unchanged_files(self):
-        self.run_build("--profile", "release")
-        output = self.root / "plugin output"
-        command = ["sh", str(self.root / "scripts/build-rust-ffi-for-swiftpm.sh"), str(output)]
-        subprocess.run(command, check=True)
-        paths = [output / "release/libaetower_ffi.dylib", output / ".plugin-ready"]
-        for path in paths:
-            os.utime(path, ns=(1_000_000_000, 1_000_000_000))
-        subprocess.run(command, check=True)
-        self.assertTrue(all(path.stat().st_mtime_ns == 1_000_000_000 for path in paths))
-        self.assertFalse((output / "debug").exists())
-        source = self.root / "rust/target/release/libaetower_ffi.dylib"
-        source.write_text("updated engine")
-        subprocess.run(command, check=True)
-        self.assertEqual(paths[0].read_text(), "updated engine")
 
     def test_invalid_profile_or_budget_fails_before_compiling(self):
         self.assertEqual(self.run_build("--profile", "invalid", check=False).returncode, 2)
