@@ -5,6 +5,28 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 8 investigation: profile the actual snapshot decode
+
+A separate 15-second, 1 ms diagnostic follows 60 seconds of settling. The
+loaded Rust UUID and bundled mapping are verified. A temporary cdylib-only
+linker map preserves the production release settings and package roots; its
+build script is removed afterwards and the FFI source hash is unchanged.
+All 666 unknown Rust frames map to the matching image, with 213 exported
+addresses independently checked against `nm`. The matching Swift dSYM also
+identifies the generated entity and UInt64 sequence decoders in the snapshot
+refresh stack. Foundation's generic byte-copy and Swift metadata operations
+appear beneath them. This identifies a path to benchmark, not an exclusive
+CPU attribution. Most Rust worker samples are waiting or parked.
+
+The diagnostic reports a 109.2 MiB physical footprint. The default malloc
+zone has 51.9 MiB allocated across 319,437 allocations and 32% dirty-plus-swapped
+fragmentation. This does not identify the allocating component or establish a
+leak. Profiling has overhead, and this capture is **not an A/B comparison**.
+The diagnostic build costs 186.530s wall / 119.807 CPU-seconds / 694.4 MiB
+sampled peak tree RSS. Raw captures and the 4.2 MB map are retained outside
+the worktree; bounded image identities, address checks and findings are in
+[`performance-loop8-profile.json`](performance-loop8-profile.json).
+
 ## Pass 7: share cached snapshots and preserve the Swift scratch directory
 
 The UI delta path deep-copied a cached base snapshot and cloned the full
