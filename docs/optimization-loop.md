@@ -92,7 +92,11 @@ retained test executable directly to measure each process separately.
 The longer six-window app comparison started after pass five has no verified
 aggregate: its worktree artifacts were absent on resume and its process handle
 no longer resolved. It contributes no completed-comparison claim. The published
-source was restored. A corrected signed baseline/candidate pair is being rebuilt.
+source was restored. A corrected signed baseline/candidate pair passes strict signature, bundle-path
+smoke and loaded-library UUID plus mapped-path preflights. The corrected
+package takes 101.313s wall / 113.995 CPU-seconds / 814.05 MiB sampled peak tree
+RSS while recompiling the FFI and reusing the Swift cache. This is an absolute
+rebuild cost, not a matched improvement. Fresh ABBA windows are in progress.
 Both use the production MCP/CLI/FFI Cargo roots, the same release options and
 two-job budget. They share the same compiled Swift code and Rust dependencies;
 only the baseline Rust library is replaced before resealing the baseline app.
