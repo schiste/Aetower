@@ -46,6 +46,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   memory from physical footprint, and keep startup settling and workloads equal.
   Retain baseline and candidate app bundles so changed host load can be retested
   without recompilation; alternate them without builds running during sampling.
+  Save each completed window with its source commit, binary identity and sampler
+  configuration, then publish a bounded results summary promptly. A temporary
+  worktree or a live process handle must not be the only copy of long-run evidence;
+  if either disappears, report the missing comparison as unverified.
 
 ## Useful Commands
 
