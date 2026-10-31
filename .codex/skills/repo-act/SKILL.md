@@ -44,8 +44,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   before trusting a new sampler: macOS libproc CPU counters use Mach ticks and
   require `mach_timebase_info` conversion on Apple Silicon. Distinguish resident
   memory from physical footprint, and keep startup settling and workloads equal.
-  Retain baseline and candidate app bundles so changed host load can be retested
-  without recompilation; alternate them without builds running during sampling.
+  Retain baseline and candidate app bundles and benchmark executables outside
+  mutable compiler-output directories; verify their hashes before later builds
+  can overwrite them. Retest changed host load without recompilation, and
+  alternate variants without builds running during sampling.
   Verify each launched app maps the expected library identity from its own bundle;
   a matching UUID in an external build directory is insufficient. Inspect actual
   Mach-O run paths rather than matching literal checkout paths: aliases and
