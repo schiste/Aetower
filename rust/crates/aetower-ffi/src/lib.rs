@@ -1070,7 +1070,7 @@ pub struct HistoryMaintenanceReport {
 pub struct MonitorEngine {
     inner: Arc<std::sync::Mutex<Engine>>,
     mcp_server: std::sync::Mutex<Option<LocalMcpServerHandle>>,
-    ui_snapshot_cache: std::sync::Mutex<Vec<UiSnapshotCacheEntry>>,
+    ui_snapshot_cache: std::sync::Mutex<UiSnapshotCache>,
 }
 
 #[uniffi::export]
@@ -1082,7 +1082,7 @@ impl MonitorEngine {
         Arc::new(Self {
             inner: Arc::new(std::sync::Mutex::new(engine)),
             mcp_server: std::sync::Mutex::new(None),
-            ui_snapshot_cache: std::sync::Mutex::new(Vec::new()),
+            ui_snapshot_cache: std::sync::Mutex::new(UiSnapshotCache::default()),
         })
     }
 
@@ -1125,7 +1125,7 @@ impl MonitorEngine {
         );
         self.remember_ui_snapshot(
             ui_snapshot_cache_key(process_limit, trend_points, selected_entity_id.as_deref()),
-            &ui_snapshot,
+            Arc::new(ui_snapshot.clone()),
         );
         ui_snapshot
     }
@@ -1149,7 +1149,7 @@ impl MonitorEngine {
         );
         self.remember_ui_snapshot(
             ui_snapshot_cache_key(process_limit, trend_points, selected_entity_id.as_deref()),
-            &ui_snapshot,
+            Arc::new(ui_snapshot.clone()),
         );
         Some(ui_snapshot)
     }
@@ -1185,9 +1185,11 @@ impl MonitorEngine {
             last_sequence,
             &key,
             &ui_snapshot,
-            base_snapshot.as_ref(),
+            base_snapshot.as_deref(),
         );
-        self.remember_ui_snapshot(key, &ui_snapshot);
+        // The delta owns its changed fields. Move the full current snapshot
+        // into the bounded cache instead of cloning it a second time.
+        self.remember_ui_snapshot(key, Arc::new(ui_snapshot));
         delta
     }
 
@@ -2013,36 +2015,50 @@ struct UiSnapshotCacheKey {
 #[derive(Clone, Debug)]
 struct UiSnapshotCacheEntry {
     key: UiSnapshotCacheKey,
-    snapshot: UiSnapshot,
+    snapshot: Arc<UiSnapshot>,
 }
 
 const UI_SNAPSHOT_CACHE_LIMIT: usize = 12;
 
-impl MonitorEngine {
-    fn remember_ui_snapshot(&self, key: UiSnapshotCacheKey, snapshot: &UiSnapshot) {
-        let Ok(mut cache) = self.ui_snapshot_cache.lock() else {
-            return;
-        };
-        cache.retain(|entry| entry.snapshot.sequence != snapshot.sequence || entry.key != key);
-        cache.push(UiSnapshotCacheEntry {
-            key,
-            snapshot: snapshot.clone(),
-        });
-        let overflow = cache.len().saturating_sub(UI_SNAPSHOT_CACHE_LIMIT);
+#[derive(Default)]
+struct UiSnapshotCache {
+    entries: Vec<UiSnapshotCacheEntry>,
+}
+
+impl UiSnapshotCache {
+    fn remember(&mut self, key: UiSnapshotCacheKey, snapshot: Arc<UiSnapshot>) {
+        self.entries
+            .retain(|entry| entry.snapshot.sequence != snapshot.sequence || entry.key != key);
+        self.entries.push(UiSnapshotCacheEntry { key, snapshot });
+        let overflow = self.entries.len().saturating_sub(UI_SNAPSHOT_CACHE_LIMIT);
         if overflow > 0 {
-            cache.drain(0..overflow);
+            self.entries.drain(0..overflow);
         }
     }
 
-    fn cached_ui_snapshot(&self, sequence: u64, key: &UiSnapshotCacheKey) -> Option<UiSnapshot> {
-        let Ok(cache) = self.ui_snapshot_cache.lock() else {
-            return None;
-        };
-        cache
+    fn find(&self, sequence: u64, key: &UiSnapshotCacheKey) -> Option<Arc<UiSnapshot>> {
+        self.entries
             .iter()
             .rev()
             .find(|entry| entry.snapshot.sequence == sequence && &entry.key == key)
-            .map(|entry| entry.snapshot.clone())
+            .map(|entry| Arc::clone(&entry.snapshot))
+    }
+}
+
+impl MonitorEngine {
+    fn remember_ui_snapshot(&self, key: UiSnapshotCacheKey, snapshot: Arc<UiSnapshot>) {
+        let Ok(mut cache) = self.ui_snapshot_cache.lock() else {
+            return;
+        };
+        cache.remember(key, snapshot);
+    }
+
+    fn cached_ui_snapshot(
+        &self,
+        sequence: u64,
+        key: &UiSnapshotCacheKey,
+    ) -> Option<Arc<UiSnapshot>> {
+        self.ui_snapshot_cache.lock().ok()?.find(sequence, key)
     }
 }
 
@@ -2906,6 +2922,142 @@ mod ui_snapshot_tests {
                 ..model::AggregateMetrics::default()
             },
             ..model::EntitySnapshot::default()
+        }
+    }
+
+    #[test]
+    fn ui_snapshot_cache_preserves_replacement_lookup_and_eviction() {
+        let mut cache = UiSnapshotCache::default();
+        let mut legacy: Vec<(UiSnapshotCacheKey, UiSnapshot)> = Vec::new();
+        let first = Arc::new(ui_snapshot_from(
+            &model::SystemSnapshot::default(),
+            10,
+            16,
+            None,
+        ));
+        let first_key = ui_snapshot_cache_key(10, 16, None);
+        cache.remember(first_key.clone(), Arc::clone(&first));
+        legacy.push((first_key.clone(), first.as_ref().clone()));
+        let held = cache.find(0, &first_key).unwrap();
+        assert!(Arc::ptr_eq(&first, &held));
+        for step in 0..60 {
+            let key = ui_snapshot_cache_key(10 + step % 2, 16, None);
+            let snapshot = Arc::new(ui_snapshot_from(
+                &model::SystemSnapshot {
+                    sequence: u64::from(step / 3),
+                    entities: vec![test_entity(&format!("entity-{step}"), step as f32)],
+                    ..model::SystemSnapshot::default()
+                },
+                key.process_limit,
+                key.trend_points,
+                None,
+            ));
+            legacy.retain(|(old_key, old)| old.sequence != snapshot.sequence || old_key != &key);
+            legacy.push((key.clone(), snapshot.as_ref().clone()));
+            let overflow = legacy.len().saturating_sub(UI_SNAPSHOT_CACHE_LIMIT);
+            legacy.drain(0..overflow);
+            cache.remember(key.clone(), Arc::clone(&snapshot));
+            assert!(Arc::ptr_eq(
+                &snapshot,
+                &cache.find(snapshot.sequence, &key).unwrap()
+            ));
+            assert_eq!(cache.entries.len(), legacy.len());
+            for sequence in 0..=20 {
+                for limit in [10, 11, 12] {
+                    let lookup = ui_snapshot_cache_key(limit, 16, None);
+                    let old = legacy
+                        .iter()
+                        .rev()
+                        .find(|(k, v)| k == &lookup && v.sequence == sequence)
+                        .map(|(_, v)| v);
+                    let new = cache.find(sequence, &lookup);
+                    assert_eq!(format!("{old:?}"), format!("{:?}", new.as_deref()));
+                }
+            }
+        }
+        assert_eq!(cache.entries.len(), UI_SNAPSHOT_CACHE_LIMIT);
+        assert!(cache.find(0, &first_key).is_none());
+        // A reader remains valid after its entry is replaced or evicted.
+        assert!(Arc::ptr_eq(&first, &held));
+        assert!(held.process_rows.is_empty());
+    }
+
+    #[test]
+    #[ignore = "manual cache ownership comparison; no timing threshold"]
+    fn ui_snapshot_cache_benchmark() {
+        use std::{hint::black_box, time::Instant};
+        let implementation = std::env::var("AETOWER_UI_CACHE_BENCH_IMPLEMENTATION").ok();
+        assert!(matches!(
+            implementation.as_deref(),
+            None | Some("legacy" | "candidate")
+        ));
+        let key = ui_snapshot_cache_key(500, 60, Some("entity-0-long process label 日本語"));
+        let fixture = ui_snapshot_from(
+            &model::SystemSnapshot {
+                entities: (0..500)
+                    .map(|index| {
+                        test_entity(
+                            &format!("entity-{index}-long process label 日本語"),
+                            index as f32,
+                        )
+                    })
+                    .collect(),
+                ..model::SystemSnapshot::default()
+            },
+            key.process_limit,
+            key.trend_points,
+            key.selected_entity_id.as_deref(),
+        );
+        for trial in 0..4 {
+            for legacy in if trial % 2 == 0 {
+                [true, false]
+            } else {
+                [false, true]
+            } {
+                if implementation
+                    .as_deref()
+                    .is_some_and(|value| (value == "legacy") != legacy)
+                {
+                    continue;
+                }
+                let mut old_cache = vec![(key.clone(), fixture.clone())];
+                let mut cache = UiSnapshotCache::default();
+                cache.remember(key.clone(), Arc::new(fixture.clone()));
+                let started = Instant::now();
+                for sequence in 1..=1_000 {
+                    // Same current-snapshot construction in both modes. The
+                    // delta computation is omitted equally; measure ownership.
+                    let mut current = black_box(&fixture).clone();
+                    current.sequence = sequence;
+                    if legacy {
+                        let base = old_cache
+                            .iter()
+                            .rev()
+                            .find(|(k, v)| k == &key && v.sequence == sequence - 1)
+                            .map(|(_, v)| v.clone());
+                        black_box(base.as_ref());
+                        old_cache.retain(|(k, v)| v.sequence != current.sequence || k != &key);
+                        old_cache.push((key.clone(), current.clone()));
+                        let overflow = old_cache.len().saturating_sub(UI_SNAPSHOT_CACHE_LIMIT);
+                        old_cache.drain(0..overflow);
+                    } else {
+                        let base = cache.find(sequence - 1, &key);
+                        black_box(base.as_deref());
+                        cache.remember(key.clone(), Arc::new(current));
+                    }
+                }
+                eprintln!(
+                    "rows=500 iterations=1000 trial={trial} legacy={legacy} elapsed_us={}",
+                    started.elapsed().as_micros()
+                );
+                let old = old_cache.last().map(|(_, v)| v);
+                let new = cache.find(1_000, &key);
+                if legacy {
+                    assert_eq!(old.unwrap().sequence, 1_000);
+                } else {
+                    assert_eq!(new.unwrap().sequence, 1_000);
+                }
+            }
         }
     }
 

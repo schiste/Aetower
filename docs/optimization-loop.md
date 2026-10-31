@@ -5,6 +5,50 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 7: share cached snapshots and preserve the Swift scratch directory
+
+The UI delta path deep-copied a cached base snapshot and cloned the full
+current snapshot again for cache insertion. It now shares immutable cached
+snapshots through `Arc` and moves the current value into the cache after
+constructing the delta. The 12-entry limit, key matching, replacement order,
+eviction and returned payloads remain unchanged. Full-snapshot APIs still
+return owned values. All 16 FFI release tests and strict all-target release
+Clippy pass; the new regression compares the original cache behavior and
+checks that readers survive replacement and eviction. All 24 Python checks,
+ShellCheck and the working-tree quality guard pass.
+
+The retained executable measures 12 alternating cache benchmark processes,
+six per implementation, without compilation. Both modes construct identical
+500-row snapshots; delta computation is omitted equally to isolate cache
+ownership. Legacy runs total **2.487510 CPU-seconds**, versus **0.889272** for
+shared snapshots: **64.3% less fixture CPU**. Mean maximum process RSS is
+**13.14 → 11.99 MiB**, **8.7% lower in this fixture**. Four alternating
+operation trials per mode also preserve all raw timings. These results do
+not establish app-wide CPU, physical footprint or wakeup gains. Production
+packaging and a matched app comparison are still pending.
+
+The local CI script now respects `SWIFT_BUILD_DIR`, matching packaging and
+its Swift build/test commands. A real Swift package exercises the actual gate
+with an external scratch path containing spaces and identical executable
+output. The old script ignores the warmed external cache and creates a second
+cache: 5.777s wall / 4.024 CPU-seconds. The candidate reuses the requested
+cache: 1.954s / 1.281 CPU-seconds. This is a specific cache-reuse scenario,
+not an intrinsic whole-app or hosted-CI speedup. Once both caches are warm,
+CPU costs are similar: 1.391s versus 1.424s. Measured sampled tree RSS and
+all task summaries are retained, without inferring a general memory reduction
+from these short runs.
+
+Sources, binary identity and raw results are in
+[`performance-loop7.json`](performance-loop7.json). Reproduce the cache
+operation benchmark with:
+
+```sh
+cargo test --locked --manifest-path rust/Cargo.toml -p aetower-ffi --release ui_snapshot_cache_benchmark -- --ignored --nocapture --test-threads=1
+```
+
+Select one mode in the retained executable with
+`AETOWER_UI_CACHE_BENCH_IMPLEMENTATION=legacy` or `candidate` for child CPU/RSS.
+
 ## Pass 6: direct Rust linking and compact UI row comparisons
 
 The Swift bridge plugin copied already-built Rust libraries into its output

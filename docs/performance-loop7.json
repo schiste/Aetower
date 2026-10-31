@@ -1,0 +1,370 @@
+{
+  "schema_version": 1,
+  "measured_on": "2026-11-01 Europe/Paris",
+  "parent_commit": "32e0799e507227eeb22bbdbea7dbe5d95da152bd",
+  "candidate_source_sha256": {
+    "rust/crates/aetower-ffi/src/lib.rs": "c83eb1fb42dfc559e5822b4b673ae3dc481f340072dd73d36285f57030cd9a77",
+    "scripts/ci-local.sh": "8b83e4d629cb5178a69a5d710c8942280af0d24e4c95a00f4cfb65630d399be6"
+  },
+  "toolchain": {
+    "swift": "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0",
+    "rust": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+    "compiler_jobs": 2
+  },
+  "retained_test_binary": {
+    "path": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-test-binary/aetower_ffi-tests",
+    "sha256": "ef989ea42947cbad898ef78ec40d72f2435e51cc152087c201d87def53552f88",
+    "uuid": "780F63EC-D228-3E8D-BB46-D71D072FC03A"
+  },
+  "cache_benchmark": {
+    "scope": "500-row current-snapshot construction plus base lookup and bounded cache insertion; delta computation omitted equally; fixture only",
+    "equivalence": "16 release unit tests pass; original cache values and replacement/lookup/eviction behavior match across keys and sequences; held readers remain valid",
+    "sequence": [
+      "legacy",
+      "candidate",
+      "candidate",
+      "legacy",
+      "legacy",
+      "candidate",
+      "candidate",
+      "legacy",
+      "legacy",
+      "candidate",
+      "candidate",
+      "legacy"
+    ],
+    "process_means": {
+      "legacy": {
+        "total_cpu_seconds": 2.48751,
+        "mean_max_process_rss_bytes": 13773482.666666666
+      },
+      "candidate": {
+        "total_cpu_seconds": 0.889272,
+        "mean_max_process_rss_bytes": 12571989.333333334
+      }
+    },
+    "raw_process_runs": [
+      {
+        "index": 0,
+        "implementation": "legacy",
+        "wall_seconds": 0.5982902079995256,
+        "cpu_seconds": 0.40010999999999997,
+        "peak_process_rss_bytes": 14794752,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 1,
+        "implementation": "candidate",
+        "wall_seconds": 0.2831716249929741,
+        "cpu_seconds": 0.150405,
+        "peak_process_rss_bytes": 12582912,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 2,
+        "implementation": "candidate",
+        "wall_seconds": 0.3430419170181267,
+        "cpu_seconds": 0.139985,
+        "peak_process_rss_bytes": 12517376,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 3,
+        "implementation": "legacy",
+        "wall_seconds": 1.1503547090105712,
+        "cpu_seconds": 0.41771,
+        "peak_process_rss_bytes": 13008896,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 4,
+        "implementation": "legacy",
+        "wall_seconds": 0.7074758340022527,
+        "cpu_seconds": 0.42314199999999996,
+        "peak_process_rss_bytes": 14958592,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 5,
+        "implementation": "candidate",
+        "wall_seconds": 0.18197083298582584,
+        "cpu_seconds": 0.149113,
+        "peak_process_rss_bytes": 12582912,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 6,
+        "implementation": "candidate",
+        "wall_seconds": 0.19764212498557754,
+        "cpu_seconds": 0.157086,
+        "peak_process_rss_bytes": 12615680,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 7,
+        "implementation": "legacy",
+        "wall_seconds": 0.5571977499930654,
+        "cpu_seconds": 0.453771,
+        "peak_process_rss_bytes": 13238272,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 8,
+        "implementation": "legacy",
+        "wall_seconds": 1.0270235000061803,
+        "cpu_seconds": 0.388364,
+        "peak_process_rss_bytes": 13369344,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 9,
+        "implementation": "candidate",
+        "wall_seconds": 0.6794031249883119,
+        "cpu_seconds": 0.14615499999999998,
+        "peak_process_rss_bytes": 12599296,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 10,
+        "implementation": "candidate",
+        "wall_seconds": 0.38120020800852217,
+        "cpu_seconds": 0.146528,
+        "peak_process_rss_bytes": 12533760,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 11,
+        "implementation": "legacy",
+        "wall_seconds": 0.9178507080068812,
+        "cpu_seconds": 0.404413,
+        "peak_process_rss_bytes": 13271040,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      }
+    ],
+    "operation_trials": [
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 0,
+        "implementation": "legacy",
+        "elapsed_us": 97845
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 0,
+        "implementation": "candidate",
+        "elapsed_us": 27715
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 1,
+        "implementation": "candidate",
+        "elapsed_us": 22918
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 1,
+        "implementation": "legacy",
+        "elapsed_us": 90796
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 2,
+        "implementation": "legacy",
+        "elapsed_us": 94492
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 2,
+        "implementation": "candidate",
+        "elapsed_us": 33217
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 3,
+        "implementation": "candidate",
+        "elapsed_us": 37677
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 3,
+        "implementation": "legacy",
+        "elapsed_us": 86444
+      }
+    ],
+    "interpretation": "lower fixture CPU and maximum process RSS; does not establish app-wide CPU, physical footprint or wakeup improvement"
+  },
+  "swift_cache_fixture": {
+    "scope": "one real Swift package; actual ci-local full gate explicitly selecting swift build; external scratch path contains spaces; legacy source at 8b70493a513a; same package output for all runs",
+    "measurements": [
+      {
+        "case": "warm-external",
+        "wrapper_wall_seconds": 8.911650166992331,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/scripts/ci-local.sh",
+            "--mode",
+            "full",
+            "--include",
+            "swift build"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 8.857,
+          "user_cpu_seconds": 2.328,
+          "system_cpu_seconds": 2.888,
+          "average_cpu_percent": 58.9,
+          "sampled_peak_tree_rss_bytes": 207421440,
+          "rss_samples": 9,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scratch_path": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/retained cache with spaces",
+        "compile_steps": [],
+        "output": "retained cache fixture",
+        "task_steps": [
+          "[Planning deferred tasks]",
+          "[19\u2009/\u200924]",
+          "[20\u2009/\u200925] Fixture-product",
+          "[22\u2009/\u200929]",
+          "[24\u2009/\u200929] Fixture-product",
+          "[25\u2009/\u200929] Fixture-product",
+          "[27\u2009/\u200929] Fixture-product"
+        ]
+      },
+      {
+        "case": "legacy-ignores-external",
+        "wrapper_wall_seconds": 5.930411290988559,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/scripts/ci-local.sh",
+            "--mode",
+            "full",
+            "--include",
+            "swift build"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 5.777,
+          "user_cpu_seconds": 2.185,
+          "system_cpu_seconds": 1.839,
+          "average_cpu_percent": 69.7,
+          "sampled_peak_tree_rss_bytes": 130760704,
+          "rss_samples": 6,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scratch_path": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/macos/.build",
+        "compile_steps": [],
+        "output": "retained cache fixture",
+        "task_steps": [
+          "[Planning deferred tasks]",
+          "[19\u2009/\u200924]",
+          "[22\u2009/\u200929]",
+          "[24\u2009/\u200929] Fixture-product",
+          "[25\u2009/\u200929] Fixture-product",
+          "[27\u2009/\u200929] Fixture-product"
+        ]
+      },
+      {
+        "case": "candidate-reuses-external",
+        "wrapper_wall_seconds": 2.034019166982034,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/scripts/ci-local.sh",
+            "--mode",
+            "full",
+            "--include",
+            "swift build"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 1.954,
+          "user_cpu_seconds": 0.918,
+          "system_cpu_seconds": 0.363,
+          "average_cpu_percent": 65.6,
+          "sampled_peak_tree_rss_bytes": 70189056,
+          "rss_samples": 2,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scratch_path": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/retained cache with spaces",
+        "compile_steps": [],
+        "output": "retained cache fixture",
+        "task_steps": [
+          "[1\u2009/\u20091]"
+        ]
+      },
+      {
+        "case": "legacy-repeat",
+        "wrapper_wall_seconds": 2.6330237080110237,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/scripts/ci-local.sh",
+            "--mode",
+            "full",
+            "--include",
+            "swift build"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 2.533,
+          "user_cpu_seconds": 0.996,
+          "system_cpu_seconds": 0.395,
+          "average_cpu_percent": 55.0,
+          "sampled_peak_tree_rss_bytes": 89210880,
+          "rss_samples": 3,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scratch_path": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/macos/.build",
+        "compile_steps": [],
+        "output": "retained cache fixture",
+        "task_steps": [
+          "[1\u2009/\u20091]"
+        ]
+      },
+      {
+        "case": "candidate-repeat",
+        "wrapper_wall_seconds": 2.0328122079954483,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/scripts/ci-local.sh",
+            "--mode",
+            "full",
+            "--include",
+            "swift build"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 1.93,
+          "user_cpu_seconds": 1.015,
+          "system_cpu_seconds": 0.409,
+          "average_cpu_percent": 73.8,
+          "sampled_peak_tree_rss_bytes": 54870016,
+          "rss_samples": 2,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scratch_path": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/retained cache with spaces",
+        "compile_steps": [],
+        "output": "retained cache fixture",
+        "task_steps": [
+          "[1\u2009/\u20091]"
+        ]
+      }
+    ],
+    "interpretation": "legacy ignores already-warmed requested cache and creates a separate default cache; candidate uses requested cache; warm-repeat CPU similar; no whole-app or hosted-CI speedup claimed"
+  },
+  "app_comparison": {
+    "status": "not yet measured",
+    "candidate_bundle": "production package pending; prior pass-six candidate retained for common-code baseline construction"
+  }
+}
