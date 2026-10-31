@@ -1,5 +1,6 @@
 """Build orchestration regressions; no Rust/Swift compilation is required."""
 import os
+import runpy
 from pathlib import Path
 import shutil
 import subprocess
@@ -8,6 +9,7 @@ import unittest
 
 
 SOURCE = Path(__file__).resolve().parents[1]
+BINDINGS = runpy.run_path(str(SOURCE / "prepare-swift-bindings.py"))
 
 
 class BuildPipelineTests(unittest.TestCase):
@@ -19,7 +21,7 @@ class BuildPipelineTests(unittest.TestCase):
         (self.root / "rust").mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("build-settings.sh", "test-rust-workspace.sh", "telemetry-smoke.sh", "measure-overhead.sh", "check-dependencies.sh", "swift-quality-checks.sh"):
+        for name in ("build-settings.sh", "test-rust-workspace.sh", "telemetry-smoke.sh", "measure-overhead.sh", "check-dependencies.sh", "swift-quality-checks.sh", "prepare-swift-bindings.py"):
             shutil.copyfile(SOURCE / name, self.root / "scripts" / name)
         shutil.copyfile(SOURCE / "build-rust.sh", self.root / "scripts/build-rust.sh")
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", CARGO_BIN=str(self.bin / "cargo"))
@@ -28,6 +30,7 @@ class BuildPipelineTests(unittest.TestCase):
         self.executable("sysctl", "#!/bin/sh\ncase \"$2\" in hw.ncpu) echo 10;; hw.memsize) echo 17179869184;; esac\n")
         self.executable("otool", '#!/bin/sh\necho "$2"\ncat "$2"\n')
         self.executable("install_name_tool", '#!/bin/sh\nprintf "%s\\n" "$2" > "$3"\n')
+        (self.root / "reader-template").write_text(BINDINGS["INTEGER_COPY"])
         self.executable("cargo", '''#!/usr/bin/env python3
 import os
 from pathlib import Path
@@ -44,7 +47,10 @@ import sys
 args = sys.argv[1:]
 for flag, name in (('--swift-sources', 'aetower_ffi.swift'), ('--headers', 'aetower_ffiFFI.h'), ('--modulemap', 'module.modulemap')):
     if flag in args:
-        Path(args[-1], name).write_text('binding data   ' + chr(10))
+        text = 'binding data   ' + chr(10)
+        if name.endswith('.swift'):
+            text += Path('../reader-template').read_text() + chr(10)
+        Path(args[-1], name).write_text(text)
 """)
     path.chmod(0o755)
 else:
@@ -164,7 +170,7 @@ sys.exit(int(os.environ.get("FAKE_DENY_EXIT", "0")))
         binding = self.root / "macos/Sources/AetowerBindings/aetower_ffi.swift"
         binding.write_text("stale binding")
         self.run_build()
-        self.assertEqual(binding.read_text(), "binding data\n")
+        self.assertEqual(binding.read_text(), "binding data\n" + BINDINGS["INTEGER_LOAD"] + "\n")
 
     def test_invalid_profile_or_budget_fails_before_compiling(self):
         self.assertEqual(self.run_build("--profile", "invalid", check=False).returncode, 2)

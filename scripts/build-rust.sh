@@ -60,21 +60,4 @@ trap 'exit 143' TERM
     --module-name aetower_ffiFFI --modulemap-filename module.modulemap \
     "$BINDINGS_DYLIB" "$GENERATED_DIR"
 
-/usr/bin/python3 - "$GENERATED_DIR" "$ROOT/macos/Sources" <<'PY'
-import pathlib
-import shutil
-import sys
-
-staging, sources = map(pathlib.Path, sys.argv[1:])
-for path in staging.iterdir():
-    if not path.is_file():
-        continue
-    destination = "AetowerBindings" if path.suffix == ".swift" else "aetower_ffiFFI"
-    text = path.read_text()
-    cleaned = "\n".join(line.rstrip(" \t") for line in text.split("\n"))
-    path.write_text(cleaned)
-    target = sources / destination / path.name
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if not target.exists() or target.read_bytes() != path.read_bytes():
-        shutil.copyfile(path, target)
-PY
+/usr/bin/python3 "$ROOT/scripts/prepare-swift-bindings.py" "$GENERATED_DIR" "$ROOT/macos/Sources"
