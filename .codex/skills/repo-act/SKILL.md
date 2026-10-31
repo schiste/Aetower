@@ -59,6 +59,12 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   worktree or a live process handle must not be the only copy of long-run evidence;
   if either disappears, report the missing comparison as unverified.
 
+- For diagnostic stack attribution, match the dSYM or linker map to the loaded
+  image identity and retain it before another build replaces compiler outputs.
+  Validate linker-map addresses against exported symbols before naming unknown
+  frames. Separate sleeping or I/O-wait stacks from active work; inclusive sample
+  counts are not exclusive CPU time, and a diagnostic capture is not an A/B result.
+
 ## Useful Commands
 
 - `fast_test`: `cargo test --manifest-path rust/Cargo.toml --workspace`
