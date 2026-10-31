@@ -53,7 +53,6 @@ FRAMEWORK_DIR="$APP_DIR/Contents/Frameworks"
 HELPER_DIR="$APP_DIR/Contents/Helpers"
 PLIST_DIR="$APP_DIR/Contents"
 SWIFT_BUILD_DIR="${SWIFT_BUILD_DIR:-$ROOT/macos/.build}"
-SWIFTPM_PLUGIN_DIR="$SWIFT_BUILD_DIR/plugins/outputs/macos/AetowerBindings/destination/BuildRustBridgePlugin"
 CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT/tmp/clang-module-cache}"
 APP_ICON_BUILD_DIR="${AETOWER_APP_ICON_BUILD_DIR:-$ROOT/tmp/app-icon}"
 APP_ICON_PATH="${AETOWER_APP_ICON_PATH:-$APP_ICON_BUILD_DIR/Aetower.icns}"
@@ -266,64 +265,7 @@ if [ -n "$SPARKLE_PUBLIC_ED_KEY" ]; then
     /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_ED_KEY" "$PLIST_DIR/Info.plist"
 fi
 
-add_rpath_if_missing() {
-    RPATH="$1"
-    BINARY="$2"
-    if ! LOAD_COMMANDS="$(otool -l "$BINARY")"; then
-        echo "failed to inspect load commands for $BINARY" >&2
-        return 1
-    fi
-    if printf '%s\n' "$LOAD_COMMANDS" | grep -F "path $RPATH " >/dev/null 2>&1; then
-        return 0
-    fi
-    install_name_tool -add_rpath "$RPATH" "$BINARY"
-}
-
-delete_rpath_if_present() {
-    RPATH="$1"
-    BINARY="$2"
-    if ! LOAD_COMMANDS="$(otool -l "$BINARY")"; then
-        echo "failed to inspect load commands for $BINARY" >&2
-        return 1
-    fi
-    if printf '%s\n' "$LOAD_COMMANDS" | grep -F "path $RPATH " >/dev/null 2>&1; then
-        install_name_tool -delete_rpath "$RPATH" "$BINARY"
-    fi
-}
-
-change_install_name_if_present() {
-    OLD_NAME="$1"
-    NEW_NAME="$2"
-    BINARY="$3"
-    if ! LINKED_LIBRARIES="$(otool -L "$BINARY")"; then
-        echo "failed to inspect linked libraries for $BINARY" >&2
-        return 1
-    fi
-    if printf '%s\n' "$LINKED_LIBRARIES" | grep -F -- "$OLD_NAME" >/dev/null 2>&1; then
-        install_name_tool -change "$OLD_NAME" "$NEW_NAME" "$BINARY"
-    fi
-}
-
-add_rpath_if_missing "@executable_path/../Frameworks" "$BIN_DIR/Aetower"
-change_install_name_if_present "$ROOT/rust/target/debug/deps/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
-change_install_name_if_present "$ROOT/rust/target/debug/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
-change_install_name_if_present "$ROOT/rust/target/release/deps/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
-change_install_name_if_present "$ROOT/rust/target/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
-change_install_name_if_present "$SWIFTPM_PLUGIN_DIR/debug/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
-change_install_name_if_present "$SWIFTPM_PLUGIN_DIR/release/libaetower_ffi.dylib" "@rpath/libaetower_ffi.dylib" "$BIN_DIR/Aetower"
-delete_rpath_if_present "$SWIFTPM_PLUGIN_DIR/debug" "$BIN_DIR/Aetower"
-delete_rpath_if_present "$SWIFTPM_PLUGIN_DIR/release" "$BIN_DIR/Aetower"
-delete_rpath_if_present "$ROOT/rust/target/debug" "$BIN_DIR/Aetower"
-delete_rpath_if_present "$ROOT/rust/target/release" "$BIN_DIR/Aetower"
-
-if otool -l "$BIN_DIR/Aetower" | grep -F "$ROOT/macos/.build" >/dev/null; then
-    echo "packaged app still references local SwiftPM build paths" >&2
-    exit 1
-fi
-if otool -l "$BIN_DIR/Aetower" | grep -F "$ROOT/rust/target" >/dev/null; then
-    echo "packaged app still links against local Rust target artifacts" >&2
-    exit 1
-fi
+python3 "$ROOT/scripts/relocate-macos-executable.py" "$BIN_DIR/Aetower"
 
 sign_target "$FRAMEWORK_DIR/libaetower_ffi.dylib" plain
 sign_target "$HELPER_DIR/aetower-mcp" runtime

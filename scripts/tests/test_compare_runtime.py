@@ -15,6 +15,15 @@ spec.loader.exec_module(compare)
 
 
 class RuntimeComparisonTests(unittest.TestCase):
+    def test_loaded_image_requires_bundled_path_and_matching_library_uuid(self):
+        identity = {"app": "/bundle/Aetower.app", "rust_uuid": "ABCD-1234"}
+        sample = "0x100 +libaetower_ffi.dylib (0) <ABCD-1234> /redacted/*/libaetower_ffi.dylib"
+        bundled = "n/bundle/Aetower.app/Contents/Frameworks/libaetower_ffi.dylib\n"
+        self.assertTrue(compare.loaded_library_verified(identity, sample, bundled))
+        self.assertFalse(compare.loaded_library_verified(identity, sample, "n/tmp/rust/target/libaetower_ffi.dylib\n"))
+        self.assertFalse(compare.loaded_library_verified(identity, sample.replace("ABCD-1234", "EEEE-0000"), bundled))
+        self.assertFalse(compare.loaded_library_verified(identity, "unrelated image <ABCD-1234>", bundled))
+
     def test_requires_verified_absence_of_an_existing_app(self):
         for status in (0, 1, 2):
             with self.subTest(status=status), patch.object(compare.subprocess, "run", return_value=Mock(returncode=status)):

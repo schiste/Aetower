@@ -189,7 +189,7 @@
     ]
   },
   "app_comparison": {
-    "status": "prepared; awaiting measured windows",
+    "status": "first ABBA attempt invalid: surviving aliased Rust rpaths loaded external baseline image; rebuilding isolated pair",
     "pair": {
       "baseline_ffi_source": "833ca2afaf77f75ede2b3bfddbc354df743aab46",
       "candidate_ffi_source": "9fdd2ddb2b6b7ce27189e18b8d27c147340b871c",
@@ -205,7 +205,47 @@
       "rustc_wrapper": "",
       "pair_construction": "same signed candidate bundle; baseline replaces only Rust dylib then reseals dylib and outer app"
     },
-    "prior_six_window_comparison": "unverified; final artifacts unavailable on resume"
+    "prior_six_window_comparison": "unverified; final artifacts unavailable on resume",
+    "excluded_attempt": {
+      "status": "interrupted_or_failed",
+      "configuration": {
+        "sequence": "ABBA",
+        "settle_seconds": 60.0,
+        "duration_seconds": 90.0,
+        "interval_seconds": 2.0
+      },
+      "apps": [
+        {
+          "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop6-baseline/Aetower.app",
+          "source": "Rust FFI 833ca2afaf77; common Swift/dependencies ecc7c586953d; production MCP/CLI/FFI roots",
+          "executable_sha256": "ca2426498197d28863ca4468a02adb2d44253568aee474d0d71eb3c8e009f442",
+          "rust_sha256": "939ccfa52dfbb2906bab3778e552955a575c93d481c1203a4ea4643d152b3eeb",
+          "rust_uuid": "7BFD412D-02B7-3657-A482-6720CAA2276F",
+          "variant": "baseline"
+        },
+        {
+          "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop6-candidate/Aetower.app",
+          "source": "Rust FFI 9fdd2ddb2b6b; common Swift/dependencies ecc7c586953d; production MCP/CLI/FFI roots",
+          "executable_sha256": "3bb5bcdeff394b1233d26074843d12df63f511e8445fe8f66e8f19571689e1b7",
+          "rust_sha256": "9a637d8a2e1a30779ecf245c3a0d5616ef1ca0c697594f9f416e973d97b751e2",
+          "rust_uuid": "A2104D6A-2F1F-3983-9330-586B4084A9C0",
+          "variant": "candidate"
+        }
+      ],
+      "reason": "candidate loaded baseline UUID from external /tmp build tree; initial baseline also mapped external library; entire cohort excluded",
+      "completed_windows": [
+        {
+          "label": "A1",
+          "status": "complete",
+          "loaded_rust_image_verified": true
+        },
+        {
+          "label": "B1",
+          "status": "failed",
+          "loaded_rust_image_verified": false
+        }
+      ]
+    }
   },
   "package_build": {
     "configuration": "two jobs; batched MCP/CLI/FFI runtime roots; debug bindgen; fresh external Swift scratch/cache; reused some Rust dependencies; RUSTC_WRAPPER empty; ad-hoc signature; no notarization",
@@ -227,7 +267,8 @@
     "smoke": "passed",
     "signing": "strict deep verification passed inside package script",
     "comparison_note": "absolute cost, not a matched build speedup",
-    "launch_smoke": "passed: owned app remained alive for three seconds, then stopped by smoke trap"
+    "launch_smoke": "passed: owned app remained alive for three seconds, then stopped by smoke trap",
+    "bundle_isolation": "failed: signed app retained aliased build-tree rpaths; corrected package pending"
   },
   "package_repeat": {
     "configuration": "identical inputs and settings immediately after package_build; same external Swift scratch path",
@@ -247,6 +288,7 @@
       "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
     },
     "signing": "strict deep verification passed inside package script",
-    "smoke": "launch smoke and strict signing passed"
+    "smoke": "launch smoke and strict signing passed",
+    "bundle_isolation": "same nonportable rpaths; excluded from deployability claims"
   }
 }

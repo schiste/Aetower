@@ -42,6 +42,15 @@ def app_identity(path, source):
     }
 
 
+def loaded_library_verified(identity, sample_text, mapped_files):
+    expected = identity["rust_uuid"].replace("-", "").lower()
+    image_lines = [line for line in sample_text.splitlines() if "+libaetower_ffi.dylib " in line]
+    uuid_matches = any(expected in line.replace("-", "").lower() for line in image_lines)
+    bundled = (Path(identity["app"]) / "Contents/Frameworks/libaetower_ffi.dylib").resolve()
+    mapped = [Path(line[1:]).resolve() for line in mapped_files.splitlines() if line.startswith("n")]
+    return uuid_matches and bundled in mapped
+
+
 def require_no_running_app():
     result = subprocess.run(["/usr/bin/pgrep", "-x", "Aetower"], capture_output=True, text=True)
     if result.returncode != 1:
@@ -93,9 +102,13 @@ def run_window(identity, label, output, args, report):
             sample = subprocess.run([
                 "/usr/bin/sample", str(process.pid), "1", "10", "-file", str(sample_file),
             ], capture_output=True, text=True, timeout=30)
-            expected = identity["rust_uuid"].replace("-", "").lower()
-            observed = sample_file.read_text().replace("-", "").lower() if sample_file.exists() else ""
-            window["loaded_rust_image_verified"] = sample.returncode == 0 and expected in observed
+            mapped = subprocess.run([
+                "/usr/sbin/lsof", "-a", "-p", str(process.pid), "-d", "txt", "-Fn",
+            ], capture_output=True, text=True, timeout=30, check=True)
+            (output / f"{label}-mapped-files.txt").write_text(mapped.stdout)
+            window["loaded_rust_image_verified"] = sample.returncode == 0 and loaded_library_verified(
+                identity, sample_file.read_text() if sample_file.exists() else "", mapped.stdout,
+            )
             if not window["loaded_rust_image_verified"]:
                 raise RuntimeError(f"{label}: expected loaded Rust image was not verified")
             window["status"] = "complete"

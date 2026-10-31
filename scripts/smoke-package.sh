@@ -56,6 +56,7 @@ if [ "${AETOWER_INCLUDE_PRIVILEGED_HELPER:-0}" = "1" ]; then
     [ -x "$HELPER_BIN" ]
 fi
 
+python3 "$ROOT/scripts/relocate-macos-executable.py" --check "$APP_BIN"
 codesign --verify --deep --strict "$APP_DIR"
 
 if [ "$LAUNCH" -eq 1 ]; then

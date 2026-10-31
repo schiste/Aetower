@@ -574,7 +574,7 @@ run_precommit_shell() {
 
 run_precommit() {
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode pre-commit
-    if has_staged_match '^scripts/(build-|measure-build|package-macos|ci-local|swift-quality-checks|check-dependencies|tests/)'; then
+    if has_staged_match '^scripts/(build-|measure-build|measure-runtime|compare-runtime|relocate-macos-executable|package-macos|ci-local|swift-quality-checks|check-dependencies|tests/)'; then
         run_build_pipeline_tests
     fi
     run_precommit_gitleaks

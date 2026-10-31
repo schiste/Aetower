@@ -12,8 +12,8 @@ directory. SwiftPM then treated those dylibs as generated resources, copying
 them into a bindings resource bundle and generating a resource accessor. Swift
 now links the existing Rust profile directories directly. This removes plugin
 compilation/execution, staging copies and the unused bindings resource bundle,
-and makes linking independent of the Swift scratch directory. Packaging strips
-both the new Rust search paths and old cached plugin paths before signing.
+and makes linking independent of the Swift scratch directory. Packaging now inspects the recorded Mach-O paths, removes host search paths
+(including aliased paths) and normalizes the Rust dependency before signing.
 
 A small dynamically linked Swift fixture passes first/repeat builds, adding a
 second Rust profile, updating a library, switching configurations, and a custom
@@ -30,7 +30,22 @@ with outliers retained in the accompanying data; **no whole-app build speedup
 is inferred**. The structural removal of the copies and plugin is verified.
 
 The signed production app builds with the external Swift scratch path, passes
-strict deep signature verification and passes package/launch smoke. With a
+strict deep signature verification and the original package/launch smoke.
+Those checks missed a surviving build-directory run path: Swift recorded a
+`/tmp` alias while the packager matched `/private/tmp` literally. The first
+ABBA attempt stopped when the candidate loaded the baseline build-tree Rust
+image; the whole attempt is excluded from runtime comparisons. Signature
+validity and a successful launch did not establish bundle isolation.
+
+The corrected packager removes nonportable run paths by their actual load
+commands; smoke now verifies these paths without altering the signed binary.
+A real Mach-O regression returns the bundled value instead of the external
+value and still runs after deleting its aliased build directory. It also checks
+relocation of an absolute Rust install name. The comparison runner requires both
+the expected loaded-library UUID and its mapped bundled path. All 24 Python
+checks pass, alongside ShellCheck and the working-tree quality guard.
+
+With a
 fresh Swift cache and partially reused Rust dependencies, packaging takes
 611.287s wall / 611.320 CPU-seconds / 2,012.98 MiB sampled peak build-tree RSS.
 The runtime Cargo graph takes 5m01s, host bindgen 49.27s and Swift 226.57s.
@@ -46,7 +61,7 @@ all fields directly. Exhaustive destructuring requires any future field to be
 included. Floating-point comparisons preserve Debug's treatment of signed zero
 and NaN payloads. The same changed rows, ordering, duplicate-ID handling and
 removals are preserved. All 15 FFI release tests pass, including every-field and
-legacy-output checks; strict release Clippy passes. The 22 Python checks cover
+legacy-output checks; strict release Clippy passes. The Python checks cover
 the build/measurement tools and comparison failure cleanup.
 
 The ignored release benchmark uses 500 rows and unchanged, 10%-changed and
@@ -77,7 +92,7 @@ retained test executable directly to measure each process separately.
 The longer six-window app comparison started after pass five has no verified
 aggregate: its worktree artifacts were absent on resume and its process handle
 no longer resolved. It contributes no completed-comparison claim. The published
-source was restored, and a fresh signed baseline/candidate pair is prepared.
+source was restored. A corrected signed baseline/candidate pair is being rebuilt.
 Both use the production MCP/CLI/FFI Cargo roots, the same release options and
 two-job budget. They share the same compiled Swift code and Rust dependencies;
 only the baseline Rust library is replaced before resealing the baseline app.
@@ -85,7 +100,7 @@ The initial narrower-root baseline is ineligible for this comparison.
 Historical measurements below remain historical. The new
 `scripts/compare-runtime.py` records app hashes, Rust UUIDs, source identifiers
 and configuration before launching A/B/B/A windows; it saves each completed
-window, verifies the loaded Rust image after sampling and stops its own app
+window, verifies the loaded Rust UUID and bundled path after sampling and stops its own app
 child on failure. Whole-app CPU, memory and wakeup effects of pass six remain
 to be measured.
 

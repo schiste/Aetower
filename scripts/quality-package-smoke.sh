@@ -78,6 +78,7 @@ package_cache_key() {
             scripts/import-app-icon.sh \
             scripts/normalize-app-icon.py \
             scripts/package-macos.sh \
+            scripts/relocate-macos-executable.py \
             scripts/smoke-package.sh \
             scripts/quality-package-smoke.sh \
             | xargs -0 shasum -a 256
