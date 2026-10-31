@@ -99,7 +99,7 @@ jobs:
         with:
           path: |
             rust/target
-          key: rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.toml', 'rust/crates/**') }}
+          key: rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.toml', 'rust/crates/**', 'scripts/ci-local.sh', 'scripts/test-rust-workspace.sh', 'scripts/build-rust.sh', 'scripts/build-settings.sh') }}
           restore-keys: |
             rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}-
             rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-
@@ -114,9 +114,9 @@ jobs:
             macos/.build
             tmp/clang-module-cache
             ~/Library/Caches/org.swift.swiftpm
-          # Rust bridge changes also change SwiftPM plugin artifacts. Include
-          # those inputs so Rust-only updates can save fresh Swift snapshots.
-          key: swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('macos/Package.swift', 'macos/Package.resolved') }}-${{ hashFiles('macos/Sources/**', 'macos/Tests/**', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rust-toolchain.toml', 'rust/crates/**', 'scripts/build-rust.sh', 'scripts/build-settings.sh', 'scripts/package-macos.sh') }}
+          # Binding and gate drivers can change the compiled inputs or graph.
+          # Fingerprint them so immutable cache keys can save refreshed work.
+          key: swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('macos/Package.swift', 'macos/Package.resolved') }}-${{ hashFiles('macos/Sources/**', 'macos/Tests/**', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rust-toolchain.toml', 'rust/crates/**', 'scripts/build-rust.sh', 'scripts/build-settings.sh', 'scripts/package-macos.sh', 'scripts/prepare-swift-bindings.py', 'scripts/ci-local.sh', 'scripts/swift-quality-checks.sh') }}
           restore-keys: |
             swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('macos/Package.swift', 'macos/Package.resolved') }}-
             swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-

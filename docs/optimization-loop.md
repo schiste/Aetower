@@ -7,6 +7,14 @@ separate from measured app-wide improvements.
 
 ## Pass 8 investigation: profile the actual snapshot decode
 
+CI artifact keys now include the scripts that select compilation graphs and
+prepare Swift bindings. A script-only change can therefore publish a refreshed
+cache instead of repeatedly restoring an immutable exact hit from the old
+graph. Compatible fallback keys remain available. Actionlint passes; hosted
+cache savings remain unverified while the mandatory advisory preflight fails.
+The latest inspected quality run, 41253352654, fails at that preflight before
+compiler restores or compilation.
+
 A separate 15-second, 1 ms diagnostic follows 60 seconds of settling. The
 loaded Rust UUID and bundled mapping are verified. A temporary cdylib-only
 linker map preserves the production release settings and package roots; its
