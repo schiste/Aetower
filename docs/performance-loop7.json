@@ -364,7 +364,66 @@
     "interpretation": "legacy ignores already-warmed requested cache and creates a separate default cache; candidate uses requested cache; warm-repeat CPU similar; no whole-app or hosted-CI speedup claimed"
   },
   "app_comparison": {
-    "status": "not yet measured",
-    "candidate_bundle": "production package pending; prior pass-six candidate retained for common-code baseline construction"
+    "status": "verified isolated pair prepared; fresh ABBA in progress",
+    "pair": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-baseline/Aetower.app",
+        "source": "9fdd2ddb2b6b FFI; common Swift/dependencies f41e21c11211; production MCP/CLI/FFI roots",
+        "executable_sha256": "9fe9aecb7f25e1986c7cb96b62c734659fc465e5872911b34d98deb209942b29",
+        "rust_sha256": "9a637d8a2e1a30779ecf245c3a0d5616ef1ca0c697594f9f416e973d97b751e2",
+        "rust_uuid": "A2104D6A-2F1F-3983-9330-586B4084A9C0",
+        "swift_executable_uuid": "1759DE74-CDF5-343C-B2A7-86BFBB776387",
+        "loaded_bundled_rust_verified": true
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-candidate/Aetower.app",
+        "source": "f41e21c11211 FFI; common Swift/dependencies f41e21c11211; production MCP/CLI/FFI roots",
+        "executable_sha256": "99afc7a2b56c177e21f1365fb13438bec096be8f884d78e0792809f0a8f0cdad",
+        "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+        "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+        "swift_executable_uuid": "1759DE74-CDF5-343C-B2A7-86BFBB776387",
+        "loaded_bundled_rust_verified": true
+      }
+    ],
+    "construction": "same candidate app copied; baseline replaces only Rust dylib and reseals it and outer app; common compiled Swift UUID, production Cargo roots and release settings"
+  },
+  "package_build": {
+    "configuration": "two jobs; production MCP/CLI/FFI Cargo roots; RUSTC_WRAPPER empty; current FFI rebuilt with reused dependencies and external Swift scratch; ad-hoc signing; no notarization",
+    "measurement": {
+      "command": [
+        "sh",
+        "scripts/package-macos.sh"
+      ],
+      "cwd": "/private/tmp/aetower-build-performance",
+      "exit_status": 0,
+      "wall_seconds": 98.528,
+      "user_cpu_seconds": 100.782,
+      "system_cpu_seconds": 6.162,
+      "average_cpu_percent": 108.5,
+      "sampled_peak_tree_rss_bytes": 926777344,
+      "rss_samples": 96,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    },
+    "verification": "strict deep signature, bundle-path smoke and loaded UUID plus bundled mapping preflights; committed FFI bindings unchanged",
+    "comparison_note": "absolute rebuild cost, not matched build speedup"
+  },
+  "package_repeat": {
+    "configuration": "immediate unchanged repeat with identical source and settings",
+    "measurement": {
+      "command": [
+        "sh",
+        "scripts/package-macos.sh"
+      ],
+      "cwd": "/private/tmp/aetower-build-performance",
+      "exit_status": 0,
+      "wall_seconds": 15.509,
+      "user_cpu_seconds": 6.463,
+      "system_cpu_seconds": 3.177,
+      "average_cpu_percent": 62.2,
+      "sampled_peak_tree_rss_bytes": 516472832,
+      "rss_samples": 15,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    },
+    "comparison_note": "absolute repeat cost; no improvement ratio inferred against older passes"
   }
 }

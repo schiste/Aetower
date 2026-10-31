@@ -24,8 +24,16 @@ ownership. Legacy runs total **2.487510 CPU-seconds**, versus **0.889272** for
 shared snapshots: **64.3% less fixture CPU**. Mean maximum process RSS is
 **13.14 → 11.99 MiB**, **8.7% lower in this fixture**. Four alternating
 operation trials per mode also preserve all raw timings. These results do
-not establish app-wide CPU, physical footprint or wakeup gains. Production
-packaging and a matched app comparison are still pending.
+not establish app-wide CPU, physical footprint or wakeup gains. The signed
+production package passes strict deep signature, bundle-path smoke and loaded
+Rust UUID plus bundled-mapping preflights; committed FFI bindings stay unchanged.
+The matched pair has identical compiled Swift UUIDs, dependencies and production
+Cargo roots. Fresh A/B/B/A sampling is in progress.
+
+Rebuilding the FFI and reusing the external Swift cache costs **98.528s wall /
+106.944 CPU-seconds / 883.84 MiB sampled peak tree RSS**. An immediate unchanged
+repeat costs **15.509s / 9.640 CPU-seconds / 492.55 MiB**. These are absolute
+build costs, not a matched speedup over older passes.
 
 The local CI script now respects `SWIFT_BUILD_DIR`, matching packaging and
 its Swift build/test commands. A real Swift package exercises the actual gate
