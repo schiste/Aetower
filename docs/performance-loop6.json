@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "measured_on": "2026-10-31",
+  "runtime_source_commit": "9fdd2ddb2b6b7ce27189e18b8d27c147340b871c",
+  "legacy_source_commit": "833ca2afaf77f75ede2b3bfddbc354df743aab46",
+  "toolchain": {
+    "swift": "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0",
+    "rust": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+    "compiler_jobs": 2
+  },
+  "retained_test_binary": {
+    "sha256": "4ba423f8ba60586a1d3bf6ee599c6680dc6bd3f2d0878e68768ea1aa8e53f981",
+    "uuid_load_commands": "cmdsize 24\n    uuid C1481900-D850-3FB1-8B5F-8359744A69D2"
+  },
+  "row_benchmark": {
+    "rows": 500,
+    "change_every": [
+      0,
+      10,
+      1
+    ],
+    "trials_per_case": 4,
+    "diffs_per_trial": 100,
+    "equivalence": "full Debug rendering of changed rows and removed IDs equals original implementation before timing",
+    "cpu_scope": "wait4 child user+system CPU; identical fixture setup and output oracle in each variant; no simultaneous compilation",
+    "rss_scope": "macOS wait4 maximum process RSS; no demonstrated reduction",
+    "raw_runs": [
+      {
+        "index": 0,
+        "implementation": "legacy",
+        "wall_seconds": 2.1764123749744613,
+        "cpu_seconds": 1.905024,
+        "peak_process_rss_bytes": 10436608,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 1,
+        "implementation": "candidate",
+        "wall_seconds": 0.10709637502441183,
+        "cpu_seconds": 0.10334,
+        "peak_process_rss_bytes": 10043392,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 2,
+        "implementation": "candidate",
+        "wall_seconds": 0.10446208401117474,
+        "cpu_seconds": 0.10189,
+        "peak_process_rss_bytes": 10305536,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 3,
+        "implementation": "legacy",
+        "wall_seconds": 2.078857208020054,
+        "cpu_seconds": 1.874654,
+        "peak_process_rss_bytes": 10240000,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 4,
+        "implementation": "legacy",
+        "wall_seconds": 1.922322416008683,
+        "cpu_seconds": 1.7551839999999999,
+        "peak_process_rss_bytes": 10452992,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 5,
+        "implementation": "candidate",
+        "wall_seconds": 0.18912604099023156,
+        "cpu_seconds": 0.146955,
+        "peak_process_rss_bytes": 10125312,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 6,
+        "implementation": "candidate",
+        "wall_seconds": 0.290887124981964,
+        "cpu_seconds": 0.15033,
+        "peak_process_rss_bytes": 10502144,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 7,
+        "implementation": "legacy",
+        "wall_seconds": 7.1009790420066565,
+        "cpu_seconds": 2.3510180000000003,
+        "peak_process_rss_bytes": 9125888,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 8,
+        "implementation": "legacy",
+        "wall_seconds": 9.273536916996818,
+        "cpu_seconds": 2.3152630000000003,
+        "peak_process_rss_bytes": 9175040,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 9,
+        "implementation": "candidate",
+        "wall_seconds": 0.2754440419957973,
+        "cpu_seconds": 0.161274,
+        "peak_process_rss_bytes": 10289152,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 10,
+        "implementation": "candidate",
+        "wall_seconds": 0.6340142500121146,
+        "cpu_seconds": 0.167489,
+        "peak_process_rss_bytes": 10305536,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 11,
+        "implementation": "legacy",
+        "wall_seconds": 8.654289333993802,
+        "cpu_seconds": 2.2626310000000003,
+        "peak_process_rss_bytes": 9109504,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      }
+    ]
+  },
+  "swift_fixture": {
+    "scope": "two-job warm dynamically linked tiny package builds; ABBA repeated twice; shared host, all outliers included; not whole-app timings",
+    "variant_names": {
+      "bridge-fixture": "staging plugin",
+      "bridge-direct-fixture": "direct link"
+    },
+    "raw_runs": [
+      {
+        "index": 0,
+        "variant": "bridge-fixture",
+        "wall_seconds": 7.468390166002791,
+        "cpu_seconds": 3.251613,
+        "load": null
+      },
+      {
+        "index": 1,
+        "variant": "bridge-direct-fixture",
+        "wall_seconds": 2.7287359169858973,
+        "cpu_seconds": 1.8222129999999999,
+        "load": null
+      },
+      {
+        "index": 2,
+        "variant": "bridge-direct-fixture",
+        "wall_seconds": 1.3526305829873309,
+        "cpu_seconds": 1.2074750000000003,
+        "load": null
+      },
+      {
+        "index": 3,
+        "variant": "bridge-fixture",
+        "wall_seconds": 1.2629337909747846,
+        "cpu_seconds": 1.2606770000000003,
+        "load": null
+      },
+      {
+        "index": 4,
+        "variant": "bridge-fixture",
+        "wall_seconds": 1.3855181660037488,
+        "cpu_seconds": 1.2475650000000003,
+        "load": null
+      },
+      {
+        "index": 5,
+        "variant": "bridge-direct-fixture",
+        "wall_seconds": 1.570317583013093,
+        "cpu_seconds": 1.2076890000000007,
+        "load": null
+      },
+      {
+        "index": 6,
+        "variant": "bridge-direct-fixture",
+        "wall_seconds": 1.0902698340069037,
+        "cpu_seconds": 1.1588090000000002,
+        "load": null
+      },
+      {
+        "index": 7,
+        "variant": "bridge-fixture",
+        "wall_seconds": 1.4772496669902466,
+        "cpu_seconds": 1.288897,
+        "load": null
+      }
+    ]
+  },
+  "app_comparison": {
+    "status": "pending fresh retained app builds",
+    "prior_six_window_comparison": "unverified; final artifacts unavailable on resume"
+  }
+}

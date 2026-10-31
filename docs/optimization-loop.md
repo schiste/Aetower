@@ -5,6 +5,75 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 6: direct Rust linking and compact UI row comparisons
+
+The Swift bridge plugin copied already-built Rust libraries into its output
+directory. SwiftPM then treated those dylibs as generated resources, copying
+them into a bindings resource bundle and generating a resource accessor. Swift
+now links the existing Rust profile directories directly. This removes plugin
+compilation/execution, staging copies and the unused bindings resource bundle,
+and makes linking independent of the Swift scratch directory. Packaging strips
+both the new Rust search paths and old cached plugin paths before signing.
+
+A small dynamically linked Swift fixture passes first/repeat builds, adding a
+second Rust profile, updating a library, switching configurations, and a custom
+scratch path containing spaces. It returns the updated library's value, and
+the direct-link variant creates no bindings resource bundle. The fixture did
+**not** reproduce pass five's large Swift rebuild, so that specific cause is
+still unresolved. The plugin's generated-resource behavior is documented by
+[SwiftPM](https://docs.swift.org/latest/documentation/packagemanagerdocs/writingbuildtoolplugin/).
+
+Eight alternating warm fixture builds, four per variant, show similar wall
+times: median 1.431s with the plugin versus 1.461s with direct linking. Median
+CPU is 1.275s versus 1.208s. These are fixture measurements on a shared host,
+with outliers retained in the accompanying data; **no whole-app build speedup
+is inferred**. The structural removal of the copies and plugin is verified.
+
+Compact UI deltas previously formatted both base and current process rows into
+Debug strings to detect changes. They now index borrowed base rows and compare
+all fields directly. Exhaustive destructuring requires any future field to be
+included. Floating-point comparisons preserve Debug's treatment of signed zero
+and NaN payloads. The same changed rows, ordering, duplicate-ID handling and
+removals are preserved. All 15 FFI release tests pass, including every-field and
+legacy-output checks; strict release Clippy passes. The 22 Python checks cover
+the build/measurement tools and comparison failure cleanup.
+
+The ignored release benchmark uses 500 rows and unchanged, 10%-changed and
+fully changed cases. Four alternating trials per case, 100 comparisons per
+implementation per trial, measure 92.3–94.3% shorter row-diff operation time.
+The original implementation generates 643,580–644,581 bytes of signature text
+per comparison; the candidate generates none. These are cumulative signature
+payload bytes, **not** peak memory or whole-app savings.
+
+Twelve alternating retained-test-binary processes select one implementation
+each. Six legacy processes consume 12.463774 CPU-seconds in total versus
+0.831278 for six candidate processes, **93.3% less fixture CPU**. Mean maximum
+process RSS is 9.30 versus 9.79 MiB, so this does **not** establish lower RSS.
+The same fixture setup and output oracle run in both modes; no compilation runs
+during this comparison. Raw per-process and build-fixture measurements, source
+identity, compiler versions and the retained test-binary hash are in
+[`performance-loop6.json`](performance-loop6.json).
+
+Reproduce the operation benchmark with:
+
+```sh
+cargo test --locked --manifest-path rust/Cargo.toml -p aetower-ffi --release ui_row_delta_benchmark -- --ignored --nocapture --test-threads=1
+```
+
+Set `AETOWER_UI_ROW_BENCH_IMPLEMENTATION=legacy` or `candidate` when running the
+retained test executable directly to measure each process separately.
+
+The longer six-window app comparison started after pass five has no verified
+aggregate: its worktree artifacts were absent on resume and its process handle
+no longer resolved. It contributes no completed-comparison claim. The published
+source was restored, and fresh baseline/candidate app construction is underway.
+Historical measurements below remain historical. The new
+`scripts/compare-runtime.py` records app hashes, Rust UUIDs, source identifiers
+and configuration before launching A/B/B/A windows; it saves each completed
+window, verifies the loaded Rust image after sampling and stops its own app
+child on failure. Whole-app CPU, memory and wakeup effects of pass six remain
+to be measured.
+
 ## Pass 1 — compiler caches and duplicate capacity queries
 
 CI had no Rust, SwiftPM or cargo-deny entries in the GitHub cache inventory.
