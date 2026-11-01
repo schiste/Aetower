@@ -31,6 +31,11 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   tests can enable `@testable` imports while release packaging disables them,
   legitimately invalidating compiled modules. Retain actual build requests
   before claiming that an unchanged-source rebuild is a cache failure.
+- For compiler-pressure changes, inspect the actual compilation subprocess
+  arguments, including duplicate flags and their effective order. Package job
+  counts need not limit frontend threads; forwarded flags and compiler wrappers
+  may be overridden or bypassed by an integrated driver. Verify the effective
+  limit on a small real build before applying it to the app or claiming a cap.
 - Report wall time and CPU seconds alongside memory. Label memory as either
   largest-process RSS or sampled aggregate tree RSS; they are not interchangeable.
   Shared compiler-cache servers can execute outside the measured process tree:
