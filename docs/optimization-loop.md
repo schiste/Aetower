@@ -5,7 +5,7 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
-## Pass 16: reject a mixed pruning result; queue compiler experiment
+## Pass 16: reject compiler/pruning candidates; validate network allocation reuse
 
 The first changed-membership bitset proposal passes 26 history release cases and
 strict release all-targets Clippy. Forty-eight retained processes preserve exact
@@ -27,13 +27,48 @@ The membership cache is therefore removed as a precaution pending stronger
 allocation evidence; this is not proof it caused the footprint difference.
 The exact pass-14 history source is restored (SHA-256 begins `76c2bb040cdc`),
 matching the source previously validated with **516 workspace cases, eight ignored**
-and 25 history release cases. Fresh validation is queued after compiler measurements.
+and 25 history release cases. Fresh validation follows the network candidate below.
 
-Four matched actual UI object compilations are now comparing the original storage
-audit helper against an `@inline(never)` candidate. Compiler flags/defaults are
-unchanged. The controller temporarily swaps the Swift source, hashes all inputs
-and restores the original in `finally`; the annotation remains experimental. Evidence is in
-[`performance-loop16.json`](performance-loop16.json).
+Four matched actual UI object compilations complete with unchanged `-O`, two
+frontend threads, 91 source files and hashed imports. The storage-audit
+`@inline(never)` candidate emits **123,368 fewer object bytes (-0.18%)**, but
+observed means are wall **157.187 → 289.351s (+84.1%)**, CPU
+**162.401 → 212.182s (+30.7%)**, sampled peak tree RSS **2209.01 → 1547.16 MiB
+(-30.0%)**. Within-variant variability is substantial: the identical candidate's
+semantic-analysis wall timer ranges **24.995–92.682s**. Nested timers and shared
+host load prevent causal attribution or a hard memory-cap claim. This does not
+establish a useful build saving; the annotation is **not adopted** and original
+Swift source is restored. Object emission excludes separate module emission,
+dependencies, linking, packaging and whole CI.
+
+A separate network-history candidate borrows current host names and reuses the
+existing owned set. Unchanged membership retains strings; changed membership
+copies only new hosts and releases excess capacity. First observation remains
+silent, empty observations keep prior state, and event ordering/text are preserved.
+No persistent field is added. **26 history release cases** and strict release
+all-targets Clippy pass; two manual fixtures are ignored. The oracle compares all
+event fields and canonical host membership through reorder, duplicates, endpoint
+edge cases, disappearance/reappearance and a 1024-to-one-host shrink; retained
+set capacity does not exceed the reference.
+
+The initial forty-eight retained release processes use equal opaque call boundaries, 256
+entities and 1000 samples. No-network process CPU is **0.056530 → 0.021219s
+(-62.5%)**; stable **4.843844 → 3.321499s (-31.4%)**; reordered
+**5.359293 → 2.877219s (-46.3%)**; one-host churn **5.914207 → 3.329463s
+(-43.7%)**. All variants preserve exact canonical output: **8 / 82,182 / 82,182 /
+112,088 bytes** across the four shapes. Maximum-process RSS is mixed: stable and
+reordered means fall slightly; none/churn rise, with churn **7.65 → 7.72 MiB**.
+Common setup, both oracle states and output encoding prevent isolated allocation
+attribution. A production `unwrap` was then replaced with a guarded lookup;
+the current source again passes 26 release cases, strict Clippy and the quality
+guard. Its fixture rerun is pending. The initial full workspace run failed
+retention (zero rows instead of 169); the exact test subsequently passed on both
+temporary volumes. The nearly full internal volume is a possible cause, not
+established. A spacious external TMPDIR passed retention but exceeded Unix socket
+path limits in another test. A short alias to that directory is now being
+validated without changing tests or deadlines. All failed receipts remain
+retained. Production app comparison is pending. These helper results do not establish app-wide CPU, footprint or wakeup
+savings. Evidence is in [`performance-loop16.json`](performance-loop16.json).
 
 ## Pass 15: reverted active-set cache; Swift optimizer diagnostics
 

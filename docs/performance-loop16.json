@@ -1,5 +1,5 @@
 {
-  "status": "runtime_proposals_reverted_compiler_comparison_running",
+  "status": "network_candidate_revalidation_in_progress",
   "runtime_experiment": {
     "status": "rejected_not_retained_in_production_source",
     "proposal": "For changed cooccurrence membership, use a u16-domain bounded bitset only when requested bit payload is no larger than the active-index u16 payload; retain HashSet for sparse historical indices. Keep the prior unchanged-membership cache.",
@@ -86,12 +86,180 @@
     "decision": "Reject this first version: compact churn CPU improves 34.9%, but the steady fixture CPU rises 19.3% and maximum-process RSS also rises. The stable hot path was intended to be unchanged. A future attempt requires investigating compiler/call context and remeasurement; favorable churn alone does not establish a net improvement. Restored exact preceding production source; no source changes from this experiment remain."
   },
   "build_experiment": {
-    "status": "running",
+    "status": "complete_not_adopted",
     "proposal": "Use the retained actual release UI frontend command to compare the original storage audit helper against an inline(never) candidate, in four matched ABBA optimized object compilations. Preserve optimization, sources/imports and two frontend threads; use fresh private module caches/outputs. Restore original source in finally. No compiler backend/default change.",
     "controller": "tmp/loop16-swift-inlining-comparison.py",
     "scope": "UI object compilation diagnostic only; excludes separate module emission, dependencies, linking, packaging, runtime and whole CI. A retained annotation additionally needs app/default-build compatibility and footprint validation.",
     "official_guidance": "https://developer.apple.com/videos/play/wwdc2026/262/",
-    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-swift-inlining-comparison-v1/results.json"
+    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-swift-inlining-comparison-v1/results.json",
+    "output_sha256": "2a8b1854744e4dac6a35e4e617fe0a75b8ababca1d77087470c3b3a3b33d4511",
+    "means": {
+      "baseline": {
+        "wall_seconds": 157.187,
+        "cpu_seconds": 162.401,
+        "sampled_peak_tree_rss_bytes": 2316312576,
+        "object_bytes": 69532128
+      },
+      "candidate": {
+        "wall_seconds": 289.351,
+        "cpu_seconds": 212.1815,
+        "sampled_peak_tree_rss_bytes": 1622310912,
+        "object_bytes": 69408760
+      }
+    },
+    "candidate_change_percent": {
+      "wall_seconds": 84.08074459083765,
+      "cpu_seconds": 30.65282849243538,
+      "sampled_peak_tree_rss_bytes": -29.9614858197791,
+      "object_bytes": -0.17742589440092882
+    },
+    "phases": [
+      {
+        "label": "A1",
+        "variant": "baseline",
+        "status": "complete",
+        "source_sha256": "6d4f78c5fb4191714e4b3ef70a02c10c8f1812d2730a72fea3aab06678c21159",
+        "host_load_start": [
+          8.88037109375,
+          11.27197265625,
+          15.1376953125
+        ],
+        "host_load_end": [
+          7.31689453125,
+          9.81640625,
+          14.02587890625
+        ],
+        "object_files": 91,
+        "inputs_unchanged": true,
+        "object_bytes": 69532128,
+        "cost": {
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 124.803,
+          "user_cpu_seconds": 130.884,
+          "system_cpu_seconds": 5.979,
+          "average_cpu_percent": 109.7,
+          "sampled_peak_tree_rss_bytes": 2608775168,
+          "rss_samples": 122,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "selected_nested_wall_timers": {
+          "time.swift.LLVM pipeline.wall": 26.083184957504272,
+          "time.swift.IRGen.wall": 5.126260995864868,
+          "time.swift.SIL optimization.wall": 45.10777974128723,
+          "time.swift.Type checking and Semantic analysis.wall": 19.890649557113647
+        }
+      },
+      {
+        "label": "B1",
+        "variant": "candidate",
+        "status": "complete",
+        "source_sha256": "62c71c6df09f33de1be8ab3580fa83f768d9e0190f35f671554a188b000076d3",
+        "host_load_start": [
+          7.31689453125,
+          9.81640625,
+          14.02587890625
+        ],
+        "host_load_end": [
+          22.93310546875,
+          13.78466796875,
+          14.58984375
+        ],
+        "object_files": 91,
+        "inputs_unchanged": true,
+        "object_bytes": 69408760,
+        "cost": {
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 210.373,
+          "user_cpu_seconds": 169.971,
+          "system_cpu_seconds": 10.601,
+          "average_cpu_percent": 85.8,
+          "sampled_peak_tree_rss_bytes": 1944993792,
+          "rss_samples": 203,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "selected_nested_wall_timers": {
+          "time.swift.LLVM pipeline.wall": 88.61717891693115,
+          "time.swift.IRGen.wall": 8.46999979019165,
+          "time.swift.SIL optimization.wall": 56.75799012184143,
+          "time.swift.Type checking and Semantic analysis.wall": 24.995479822158813
+        }
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "status": "complete",
+        "source_sha256": "62c71c6df09f33de1be8ab3580fa83f768d9e0190f35f671554a188b000076d3",
+        "host_load_start": [
+          22.93310546875,
+          13.78466796875,
+          14.58984375
+        ],
+        "host_load_end": [
+          19.61279296875,
+          18.48974609375,
+          16.798828125
+        ],
+        "object_files": 91,
+        "inputs_unchanged": true,
+        "object_bytes": 69408760,
+        "cost": {
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 368.329,
+          "user_cpu_seconds": 224.13,
+          "system_cpu_seconds": 19.661,
+          "average_cpu_percent": 66.2,
+          "sampled_peak_tree_rss_bytes": 1299628032,
+          "rss_samples": 350,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "selected_nested_wall_timers": {
+          "time.swift.LLVM pipeline.wall": 55.745489835739136,
+          "time.swift.IRGen.wall": 21.912432193756104,
+          "time.swift.SIL optimization.wall": 126.51791596412659,
+          "time.swift.Type checking and Semantic analysis.wall": 92.6818573474884
+        }
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "status": "complete",
+        "source_sha256": "6d4f78c5fb4191714e4b3ef70a02c10c8f1812d2730a72fea3aab06678c21159",
+        "host_load_start": [
+          19.61279296875,
+          18.48974609375,
+          16.798828125
+        ],
+        "host_load_end": [
+          13.7177734375,
+          15.91162109375,
+          16.01904296875
+        ],
+        "object_files": 91,
+        "inputs_unchanged": true,
+        "object_bytes": 69532128,
+        "cost": {
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 189.571,
+          "user_cpu_seconds": 176.774,
+          "system_cpu_seconds": 11.165,
+          "average_cpu_percent": 99.1,
+          "sampled_peak_tree_rss_bytes": 2023849984,
+          "rss_samples": 184,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "selected_nested_wall_timers": {
+          "time.swift.LLVM pipeline.wall": 67.74502086639404,
+          "time.swift.IRGen.wall": 8.426209211349487,
+          "time.swift.SIL optimization.wall": 59.616024017333984,
+          "time.swift.Type checking and Semantic analysis.wall": 23.98472571372986
+        }
+      }
+    ],
+    "decision": "Not adopted: emitted objects are 123368 bytes smaller (-0.18%) but observed mean CPU/wall cost rises. Large within-variant timing and memory variability prevents causal attribution; this does not demonstrate a useful build saving or hard memory cap. All inputs/hashes verified and original Swift source restored. No full app/package adoption or compatibility claim."
   },
   "app_followup": {
     "status": "complete",
@@ -115,5 +283,116 @@
       "interrupt_wakeups_per_second": 0.43591564722198495
     },
     "decision": "Precautionary removal of preceding membership cache; see pass 15 for both cohorts, all windows and source identity."
+  },
+  "network_history_candidate": {
+    "status": "guard_compliant_source_focused_validation_passed_full_workspace_and_fixture_recheck_pending",
+    "fixture_output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-network-history-fixture-v1/results.json",
+    "change": "Borrow current remote-host strings; retain existing owned strings when membership is unchanged, copy only new hosts and shrink capacity on removals. First observation uses the original owned collector; empty observations and disappeared entities preserve prior semantics. No new persistent fields.",
+    "limits": "Helper performance and retained-capacity checks do not establish whole-app physical footprint/CPU/wakeup savings.",
+    "fixture_output_sha256": "790e9e74ea3f2353b6043244be3611565efe94c11ddd342da7c17e56b06e9341",
+    "fixture_binary_sha256": "5369e2d3ee0a004cdb3cae12a868a3a28a793ef8e07c9cbbd4cc9652b86072cf",
+    "processes": 48,
+    "summary": {
+      "none": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 0.05653,
+            "median_operation_wall_seconds": 0.0052964795,
+            "mean_max_process_rss_bytes": 3388757.3333333335
+          },
+          "candidate": {
+            "total_cpu_seconds": 0.021219,
+            "median_operation_wall_seconds": 0.0002595205,
+            "mean_max_process_rss_bytes": 3394218.6666666665
+          }
+        },
+        "cpu_percent_change": -62.4641783124005,
+        "output_bytes": 8,
+        "output_sha256": "7abbc9662131bc4949def02e1c73e8d32d314ad8c471d9e03a030c6fef982fb2"
+      },
+      "stable": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 4.843844,
+            "median_operation_wall_seconds": 0.8587893335,
+            "mean_max_process_rss_bytes": 8006314.666666667
+          },
+          "candidate": {
+            "total_cpu_seconds": 3.3214989999999998,
+            "median_operation_wall_seconds": 0.5676024585,
+            "mean_max_process_rss_bytes": 7984469.333333333
+          }
+        },
+        "cpu_percent_change": -31.428448149857847,
+        "output_bytes": 82182,
+        "output_sha256": "d868c403849fc8473746cb441f98e75bc963ad527564d8e663ccd5f5b4bc2f55"
+      },
+      "reordered": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 5.359293,
+            "median_operation_wall_seconds": 0.9431209795,
+            "mean_max_process_rss_bytes": 7995392
+          },
+          "candidate": {
+            "total_cpu_seconds": 2.8772189999999997,
+            "median_operation_wall_seconds": 0.4746506875,
+            "mean_max_process_rss_bytes": 7979008
+          }
+        },
+        "cpu_percent_change": -46.31345962984297,
+        "output_bytes": 82182,
+        "output_sha256": "d868c403849fc8473746cb441f98e75bc963ad527564d8e663ccd5f5b4bc2f55"
+      },
+      "churn": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 5.914207,
+            "median_operation_wall_seconds": 1.5549165,
+            "mean_max_process_rss_bytes": 8017237.333333333
+          },
+          "candidate": {
+            "total_cpu_seconds": 3.329463,
+            "median_operation_wall_seconds": 0.688672437,
+            "mean_max_process_rss_bytes": 8099157.333333333
+          }
+        },
+        "cpu_percent_change": -43.70398263030023,
+        "output_bytes": 112088,
+        "output_sha256": "8e8177d4bd61f6204a86a0e36c33a65887a59ff5804f35d515d319c6eaee6edd"
+      }
+    },
+    "memory_scope": "wait4 maximum process RSS includes common entity/setup allocations, both oracle histories and final canonical encoding. It cannot isolate a helper allocation saving; exact retained-set capacity is checked separately by the oracle.",
+    "scope": "Prior owned-host replacement and candidate borrowed-host/in-place update in the same retained release test binary and common History layout; equal opaque function-pointer call boundaries. 256 entities, 1000 samples per process; none, stable/reordered sets of 16 hosts over 64 connections per entity, and one-entity/one-host churn. Common 8-step oracle validates canonical state/events and no larger retained host-set capacity. Both variants apply the existing 120-event bound after each timed update. Excludes the rest of History::update, collector, Swift/UI and whole app.",
+    "initial_validation": {
+      "passed": 26,
+      "manual_ignored": 2,
+      "clippy": "strict release all-targets -D warnings passed",
+      "source_sha256": "a6b318a033d9745dd4db6055a4e0f4a70d12c36b04166ce99ee539dd9972a5cf",
+      "receipt": "c392c079ee2501d447663e89fc732e18"
+    },
+    "validation": {
+      "passed": 26,
+      "manual_ignored": 2,
+      "clippy": "strict release all-targets -D warnings passed",
+      "quality_guard": "passed",
+      "source_sha256": "43e2833c8b822be5c9ccc202f62bc12dbce307776227fc364c90918bdc7f3623",
+      "release_log": "logs/loop16-network-history-validation-v2.jsonl",
+      "clippy_log": "logs/loop16-network-history-clippy-v2.log",
+      "scope": "Current guard-compliant source. Initial retained fixture below predates unwrap removal and is being repeated."
+    }
+  },
+  "validation_failure": {
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-current-workspace-validation/results.json",
+    "failure": "engine::tests::default_history_retention_keeps_seven_days_under_normal_budget: range_count 0 vs 169",
+    "diagnosis": "Focused exact same test binary passes on original and external temporary volumes. Original free space near 512 MiB production write-pause reserve; original failure cause not established. Preserve failure; full rerun uses spacious external TMPDIR, unchanged tests and timeouts.",
+    "focused_receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-disk-diagnosis-v1/results.json",
+    "guard_fix": "Replaced production unwrap with if let; current source passes 26 release cases, strict Clippy and quality guard. New fixture pending.",
+    "second_attempt": {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-current-workspace-validation-v2/results.json",
+      "retention_test": "passed",
+      "failure": "chau7::tests::repeated_fetches_close_chau7_socket_connections: path must be shorter than SUN_LEN",
+      "resolution_under_validation": "Use a short TMPDIR symlink to the spacious retained directory; full suite v3 running."
+    }
   }
 }
