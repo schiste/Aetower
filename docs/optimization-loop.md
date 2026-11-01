@@ -5,9 +5,9 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
-## Pass 10: borrow grouping keys and reject before compiler harnesses
+## Pass 10: reject before compiler harnesses; history experiment reverted
 
-Grouping suggestions now borrow interned entity keys and display names. The
+The rejected grouping experiment borrowed interned entity keys and display names. The
 original code cloned an owned key for every qualifying pair, including keys
 already present in the suggestion map. Pair iteration, first-match choice,
 threshold rounding and existing hints retain their behavior. All **22 history
@@ -32,9 +32,22 @@ verified and no builds during sampling. Mean CPU is **4.297% → 4.442%
 wakeups **4.605 → 5.478/s (+18.9%)**. Both candidate wakeup readings exceed
 both baselines, so this is a possible runtime regression requiring a hold.
 Baseline footprint itself drifts 113.28 → 147.41 MiB, preventing a causal
-memory-saving claim. A reverse-order BAAB retest of the same retained apps is
-running without recompilation before deciding whether to retain the runtime
-change. The faster grouping fixture does not establish an app-wide improvement.
+memory-saving claim. A reverse-order BAAB retest of the same retained apps
+also completes, without recompilation and with all four loaded identities
+verified. Its baseline CPU is **3.982%**, candidate **9.897%**; wakeups are
+**4.344 → 16.944/s**. The final candidate window spikes to **16.188% CPU /
+29.410 wakeups/s**, while host load increases. Both candidate wakeup readings
+again exceed both baselines within this order. Across all eight windows,
+descriptive means are **4.139% → 7.170% CPU**, **126.60 → 127.25 MiB** physical
+footprint and **4.475 → 11.211 wakeups/s**, including that outlier.
+
+Window visibility/occlusion was not recorded; source inspection confirms it
+can alter UI refresh cadence. Changing host load and process populations also
+prevent causal attribution. The history source is restored to its prior
+implementation rather than retaining this possible app regression. All fixture
+and app observations remain recorded. The faster grouping fixture does not
+establish an app-wide improvement. The independent CI improvement below stays.
+The restored implementation passes all **20 history release tests** and doc-tests.
 
 The local full gate now runs its selected mandatory dependency audit before
 the build-pipeline tests, which include real Swift compiler harnesses. Twelve

@@ -1,5 +1,5 @@
 {
-  "status": "reverse-order retest: 0 of four windows verified; possible wakeup regression unresolved",
+  "status": "history runtime experiment rejected and source restored; CI preflight improvement retained",
   "runtime_source_commit": "4449be5bdd9434a6fadfb8ff19cf144dbb6fc9e9",
   "history_grouping_fixture": {
     "status": "complete",
@@ -829,7 +829,7 @@
   },
   "app_result": "Possible wakeup regression: CPU mean +3.38%, wakeups +18.94% with both candidate wake readings above both baselines. Footprint mean -14.15% is not a causal saving because the baseline drifts substantially. Runtime change remains on hold pending reverse-order retest.",
   "matched_app_retest": {
-    "status": "running",
+    "status": "complete",
     "controller_pid": 60561,
     "apps": [
       {
@@ -861,9 +861,200 @@
       {
         "label": "B1",
         "variant": "candidate",
-        "status": "starting",
-        "pid": 60663
+        "status": "complete",
+        "pid": 60663,
+        "host_processes_start": 830,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          9.8505859375,
+          15.46337890625,
+          18.16162109375
+        ],
+        "host_load_end": [
+          12.4306640625,
+          14.6748046875,
+          17.56982421875
+        ],
+        "wall_seconds": 90.00308804199449,
+        "samples": 46,
+        "user_time_seconds": 2.177597834,
+        "system_time_seconds": 1.069038458,
+        "average_cpu_percent": 3.6072498873429253,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 403,
+        "interrupt_wakeups_per_second": 4.477624143428995,
+        "average_resident_size_bytes": 164965153.39130434,
+        "peak_resident_size_bytes": 315621376,
+        "average_phys_footprint_bytes": 132247377.04347827,
+        "peak_phys_footprint_bytes": 228066432,
+        "host_processes_end": 849,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "A1",
+        "variant": "baseline",
+        "status": "complete",
+        "pid": 99126,
+        "host_processes_start": 847,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          12.9013671875,
+          14.45654296875,
+          17.2783203125
+        ],
+        "host_load_end": [
+          10.96142578125,
+          13.14404296875,
+          16.47216796875
+        ],
+        "wall_seconds": 90.00819624998257,
+        "samples": 46,
+        "user_time_seconds": 2.409299042,
+        "system_time_seconds": 1.085475792,
+        "average_cpu_percent": 3.882729550866515,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 382,
+        "interrupt_wakeups_per_second": 4.24405794044644,
+        "average_resident_size_bytes": 146406711.6521739,
+        "peak_resident_size_bytes": 216121344,
+        "average_phys_footprint_bytes": 125578376.69565217,
+        "peak_phys_footprint_bytes": 167888000,
+        "host_processes_end": 829,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "status": "complete",
+        "pid": 42009,
+        "host_processes_start": 795,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          10.71240234375,
+          13.033203125,
+          16.22607421875
+        ],
+        "host_load_end": [
+          11.62353515625,
+          12.58447265625,
+          15.71923828125
+        ],
+        "wall_seconds": 90.01006129197776,
+        "samples": 46,
+        "user_time_seconds": 2.569066417,
+        "system_time_seconds": 1.10409925,
+        "average_cpu_percent": 4.080838979861215,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 400,
+        "interrupt_wakeups_per_second": 4.443947646057768,
+        "average_resident_size_bytes": 148059358.60869566,
+        "peak_resident_size_bytes": 310083584,
+        "average_phys_footprint_bytes": 132058604.3478261,
+        "peak_phys_footprint_bytes": 236831872,
+        "host_processes_end": 833,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "status": "complete",
+        "pid": 86129,
+        "host_processes_start": 841,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          18.77099609375,
+          14.22412109375,
+          16.08935546875
+        ],
+        "host_load_end": [
+          16.6083984375,
+          14.94140625,
+          16.20166015625
+        ],
+        "wall_seconds": 90.00278941699071,
+        "samples": 46,
+        "user_time_seconds": 12.087583292,
+        "system_time_seconds": 2.481676416,
+        "average_cpu_percent": 16.18756463257973,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 2647,
+        "interrupt_wakeups_per_second": 29.410199585439734,
+        "average_resident_size_bytes": 164266696.3478261,
+        "peak_resident_size_bytes": 345014272,
+        "average_phys_footprint_bytes": 166805541.5652174,
+        "peak_phys_footprint_bytes": 208110648,
+        "host_processes_end": 829,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
       }
-    ]
+    ],
+    "means": {
+      "baseline": {
+        "average_cpu_percent": 3.9817842653638653,
+        "average_phys_footprint_bytes": 128818490.52173913,
+        "interrupt_wakeups_per_second": 4.344002793252104
+      },
+      "candidate": {
+        "average_cpu_percent": 9.897407259961327,
+        "average_phys_footprint_bytes": 149526459.30434784,
+        "interrupt_wakeups_per_second": 16.943911864434366
+      }
+    },
+    "candidate_change_percent": {
+      "average_cpu_percent": 148.5671397633311,
+      "average_phys_footprint_bytes": 16.07530774404944,
+      "interrupt_wakeups_per_second": 290.05296890588414
+    },
+    "limits": "four fresh app-process windows with existing settings and no driven interaction on a shared host; no builds during sampling; population/load vary; these are observed means, not general or controlled causal savings"
+  },
+  "combined_app_observations": {
+    "windows": 8,
+    "means": {
+      "baseline": {
+        "average_cpu_percent": 4.1394630615518535,
+        "average_phys_footprint_bytes": 132747355.7826087,
+        "interrupt_wakeups_per_second": 4.4746172182302
+      },
+      "candidate": {
+        "average_cpu_percent": 7.1698964929633195,
+        "average_phys_footprint_bytes": 133432999.30434783,
+        "interrupt_wakeups_per_second": 11.21078140034465
+      }
+    },
+    "candidate_change_percent": {
+      "average_cpu_percent": 73.20836993470789,
+      "average_phys_footprint_bytes": 0.5165025831941561,
+      "interrupt_wakeups_per_second": 150.54168554732232
+    },
+    "limits": "Equal-window descriptive means, including the final candidate outlier. Shared host, changing process populations and load, existing settings, no driven interaction. Window visibility/occlusion was not recorded; source inspection confirms it can change UI refresh cadence. No builds during either capture. No causal effect or memory saving established."
+  },
+  "runtime_decision": {
+    "action": "restore only rust/crates/aetower-history/src/lib.rs from 5d2fb2a20b032348e19cefd7b5473a08d35718f9",
+    "reason": "Candidate wakeups exceed both baselines within each run order. The BAAB final candidate also spikes in CPU and wakeups under increased host load; uncontrolled visibility and host state prevent causal attribution. The fixture gain does not justify retaining a possible app regression.",
+    "retained": "selected mandatory dependency preflight before native compiler harnesses; all fixture and app evidence",
+    "current_source_is_experiment": false
+  },
+  "hosted_ci": {
+    "head": "f05cb11c21758ed2bed55f5e9f30208474020fb0",
+    "quality_run": 41260605365,
+    "quality_status": "failure at dependency policy preflight before app compilation",
+    "advisories": [
+      "RUSTSEC-2026-0374",
+      "RUSTSEC-2026-0346",
+      "RUSTSEC-2026-0347",
+      "RUSTSEC-2026-0348",
+      "RUSTSEC-2026-0349",
+      "RUSTSEC-2026-0382",
+      "RUSTSEC-2026-0381"
+    ],
+    "codeql": "all reported checks pass",
+    "quality_url": "https://github.com/schiste/Aetower/actions/runs/41260605365"
   }
 }
