@@ -64,6 +64,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   If reconstructing or omitting output-only inputs for a diagnostic, record
   that transformation, redirect outputs privately and verify source/import
   hashes before and after. A partial diagnostic is not a full-build comparison.
+  Retained Rust archives may omit embedded bitcode: verify compatibility before
+  a standalone LTO replay. If a diagnostic uses LTO off to reuse those archives,
+  retain the failed link, record the changed diagnostic flags and validate the
+  canonical release separately; keep the comparison's scope explicit.
 - Report wall time and CPU seconds alongside memory. Label memory as either
   largest-process RSS or sampled aggregate tree RSS; they are not interchangeable.
   For workloads shorter than the sampling interval, collect a native kernel
