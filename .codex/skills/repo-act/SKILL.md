@@ -66,6 +66,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   hashes before and after. A partial diagnostic is not a full-build comparison.
 - Report wall time and CPU seconds alongside memory. Label memory as either
   largest-process RSS or sampled aggregate tree RSS; they are not interchangeable.
+  For workloads shorter than the sampling interval, collect a native kernel
+  peak in a separate process per variant; sampled RSS may miss the entire peak.
+  State initialization/export work included in that native peak and verify
+  platform units before comparing it; do not label it app physical footprint.
   Shared compiler-cache servers can execute outside the measured process tree:
   disable the wrapper for both comparison runs when complete compiler accounting
   is required, or state that limitation explicitly.
