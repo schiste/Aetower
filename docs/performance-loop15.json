@@ -1,5 +1,5 @@
 {
-  "status": "source_fixture_workspace_and_production_package_validated_app_comparison_running",
+  "status": "initial_hidden_app_comparison_complete_unfavorable_memory_followup_required",
   "change": "Cache the sorted unique u16 active set after cooccurrence pruning. Pair increments retain input order and duplicate semantics. Skip the full pair-table retention scan only when the set is unchanged; changed membership still performs the original pruning. Cache is initialized on the first sample, including empty input; boxed storage is exactly two bytes per unique active index, at most 128 KiB plus Option metadata. No sampling/counter/schema/text changes.",
   "history_source_sha256": "4446afc5d35b5e4e34b2b24e223ac0a6ee8d4b5e371064caa0492d95c667f799",
   "fixture": {
@@ -84,8 +84,74 @@
     }
   },
   "app_comparison": {
-    "status": "starting",
-    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/measurements/loop15-hidden-runtime-v1/summary.json",
+    "status": "complete",
+    "controller_pid": 31746,
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-baseline/Aetower.app",
+        "source": "7b613d8e2118 production Rust; bounded historical grouping before active-set sampling cache; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "cc4148468ccd147ca776b4fbf3a80807c09a1b0e307d234d30ec25e7aaa802bf",
+        "rust_sha256": "5d10830681f2b023d30901da2746c090664c4b96beef5e20dc4d39b887cd65bc",
+        "rust_uuid": "5CC71201-CD6B-3411-B19B-E4900678853E",
+        "variant": "baseline",
+        "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.9.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1074",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-candidate/Aetower.app",
+        "source": "7e8e2823b25b production Rust; skip pair-table pruning for unchanged active membership; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "bd3647af711d538ecf3c4ef031da0d7d7a720c4f71e12749d37407c5c76ebf6f",
+        "rust_sha256": "5e51f9d707b04d5f0a2402f722e47b4413e0de3c57cc819dd347840b037183aa",
+        "rust_uuid": "946F5239-B5CA-3FE9-BF7D-D6F9C0D9A5BF",
+        "variant": "candidate",
+        "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.9.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1074",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+      }
+    ],
     "configuration": {
       "sequence": "ABBA",
       "settle_seconds": 60,
@@ -102,7 +168,199 @@
       ],
       "visibility": "retry startup hide within a bounded 30-second period until observed hidden; observe hidden status and zero normal onscreen windows every two seconds; invalidate on any observed change"
     },
-    "scope": "app process counter deltas; common Swift, metadata and dependencies; existing app settings, no driven interaction, no builds or other benchmark workloads during sampling; hidden idle state only; shared host load remains uncontrolled; visibility checks are discrete samples"
+    "retained_controller_sha256": {
+      "loop15-hidden-app-comparison-v1.py": "af95025cf21a6c44814fd2309ea64bc90e4de51cb7b7f5ca05eea5dd61fdb1d1",
+      "compare-runtime.py": "f9b6f0273539ee1acb3f8a0cf7e22a10ec128fb2943708b4d21dc0a183e619cd",
+      "measure-runtime.py": "eccac898ab323e7e46ab0b0a37d53c0e5c4a1007396e90b6c9f54a55b0945589",
+      "loop14-visibility-monitor.m": "860afd8e1981bfda5f2459cbfc1d1a7da8e310ada986633f191bef59ead6fbfa",
+      "loop14-visibility-monitor-objc": "d8bd911e29e326a18af3ced621bb1edddf132f46572ebfe3c29da006a77ae68f"
+    },
+    "scope": "app process counter deltas; common Swift, metadata and dependencies; existing app settings, no driven interaction, no builds or other benchmark workloads during sampling; hidden idle state only; shared host load remains uncontrolled; visibility checks are discrete samples; app-process CPU and wakeup counters exclude child processes; small shared-host cohort, no causal or general app-wide attribution",
+    "windows": [
+      {
+        "label": "A1",
+        "variant": "baseline",
+        "status": "complete",
+        "pid": 31781,
+        "host_processes_start": 779,
+        "host_load_start": [
+          17.259765625,
+          18.4453125,
+          16.0703125
+        ],
+        "wall_seconds": 90.00144699998782,
+        "samples": 46,
+        "user_time_seconds": 1.972491375,
+        "system_time_seconds": 1.343486792,
+        "average_cpu_percent": 3.68436094921946,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 463,
+        "interrupt_wakeups_per_second": 5.1443617345403645,
+        "average_resident_size_bytes": 133597273.04347827,
+        "peak_resident_size_bytes": 278069248,
+        "average_phys_footprint_bytes": 153142698.7826087,
+        "peak_phys_footprint_bytes": 179848368,
+        "host_processes_end": 777,
+        "host_load_end": [
+          14.4345703125,
+          16.96826171875,
+          15.72216796875
+        ],
+        "verified_hidden_samples": 75,
+        "visibility_last_elapsed_seconds": 149.49082700000145,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true,
+        "visibility_measurement_prefix_sha256": "e7dc985ba1ab76467c483e476c3b565378c37d94d63d0a570805df544f34f2c9",
+        "visibility_measurement_prefix_observations": 75,
+        "visibility_final_file_sha256": "4a6dbb21b9bf2d06c9643b914f13399f84de45c4896de257c300e24fb8ea0881",
+        "visibility_total_observation_count": 77
+      },
+      {
+        "label": "B1",
+        "variant": "candidate",
+        "status": "complete",
+        "pid": 59771,
+        "host_processes_start": 780,
+        "host_load_start": [
+          13.81396484375,
+          16.169921875,
+          15.51220703125
+        ],
+        "wall_seconds": 90.00378316701972,
+        "samples": 46,
+        "user_time_seconds": 1.971381542,
+        "system_time_seconds": 1.325250166,
+        "average_cpu_percent": 3.6627701547638853,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 446,
+        "interrupt_wakeups_per_second": 4.955347256596529,
+        "average_resident_size_bytes": 151876830.60869566,
+        "peak_resident_size_bytes": 361840640,
+        "average_phys_footprint_bytes": 156892497.73913044,
+        "peak_phys_footprint_bytes": 186303664,
+        "host_processes_end": 772,
+        "host_load_end": [
+          13.5107421875,
+          15.359375,
+          15.2548828125
+        ],
+        "verified_hidden_samples": 75,
+        "visibility_last_elapsed_seconds": 149.59018220833968,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true,
+        "visibility_measurement_prefix_sha256": "18126aa7111ad9b10933ed63a2afe696287b6e8d104fcffdba05188d45c5d510",
+        "visibility_measurement_prefix_observations": 75,
+        "visibility_final_file_sha256": "6faa775e4020a5909b74d3d536ab03e6c6c98ef7f252e15658c5a85f87b2ba1e",
+        "visibility_total_observation_count": 76
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "status": "complete",
+        "pid": 93978,
+        "host_processes_start": 781,
+        "host_load_start": [
+          12.7119140625,
+          14.830078125,
+          15.06640625
+        ],
+        "wall_seconds": 90.00774991698563,
+        "samples": 46,
+        "user_time_seconds": 1.927250958,
+        "system_time_seconds": 1.201613834,
+        "average_cpu_percent": 3.4762170978451965,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 477,
+        "interrupt_wakeups_per_second": 5.299543655295664,
+        "average_resident_size_bytes": 142548992,
+        "peak_resident_size_bytes": 337575936,
+        "average_phys_footprint_bytes": 150335337.5652174,
+        "peak_phys_footprint_bytes": 232981608,
+        "host_processes_end": 782,
+        "host_load_end": [
+          9.55078125,
+          13.296875,
+          14.45556640625
+        ],
+        "verified_hidden_samples": 75,
+        "visibility_last_elapsed_seconds": 149.519764583325,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true,
+        "visibility_measurement_prefix_sha256": "9c2b9fa39762bc1ff92d63c086944a7e0ace01f87cd64f86139dd310a14a06bb",
+        "visibility_measurement_prefix_observations": 75,
+        "visibility_final_file_sha256": "db7b26535b9cba61c24603fd46d5c484c52a482c87fc19c814805198a97ee94c",
+        "visibility_total_observation_count": 76
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "status": "complete",
+        "pid": 28128,
+        "host_processes_start": 803,
+        "host_load_start": [
+          15.14013671875,
+          14.16455078125,
+          14.69189453125
+        ],
+        "wall_seconds": 90.00701625001966,
+        "samples": 46,
+        "user_time_seconds": 2.340338875,
+        "system_time_seconds": 1.621906875,
+        "average_cpu_percent": 4.40215209333654,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 528,
+        "interrupt_wakeups_per_second": 5.866209346761727,
+        "average_resident_size_bytes": 108203497.73913044,
+        "peak_resident_size_bytes": 271040512,
+        "average_phys_footprint_bytes": 128570251.13043478,
+        "peak_phys_footprint_bytes": 175703192,
+        "host_processes_end": 799,
+        "host_load_end": [
+          17.224609375,
+          15.23095703125,
+          15.05859375
+        ],
+        "verified_hidden_samples": 75,
+        "visibility_last_elapsed_seconds": 149.5678817916778,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true,
+        "visibility_measurement_prefix_sha256": "776ccc34eef63044d86802a3896e8363b0eb1a1706506f1e29c1177ee1a5d52b",
+        "visibility_measurement_prefix_observations": 75,
+        "visibility_final_file_sha256": "99d01ea3bedd0b33d039259c7295b2cb2b1d651ba42724a1e7cfcca61a251f90",
+        "visibility_total_observation_count": 77
+      }
+    ],
+    "means": {
+      "baseline": {
+        "average_cpu_percent": 4.043256521278,
+        "average_phys_footprint_bytes": 140856474.95652175,
+        "interrupt_wakeups_per_second": 5.505285540651046
+      },
+      "candidate": {
+        "average_cpu_percent": 3.569493626304541,
+        "average_phys_footprint_bytes": 153613917.65217394,
+        "interrupt_wakeups_per_second": 5.127445455946097
+      }
+    },
+    "candidate_change_percent": {
+      "average_cpu_percent": -11.717359323610532,
+      "average_phys_footprint_bytes": 9.057050944651301,
+      "interrupt_wakeups_per_second": -6.863224112808997
+    },
+    "raw_controller_summary_sha256": "579503b6adf2b3c35c8252f1347fd9b5d881bd4e6cce1cc9dcb83f1582d34eac",
+    "derived_verification": "Counter summaries recomputed from raw samples; all visibility observations checked; measurement-end visibility prefix and final file hashes independently verified; both loaded images and bundled paths rechecked.",
+    "excluded_setup_attempts": [],
+    "interpretation": "Observed CPU -11.7%, physical footprint +9.1%, wakeups -6.9%. Physical footprint is unfavorable and requires follow-up. Baseline memory spans 122.61 to 146.05 MiB; candidate windows span 143.37 to 149.62 MiB. Only two windows per variant on an undriven shared host; no causal/general app-wide saving or regression attribution. A reversed-order same-pair cohort is running.",
+    "follow_up": {
+      "status": "running",
+      "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/measurements/loop15-hidden-runtime-v2/summary.json",
+      "sequence": "BAAB",
+      "scope": "Same retained binaries and configuration; independent reversed-order cohort investigating unfavorable initial physical footprint. No compilation or fixture benchmarks overlap."
+    }
   },
   "build_investigation": {
     "scope": "Compiler diagnostics only; no new build optimization or native backend adopted. Optimized and typecheck-only timings are different scopes and are not an A/B comparison. Native app build and all 212 UI cases pass, but packaging portability and comparative pressure are unverified; see pass 14.",

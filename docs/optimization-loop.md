@@ -5,6 +5,27 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 16: reject a mixed pruning result; queue compiler experiment
+
+The first changed-membership bitset proposal passes 26 history release cases and
+strict release all-targets Clippy. Forty-eight retained processes preserve exact
+counts/order and canonical output across stable, reordered, compact-index churn
+and high-index churn. Compact churn process CPU falls **34.9%**, but stable CPU
+rises **19.3%** and maximum-process RSS rises **16.95 → 17.90 MiB**. Reordered
+CPU falls 7.0%; high-index churn falls 9.2% but its maximum-process RSS rises
+22.61 → 23.43 MiB. Common setup and output encoding limit memory attribution.
+This first proposal is **rejected** and the exact preceding production source
+is restored. Its binary, candidate source and all unfavorable results remain
+retained. A future attempt needs call-context/compiler investigation and new
+measurements; the favorable churn result alone is insufficient.
+
+The next build experiment will compare the original storage audit helper against
+an `@inline(never)` candidate using four matched actual UI object compilations.
+It remains queued while a reversed-order pass-15 app cohort investigates the
+unfavorable footprint result. Compiler flags/defaults remain unchanged; no Swift
+annotation is retained in production source. Evidence is in
+[`performance-loop16.json`](performance-loop16.json).
+
 ## Pass 15: skip unchanged active-set pruning; diagnose Swift optimizer cost
 
 Cooccurrence samples now retain their sorted unique active indices. Pair increments
@@ -34,7 +55,14 @@ production packaging passes in **191.788s wall / 151.070 CPU seconds**,
 with 757.95 MiB sampled peak tree RSS using existing
 caches and two jobs. This is an absolute cost, not a build A/B result. The retained
 app pair has identical unsigned Swift code, metadata and 110 common payload files;
-a fresh hidden-idle ABBA comparison is running with builds stopped.
+four hidden-idle ABBA windows complete with builds stopped. Both loaded images
+and all 300 visibility observations verify; raw counter summaries are independently
+recomputed. Observed means are CPU **4.043% → 3.569% (-11.7%)**, physical
+footprint **134.33 → 146.50 MiB (+9.1%)**, and wakeups **5.505 → 5.127/s (-6.9%)**.
+The physical footprint result is unfavorable and requires follow-up. Baseline memory
+spans **122.61–146.05 MiB** and candidate memory **143.37–149.62 MiB**; shared-host
+load, undriven inputs and two windows per variant prevent causal attribution.
+A reversed-order same-pair cohort is running before claiming a footprint improvement.
 
 Build investigation replays the captured native frontend command with private
 outputs and hashed sources/imported modules. Typecheck-only execution across 91

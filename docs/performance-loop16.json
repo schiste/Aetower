@@ -1,0 +1,100 @@
+{
+  "status": "first_runtime_candidate_rejected_build_experiment_queued",
+  "runtime_experiment": {
+    "status": "rejected_not_retained_in_production_source",
+    "proposal": "For changed cooccurrence membership, use a u16-domain bounded bitset only when requested bit payload is no larger than the active-index u16 payload; retain HashSet for sparse historical indices. Keep the prior unchanged-membership cache.",
+    "candidate_source_sha256": "245ffccd6e2106c1340752a16eedbcb794c51b20fec96eea4dbe3c5236c52d6d",
+    "retained_source": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-cooccurrence-fixture-v1/history-source.rs",
+    "restored_production_source_sha256": "4446afc5d35b5e4e34b2b24e223ac0a6ee8d4b5e371064caa0492d95c667f799",
+    "fixture_output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-cooccurrence-fixture-v1/results.json",
+    "fixture_output_sha256": "24ee78cc2b525f4724470729440100576079524fffa9412e68c54ae43479ba96",
+    "fixture_binary_sha256": "a99d3f202270a70718da26d318691fc58c48f72312f4aa86c907cd73e866a5e7",
+    "validation": "26 history release cases pass, two manual fixtures ignored; strict all-targets release Clippy passes. Extended original-algorithm/shared-hash-builder oracle covers compact and sparse/wrapped index domains, duplicates, membership churn and exact pair-table iteration. Candidate source and binary retained with receipts.",
+    "processes": 48,
+    "scope": "Cached hash-set pruning and bounded-bitset pruning in the same retained release test binary, with a common History layout. 500 entities, 100 samples per child; stable, reordered, compact-index churn and high-index churn workloads. Common setup validates counts and exact table iteration order with a shared hash builder. Not an app-wide comparison.",
+    "memory_scope": "wait4 maximum process RSS includes common setup, both state-oracle histories and canonical-output encoding. It cannot isolate retained-cache or helper memory savings.",
+    "summary": {
+      "stable": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 1.346266,
+            "median_operation_wall_seconds": 0.27779295800000003,
+            "mean_max_process_rss_bytes": 17771178.666666668
+          },
+          "candidate": {
+            "total_cpu_seconds": 1.6065450000000001,
+            "median_operation_wall_seconds": 0.39405195849999997,
+            "mean_max_process_rss_bytes": 18767872
+          }
+        },
+        "cpu_percent_change": 19.333400680103342,
+        "output_bytes": 2065860,
+        "output_sha256": "906c6a0f9df7f0ce6f36c03a9a2f61e710a6e2662a195a2547ca7bf592de95b4"
+      },
+      "reordered": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 1.1546729999999998,
+            "median_operation_wall_seconds": 0.123604979,
+            "mean_max_process_rss_bytes": 18219008
+          },
+          "candidate": {
+            "total_cpu_seconds": 1.073555,
+            "median_operation_wall_seconds": 0.1015605205,
+            "mean_max_process_rss_bytes": 18205354.666666668
+          }
+        },
+        "cpu_percent_change": -7.025192413782932,
+        "output_bytes": 2065860,
+        "output_sha256": "906c6a0f9df7f0ce6f36c03a9a2f61e710a6e2662a195a2547ca7bf592de95b4"
+      },
+      "churn": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 2.804119,
+            "median_operation_wall_seconds": 0.516730521,
+            "mean_max_process_rss_bytes": 18429269.333333332
+          },
+          "candidate": {
+            "total_cpu_seconds": 1.825332,
+            "median_operation_wall_seconds": 0.3028467085,
+            "mean_max_process_rss_bytes": 17214122.666666668
+          }
+        },
+        "cpu_percent_change": -34.90533033726457,
+        "output_bytes": 2065860,
+        "output_sha256": "955ebe05059dde45d34ac1c1d5f668bbdc91695cf403ff6924d60feeaeac1307"
+      },
+      "churn-high-index": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 3.0499469999999995,
+            "median_operation_wall_seconds": 0.524644521,
+            "mean_max_process_rss_bytes": 23713109.333333332
+          },
+          "candidate": {
+            "total_cpu_seconds": 2.7685229999999996,
+            "median_operation_wall_seconds": 0.36012508350000005,
+            "mean_max_process_rss_bytes": 24567808
+          }
+        },
+        "cpu_percent_change": -9.22717673454654,
+        "output_bytes": 2618752,
+        "output_sha256": "3c346a80e09d778ee9abff0044bbf2f390ba44fb8531ea8fd19c7d08e5db96a5"
+      }
+    },
+    "decision": "Reject this first version: compact churn CPU improves 34.9%, but the steady fixture CPU rises 19.3% and maximum-process RSS also rises. The stable hot path was intended to be unchanged. A future attempt requires investigating compiler/call context and remeasurement; favorable churn alone does not establish a net improvement. Restored exact preceding production source; no source changes from this experiment remain."
+  },
+  "build_experiment": {
+    "status": "queued_after_app_followup",
+    "proposal": "Use the retained actual release UI frontend command to compare the original storage audit helper against an inline(never) candidate, in four matched ABBA optimized object compilations. Preserve optimization, sources/imports and two frontend threads; use fresh private module caches/outputs. Restore original source in finally. No compiler backend/default change.",
+    "controller": "tmp/loop16-swift-inlining-comparison.py",
+    "scope": "UI object compilation diagnostic only; excludes separate module emission, dependencies, linking, packaging, runtime and whole CI. A retained annotation additionally needs app/default-build compatibility and footprint validation.",
+    "official_guidance": "https://developer.apple.com/videos/play/wwdc2026/262/"
+  },
+  "app_followup": {
+    "status": "running",
+    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/measurements/loop15-hidden-runtime-v2/summary.json",
+    "scope": "Same retained production pass-15 app pair in BAAB order, after the complete initial ABBA cohort. No compiler/fixture benchmark overlaps capture. Initial unfavorable memory results remain reported in performance-loop15.json."
+  }
+}
