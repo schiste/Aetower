@@ -30,9 +30,29 @@ case passes at **87.970s wall** under current debug SQLite (absolute validation
 cost). Full workspace validation passes **517 cases, eight ignored**, matching
 the exact expected case/status multiset with inputs unchanged. Its absolute
 cache-reusing pipeline cost is **157.184s wall / 100.118 CPU-seconds / 1162.75 MiB
-sampled peak tree RSS**; it is not a cold or matched build comparison. The build/CI candidate is a
-dependency-specific debug SQLite optimization; no manifest setting is adopted
-yet and compile cost must be included. See
+sampled peak tree RSS**; it is not a cold or matched build comparison.
+
+The complete ABBA SQLite comparison passes **517 cases / eight ignored / 25 test
+executables in each of eight pipelines**. Effective native flags are verified,
+with unchanged macros and full debug information. Optimizing only
+`libsqlite3-sys` at development/test level 1 observes cold pipeline means
+**305.762 → 277.787s wall (-9.1%)**, **271.046 → 259.802 CPU-seconds (-4.1%)**,
+and sampled peak tree RSS **1186.09 → 1232.23 MiB (+3.9%)**. Unchanged repeats
+compile no Rust units and observe **155.961 → 137.532s wall (-11.8%)**,
+**74.405 → 59.285 CPU-seconds (-20.3%)**, RSS **198.27 → 204.09 MiB (+2.9%)**.
+Two observations per variant and shared-host variation limit generalization.
+Cold targets retain normal registry caches. This comparison includes complete
+Rust compilation and execution, excluding Clippy, Swift, transfers and policy
+preflight; it establishes no whole hosted CI or memory saving.
+
+The dependency-specific manifest setting is adopted for the CPU/time benefit
+with its measured memory tradeoff retained. A separate full-workspace run
+validates the canonical manifest without a command-line profile override:
+**517 passed / eight ignored / 25 executables**, no Rust compilation, full debug
+information, debug assertions and overflow checks. Its absolute cache-reusing
+cost is **110.854s wall / 52.631 CPU-seconds / 204.58 MiB sampled peak tree RSS**;
+this is validation, not another matched timing comparison. Release settings are
+unchanged. See
 [`performance-loop17.json`](performance-loop17.json).
 
 ## Pass 16: reject compiler/pruning candidates; validate network allocation reuse

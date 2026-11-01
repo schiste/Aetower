@@ -1,5 +1,5 @@
 {
-  "status": "runtime_candidate_full_workspace_validated_sqlite_cold_repeat_comparison_ready",
+  "status": "runtime_and_measured_sqlite_profile_adopted_validated",
   "runtime_change": {
     "source": "rust/crates/aetower-mcp/src/reports/storage/state_store.rs",
     "source_sha256": "7af9e01cebbc33bff515d89deb9d49808ff43e19a24e0a0a6bed6283a810b4cf",
@@ -727,11 +727,393 @@
     }
   },
   "build_ci_candidate": {
-    "status": "matched_full_rust_pipeline_comparison_ready_not_adopted",
-    "proposal": "Measure libsqlite3-sys-specific development/test optimization, initially level 1, preserving workspace debug info, assertions, overflow checks, selectors, dataset size and report budgets. Include compilation and cold/repeat costs before adoption or CI claims.",
+    "status": "adopted_actual_manifest_full_workspace_validated",
+    "decision": "Use opt-level 1 for libsqlite3-sys in the development profile inherited by tests, retaining normal workspace checks/debug information and the release profile. Accept the observed modest sampled RSS increase for lower CPU/time; no memory saving or whole hosted CI gain is claimed.",
+    "profile_setting": "profile.dev.package.libsqlite3-sys.opt-level = 1",
     "reference": "https://doc.rust-lang.org/cargo/reference/profiles.html",
-    "hosted_scope": "Existing mandatory dependency-policy preflight still fails; no successful hosted build/cache saving established.",
-    "measurement_plan": "ABBA levels 0/1/1/0; empty-target complete workspace compile and execution plus unchanged complete repeat in every phase. Same production two-graph wrapper, 25 executable targets and exact 517-passed/eight-ignored cases. Audit effective C/Rust profiles and require repeat compilation to be empty; report cold and repeat costs separately. No whole hosted CI claim."
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-sqlite-ci-profile-comparison-v1/results.json",
+    "terminal_receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-sqlite-ci-profile-comparison-v1/terminal-verification.json",
+    "source_commit": "6561537f59db0538b17a103d6fed76a3e5093d11",
+    "configuration": {
+      "sequence": "ABBA",
+      "baseline_level": 0,
+      "candidate_level": 1,
+      "jobs": 2,
+      "profile": "dev/test with full debug information and default checks",
+      "per_phase": [
+        "empty target complete Rust workspace compile and execution",
+        "unchanged complete workspace repeat"
+      ],
+      "instrumentation": "Cargo proxy adds only a package-specific profile override and JSON artifact output; CC_ENABLE_DEBUG_OUTPUT records actual native arguments. Production two-graph wrapper and selectors unchanged; no compiler wrappers."
+    },
+    "toolchain": {
+      "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)\nbinary: rustc\ncommit-hash: ded5c06cf21d2b93bffd5d884aa6e96934ee4234\ncommit-date: 2025-12-08\nhost: aarch64-apple-darwin\nrelease: 1.92.0\nLLVM version: 21.1.3",
+      "cargo": "cargo 1.92.0 (344c4567c 2025-10-21)",
+      "clang": "Apple clang version 21.0.0 (clang-2100.4.1.1)\nTarget: arm64-apple-darwin27.2.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+      "sdk": "26B118"
+    },
+    "canonical_inputs_unchanged": true,
+    "complete_pipelines": 8,
+    "coverage_per_pipeline": {
+      "passed": 517,
+      "ignored": 8,
+      "logical_test_executables": 25,
+      "exact_expected_case_status_multiset": true
+    },
+    "preserved_graph": "Cargo package/feature/profile graphs match after normalizing only the varied libsqlite3-sys optimization level; no unchanged repeat compiles any Rust units.",
+    "native_audit": "Each empty-target phase records one effective SQLite C compilation: -O0 or -O1 as selected, unchanged -g/-gdwarf-2 and 20 explicit macro definitions. SQLite Rust artifacts retain full debug info and debug assertions and overflow checks.",
+    "means": {
+      "cold": {
+        "baseline": {
+          "wall_seconds": 305.762,
+          "user_cpu_seconds": 226.2945,
+          "system_cpu_seconds": 44.7515,
+          "sampled_peak_tree_rss_bytes": 1243701248,
+          "cpu_seconds": 271.046
+        },
+        "candidate": {
+          "wall_seconds": 277.78700000000003,
+          "user_cpu_seconds": 215.596,
+          "system_cpu_seconds": 44.206,
+          "sampled_peak_tree_rss_bytes": 1292091392,
+          "cpu_seconds": 259.802
+        }
+      },
+      "repeat": {
+        "baseline": {
+          "wall_seconds": 155.9605,
+          "user_cpu_seconds": 50.6755,
+          "system_cpu_seconds": 23.729,
+          "sampled_peak_tree_rss_bytes": 207904768,
+          "cpu_seconds": 74.4045
+        },
+        "candidate": {
+          "wall_seconds": 137.5315,
+          "user_cpu_seconds": 33.8605,
+          "system_cpu_seconds": 25.424,
+          "sampled_peak_tree_rss_bytes": 213999616,
+          "cpu_seconds": 59.2845
+        }
+      }
+    },
+    "candidate_change_percent": {
+      "cold": {
+        "wall_seconds": -9.149272963939259,
+        "cpu_seconds": -4.148373338842848,
+        "sampled_peak_tree_rss_bytes": 3.89081735487653
+      },
+      "repeat": {
+        "wall_seconds": -11.816453525091287,
+        "cpu_seconds": -20.321351531157383,
+        "sampled_peak_tree_rss_bytes": 2.9315575869813593
+      }
+    },
+    "phases": [
+      {
+        "label": "A1",
+        "variant": "baseline",
+        "sqlite_level": 0,
+        "native_optimization": [
+          "-O0"
+        ],
+        "native_debug_flags": [
+          "-g",
+          "-gdwarf-2"
+        ],
+        "runs": [
+          {
+            "mode": "cold",
+            "exit_status": 0,
+            "cost": {
+              "command": [
+                "sh",
+                "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+              ],
+              "cwd": "/private/tmp/aetower-build-performance",
+              "exit_status": 0,
+              "wall_seconds": 284.591,
+              "user_cpu_seconds": 218.181,
+              "system_cpu_seconds": 42.203,
+              "average_cpu_percent": 91.5,
+              "sampled_peak_tree_rss_bytes": 1285193728,
+              "rss_samples": 278,
+              "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+            },
+            "passed": 517,
+            "total": 525,
+            "exact_expected_cases": true,
+            "inputs_unchanged": true,
+            "compiled_units_count": 292
+          },
+          {
+            "mode": "repeat",
+            "exit_status": 0,
+            "cost": {
+              "command": [
+                "sh",
+                "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+              ],
+              "cwd": "/private/tmp/aetower-build-performance",
+              "exit_status": 0,
+              "wall_seconds": 147.791,
+              "user_cpu_seconds": 47.4,
+              "system_cpu_seconds": 21.153,
+              "average_cpu_percent": 46.4,
+              "sampled_peak_tree_rss_bytes": 196509696,
+              "rss_samples": 145,
+              "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+            },
+            "passed": 517,
+            "total": 525,
+            "exact_expected_cases": true,
+            "inputs_unchanged": true,
+            "compiled_units_count": 0
+          }
+        ]
+      },
+      {
+        "label": "B1",
+        "variant": "candidate",
+        "sqlite_level": 1,
+        "native_optimization": [
+          "-O1"
+        ],
+        "native_debug_flags": [
+          "-g",
+          "-gdwarf-2"
+        ],
+        "runs": [
+          {
+            "mode": "cold",
+            "exit_status": 0,
+            "cost": {
+              "command": [
+                "sh",
+                "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+              ],
+              "cwd": "/private/tmp/aetower-build-performance",
+              "exit_status": 0,
+              "wall_seconds": 276.088,
+              "user_cpu_seconds": 224.863,
+              "system_cpu_seconds": 44.905,
+              "average_cpu_percent": 97.7,
+              "sampled_peak_tree_rss_bytes": 1282834432,
+              "rss_samples": 268,
+              "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+            },
+            "passed": 517,
+            "total": 525,
+            "exact_expected_cases": true,
+            "inputs_unchanged": true,
+            "compiled_units_count": 292
+          },
+          {
+            "mode": "repeat",
+            "exit_status": 0,
+            "cost": {
+              "command": [
+                "sh",
+                "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+              ],
+              "cwd": "/private/tmp/aetower-build-performance",
+              "exit_status": 0,
+              "wall_seconds": 137.765,
+              "user_cpu_seconds": 33.224,
+              "system_cpu_seconds": 24.963,
+              "average_cpu_percent": 42.2,
+              "sampled_peak_tree_rss_bytes": 199065600,
+              "rss_samples": 135,
+              "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+            },
+            "passed": 517,
+            "total": 525,
+            "exact_expected_cases": true,
+            "inputs_unchanged": true,
+            "compiled_units_count": 0
+          }
+        ]
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "sqlite_level": 1,
+        "native_optimization": [
+          "-O1"
+        ],
+        "native_debug_flags": [
+          "-g",
+          "-gdwarf-2"
+        ],
+        "runs": [
+          {
+            "mode": "cold",
+            "exit_status": 0,
+            "cost": {
+              "command": [
+                "sh",
+                "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+              ],
+              "cwd": "/private/tmp/aetower-build-performance",
+              "exit_status": 0,
+              "wall_seconds": 279.486,
+              "user_cpu_seconds": 206.329,
+              "system_cpu_seconds": 43.507,
+              "average_cpu_percent": 89.4,
+              "sampled_peak_tree_rss_bytes": 1301348352,
+              "rss_samples": 273,
+              "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+            },
+            "passed": 517,
+            "total": 525,
+            "exact_expected_cases": true,
+            "inputs_unchanged": true,
+            "compiled_units_count": 292
+          },
+          {
+            "mode": "repeat",
+            "exit_status": 0,
+            "cost": {
+              "command": [
+                "sh",
+                "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+              ],
+              "cwd": "/private/tmp/aetower-build-performance",
+              "exit_status": 0,
+              "wall_seconds": 137.298,
+              "user_cpu_seconds": 34.497,
+              "system_cpu_seconds": 25.885,
+              "average_cpu_percent": 44.0,
+              "sampled_peak_tree_rss_bytes": 228933632,
+              "rss_samples": 134,
+              "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+            },
+            "passed": 517,
+            "total": 525,
+            "exact_expected_cases": true,
+            "inputs_unchanged": true,
+            "compiled_units_count": 0
+          }
+        ]
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "sqlite_level": 0,
+        "native_optimization": [
+          "-O0"
+        ],
+        "native_debug_flags": [
+          "-g",
+          "-gdwarf-2"
+        ],
+        "runs": [
+          {
+            "mode": "cold",
+            "exit_status": 0,
+            "cost": {
+              "command": [
+                "sh",
+                "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+              ],
+              "cwd": "/private/tmp/aetower-build-performance",
+              "exit_status": 0,
+              "wall_seconds": 326.933,
+              "user_cpu_seconds": 234.408,
+              "system_cpu_seconds": 47.3,
+              "average_cpu_percent": 86.2,
+              "sampled_peak_tree_rss_bytes": 1202208768,
+              "rss_samples": 318,
+              "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+            },
+            "passed": 517,
+            "total": 525,
+            "exact_expected_cases": true,
+            "inputs_unchanged": true,
+            "compiled_units_count": 292
+          },
+          {
+            "mode": "repeat",
+            "exit_status": 0,
+            "cost": {
+              "command": [
+                "sh",
+                "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+              ],
+              "cwd": "/private/tmp/aetower-build-performance",
+              "exit_status": 0,
+              "wall_seconds": 164.13,
+              "user_cpu_seconds": 53.951,
+              "system_cpu_seconds": 26.305,
+              "average_cpu_percent": 48.9,
+              "sampled_peak_tree_rss_bytes": 219299840,
+              "rss_samples": 161,
+              "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+            },
+            "passed": 517,
+            "total": 525,
+            "exact_expected_cases": true,
+            "inputs_unchanged": true,
+            "compiled_units_count": 0
+          }
+        ]
+      }
+    ],
+    "scope": "Local complete Rust test pipeline, including compilation and all exact cases. Cold means empty target with normal cached registry sources. Excludes Clippy, Swift, cache transfers and mandatory dependency-policy preflight; not whole hosted CI. Shared host remains uncontrolled. No manifest change is adopted by this experiment.",
+    "limits": [
+      "Two samples per variant per mode on a shared host with substantial within-variant variation. These are observed means, not general speed or memory guarantees.",
+      "Cold means an empty target, with registry/toolchain/file-system caches retained. Compiler wrappers are disabled for both variants; two Cargo jobs and full debug info are held constant.",
+      "Peak memory is sampled aggregate process-tree RSS, not physical footprint or the sum of unique pages. Mean cold RSS rises 46.15 MiB and repeat RSS rises 5.81 MiB; individual observations vary.",
+      "The actual canonical manifest passes a separate complete workspace run with no command-line profile override: exact 517 passed/eight ignored/25 targets, no Rust compilation, full debug information, debug assertions and overflow checks. Release settings are unchanged."
+    ],
+    "hosted_scope": "Existing mandatory dependency-policy preflight still fails before Rust/Swift build cache restores; successful whole hosted build/cache savings remain unverified.",
+    "manifest_validation": {
+      "status": "complete",
+      "cost": {
+        "command": [
+          "sh",
+          "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+        ],
+        "cwd": "/private/tmp/aetower-build-performance",
+        "exit_status": 0,
+        "wall_seconds": 110.854,
+        "user_cpu_seconds": 30.445,
+        "system_cpu_seconds": 22.186,
+        "average_cpu_percent": 47.5,
+        "sampled_peak_tree_rss_bytes": 214515712,
+        "rss_samples": 109,
+        "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+      },
+      "exact_expected_cases": true,
+      "passed": 517,
+      "total": 525,
+      "inputs_unchanged": true,
+      "sqlite_rust_profiles": [
+        {
+          "opt_level": "1",
+          "debuginfo": 2,
+          "debug_assertions": true,
+          "overflow_checks": true,
+          "test": false
+        }
+      ],
+      "sqlite_c_profiles": [
+        {
+          "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-sqlite-ci-profile-comparison-v1/B2-profile1/target/debug/build/libsqlite3-sys-257c87bce10d1f85/output",
+          "optimization": [
+            "-O1"
+          ],
+          "debug": [
+            "-g",
+            "-gdwarf-2"
+          ]
+        }
+      ],
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-manifest-profile-validation-v1/results.json",
+      "compiled_units": 0,
+      "logical_test_executables": 25,
+      "scope": "Validate the actual canonical manifest package override with no command-line profile override, retaining complete production two-graph test coverage and full debug information. Reuses the measured level-1 target; absolute validation cost, not a new A/B or cold comparison.",
+      "manifest_sha256": "eadeb8e0a35245edd939b3c391967f0f05d67279403d9a1b16bbf3734373a888"
+    }
   },
   "excluded_setup_attempts": [
     {
