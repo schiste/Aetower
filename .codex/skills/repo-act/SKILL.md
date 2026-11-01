@@ -62,6 +62,9 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   memory from physical footprint, and keep startup settling and workloads equal.
   Inspect visibility-dependent refresh cadence before idle comparisons. Record
   window visibility/occlusion as well as activation when it affects scheduling;
+  after requesting a visibility change, wait for the observed target state before
+  starting counters and recheck it throughout each window. A control API's return
+  value alone does not establish the state that was measured.
   if that state is uncontrolled, state the limitation rather than attributing
   a CPU or wakeup difference to the source change alone.
   Retain baseline and candidate app bundles and benchmark executables outside
