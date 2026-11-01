@@ -1,5 +1,5 @@
 {
-  "status": "production_and_repeat_verified_combined_app_cohorts_running",
+  "status": "repeating_combined_app_cohorts_after_excluded_disk_reserve_failure",
   "runtime_experiment": {
     "status": "rejected_not_retained_in_production_source",
     "proposal": "For changed cooccurrence membership, use a u16-domain bounded bitset only when requested bit payload is no larger than the active-index u16 payload; retain HashSet for sparse historical indices. Keep the prior unchanged-membership cache.",
@@ -517,7 +517,7 @@
     "controller": "tmp/loop16-ffi-artifact-comparison-v2.py",
     "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-ffi-artifact-comparison-v2/results.json",
     "scope": "Four ABBA full production release Rust/binding pipeline runs with warm dependencies and only FFI cleaned before each; unchanged repeat per phase. Vary only FFI manifest cdylib+staticlib vs cdylib. Same package/feature selection; output-only Cargo JSON wrapper audits compiled/fresh targets. Original manifest restored in finally. Excludes fully cold workspace, Swift/package, transfers and whole CI.",
-    "adoption": "Retain cdylib-only default and remove exact obsolete archive paths after successful app-profile builds. Static archives remain available explicitly through cargo rustc --crate-type cdylib,staticlib. The comparison isolates manifest artifact selection before the stale-archive cleanup was added; final package validation is pending.",
+    "adoption": "Retain cdylib-only default and remove exact obsolete archive paths after successful app-profile builds. Static archives remain available explicitly through cargo rustc --crate-type cdylib,staticlib. The comparison isolates manifest artifact selection before the stale-archive cleanup was added; The final package and its unchanged repeat both passed smoke and strict signature checks; absolute measurements are recorded separately below.",
     "failed_warmup": {
       "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-ffi-artifact-comparison-v1/results.json",
       "error": "No space left on device writing FFI compiler object to this worktree Cargo target cache",
@@ -1281,5 +1281,110 @@
     "gating": "Do not start the next compiler/test/benchmark resource workload until both current cohort receipts are complete; an older pass-15 receipt is insufficient.",
     "historical_limit": "Current common Swift source is unchanged, but its rebuilt image differs from previous cohorts. Compare only this matched pair; do not pool observations across different common Swift images.",
     "home_volume_write_reserve_guard_bytes": 536870912
+  },
+  "app_capture_retry": {
+    "excluded_attempt": "measurements/loop16-hidden-runtime-v1/summary.json",
+    "excluded_reason": "A1/B1/B2 completed, A2 failed the predetermined 512 MiB home-volume reserve; no balanced cohort means used.",
+    "skipped_attempt": "measurements/loop16-hidden-runtime-v2 was never started because v1 failed.",
+    "fresh_rounds": [
+      "measurements/loop16-hidden-runtime-v3",
+      "measurements/loop16-hidden-runtime-v4"
+    ],
+    "artifact_reuse": "Both fresh rounds use retained/loop16-pair.json; no rebuild or visibility/reserve guard changes.",
+    "cache_headroom": "retained/loop16-owned-cache-relocation-v2/results.json",
+    "gate": "Both fresh current rounds must reach terminal completion; no build or benchmark overlap.",
+    "excluded_windows": [
+      {
+        "label": "A1",
+        "status": "complete",
+        "minimum_home_volume_free_bytes": 724324352
+      },
+      {
+        "label": "B1",
+        "status": "complete",
+        "minimum_home_volume_free_bytes": 558129152
+      },
+      {
+        "label": "B2",
+        "status": "complete",
+        "minimum_home_volume_free_bytes": 539680768
+      },
+      {
+        "label": "A2",
+        "status": "failed",
+        "minimum_home_volume_free_bytes": 527900672
+      }
+    ]
+  },
+  "owned_additional_cache_relocation": {
+    "status": "complete",
+    "free_before_bytes": 1632378880,
+    "paths": [
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/clang-module-cache",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/clang-module-cache",
+        "files": 208,
+        "file_bytes": 158255695,
+        "inventory_sha256": "b016dd1af7095efe5b8cf8c3c3541a1d0572473a876d5b71beb761296cef8491"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/bridge-fixture/macos/.build",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/bridge-fixture/macos/.build",
+        "files": 1588,
+        "file_bytes": 112027212,
+        "inventory_sha256": "e21baa58919513c0051c9ec7bc9397ad493a74539273495633b164e34eae21d0"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/bridge-direct-fixture/macos/.build",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/bridge-direct-fixture/macos/.build",
+        "files": 166,
+        "file_bytes": 20325505,
+        "inventory_sha256": "4603a020e768876b74b998cc7201dd51748fffebef0f8d6eac04a338e42421e0"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/macos/.build",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/loop7-swift-cache-fixture/macos/.build",
+        "files": 68,
+        "file_bytes": 17522579,
+        "inventory_sha256": "12eb05a02d6d2b847f79de2b2381b0c32b4856d873c54ce67fe4978ee0857df5"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/retained cache with spaces",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/loop7-swift-cache-fixture/retained cache with spaces",
+        "files": 68,
+        "file_bytes": 17534035,
+        "inventory_sha256": "5a96a0f5a3be0481f50588b3ced5aa78d606b05b83467323b82d26a8b5666fa0"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/loop9-thread-fixture-v3/cache",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/loop9-thread-fixture-v3/cache",
+        "files": 82,
+        "file_bytes": 32441389,
+        "inventory_sha256": "32d16607863960ee07211a314816826fa94e000488ecdbc6eaebcad743482ebe"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/loop9-thread-fixture-v2/cache",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/loop9-thread-fixture-v2/cache",
+        "files": 79,
+        "file_bytes": 16898073,
+        "inventory_sha256": "dcbc6b5e0ced17da4e760f737df6b0cc99031f9946f6cd1b78b2abbec2c9fb79"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/loop9-thread-fixture/cache",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/loop9-thread-fixture/cache",
+        "files": 79,
+        "file_bytes": 16882805,
+        "inventory_sha256": "c771d4795728b6743394a51e48f85122578ce1e571629889c04a5cddbe6b2882"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/custom swift scratch",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/custom swift scratch",
+        "files": 82,
+        "file_bytes": 16699094,
+        "inventory_sha256": "6c1d3d3e0f7e6c371d5b2a529c8d00e99f073d073871f056589165b55b49bdc9"
+      }
+    ],
+    "free_after_bytes": 2049105920,
+    "wall_seconds": 3.621656500006793
   }
 }

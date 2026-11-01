@@ -175,3 +175,5 @@ build worktree; these generated files are intentionally untracked.
 
 Further passes and their validation are recorded in the
 [optimization loop report](optimization-loop.md).
+
+Pass 16 app capture retry: the first ABBA attempt completed A1/B1/B2, then the final A2 window crossed the existing 512 MiB home-volume write reserve. The controller invalidated that window and stopped its owned app; the planned BAAB follow-up never started. The unbalanced partial cohort is retained and excluded from comparison means. A second verified relocation of this session’s generated compiler caches recovered 416,727,040 bytes, preserving all file bytes and timestamps and the original paths via symlinks. Fresh complete ABBA and BAAB rounds reuse the same retained app pair with unchanged visibility and reserve guards. See `performance-loop16.json` for failure provenance and the new capture paths; whole-app results remain pending.
