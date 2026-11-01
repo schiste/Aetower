@@ -5,6 +5,41 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 14: preserve build accounting; bound historical grouping work
+
+The test wrapper retains its waiting shell across both Cargo phases, preserving
+child CPU totals and existing failure propagation. All 13 pipeline tests pass;
+the regression exercises the real wrapper with self-measuring children and fails
+against the old wrapper specifically for missing earlier CPU. The corrected
+compiler comparison is complete and reported in pass 13 below.
+
+Dense grouping graphs with many historical IDs now use at most **8 KiB** of
+bits to skip repeated name and suggestion-map lookups after choosing a partner.
+The existing short-index dense path and sparse borrowed maps remain. Empty
+names return early. The pair iteration order, first successful partner,
+thresholds, displayed text and refresh cadence are unchanged. **25 history
+release tests** and strict release all-targets Clippy pass, with one ignored
+manual fixture. Oracles cover maximal indices, missing/duplicate names,
+Unicode/NUL, self-pairs, threshold edges and multiple pair orders.
+
+Forty-eight retained release processes compare the immediately preceding helper
+and this candidate across four 500-entity graph shapes. All emit identical
+**46,500 bytes**. Dense high-index process CPU is **6.072503 → 0.568836s
+(-90.6%)**. The unchanged short-index dense path observes -2.8%; sparse graphs
+observe **+6.3%** and sparse high-index graphs **+3.0%**. These unfavorable
+observations remain visible. Common setup and oracle validation limit memory
+attribution: dense high-index mean maximum-process RSS rises **11.04 → 11.25
+MiB**. No helper memory saving is established. Production packaging and a fresh
+app comparison are pending; whether this branch is active in the current idle
+app workload is unverified.
+
+A small real Swift probe finds **ten frontend threads** with both default and
+native backends at two package jobs. An explicit `-num-threads 2` is honored by
+the native backend and both executables emit `711520`. The installed SwiftPM
+marks that backend deprecated. No app default or compiler cap is changed;
+actual app build, tests, packaging and pressure measurements remain required.
+Detailed evidence is in [`performance-loop14.json`](performance-loop14.json).
+
 ## Pass 13: index dense history grouping; verify child CPU accounting
 
 A matching-symbol diagnostic attributes 162 of 931 running-thread samples to

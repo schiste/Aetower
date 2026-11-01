@@ -600,6 +600,112 @@ impl History {
             .iter()
             .map(|entity| (entity.entity_id.as_str(), entity.display_name.as_str()))
             .collect();
+        if names.is_empty() {
+            return HashMap::new();
+        }
+        // Dense pair graphs reuse the existing integer IDs. Resolve each name
+        // once instead of hashing both strings for every qualifying pair.
+        // Keep sparse graphs on borrowed maps so old interned IDs do not grow
+        // their temporary storage in proportion to the entire index history.
+        if self.cooccurrence.len() > self.entity_reverse_index.len().saturating_mul(2)
+            && self.entity_reverse_index.len() <= names.len().saturating_mul(2)
+        {
+            let indexed_names: Vec<_> = self
+                .entity_reverse_index
+                .iter()
+                .map(|id| names.get(id.as_str()).copied())
+                .collect();
+            let mut partners = vec![None; self.entity_reverse_index.len()];
+            for (&(a, b), count) in &self.cooccurrence {
+                if *count < threshold {
+                    continue;
+                }
+                let (a, b) = (a as usize, b as usize);
+                if partners[a].is_none() {
+                    partners[a] = indexed_names[b];
+                }
+                if partners[b].is_none() {
+                    partners[b] = indexed_names[a];
+                }
+            }
+            return partners
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, partner)| {
+                    partner.map(|name| {
+                        (
+                            self.entity_reverse_index[index].as_str(),
+                            format!("Often runs alongside {name} — consider grouping"),
+                        )
+                    })
+                })
+                .collect();
+        }
+        let mut suggestions = HashMap::new();
+        // A sparse historical index need not force repeated string lookups
+        // across a dense current graph. One bit per interned u16 index costs
+        // at most 8 KiB and lets completed partners skip all further lookups.
+        if self.cooccurrence.len() > names.len().saturating_mul(2) {
+            let mut selected = vec![0u64; self.entity_reverse_index.len().div_ceil(64)];
+            for (&(a_idx, b_idx), count) in &self.cooccurrence {
+                if *count < threshold {
+                    continue;
+                }
+                let (a_idx, b_idx) = (a_idx as usize, b_idx as usize);
+                let (a, b) = (
+                    self.entity_reverse_index[a_idx].as_str(),
+                    self.entity_reverse_index[b_idx].as_str(),
+                );
+                let (a_mask, b_mask) = (1u64 << (a_idx % 64), 1u64 << (b_idx % 64));
+                if selected[a_idx / 64] & a_mask == 0
+                    && let Some(b_name) = names.get(b)
+                {
+                    suggestions.entry(a).or_insert_with(|| {
+                        format!("Often runs alongside {b_name} — consider grouping")
+                    });
+                    selected[a_idx / 64] |= a_mask;
+                }
+                if selected[b_idx / 64] & b_mask == 0
+                    && let Some(a_name) = names.get(a)
+                {
+                    suggestions.entry(b).or_insert_with(|| {
+                        format!("Often runs alongside {a_name} — consider grouping")
+                    });
+                    selected[b_idx / 64] |= b_mask;
+                }
+            }
+            return suggestions;
+        }
+        for (&(a_idx, b_idx), count) in &self.cooccurrence {
+            if *count < threshold {
+                continue;
+            }
+            let a = self.entity_reverse_index[a_idx as usize].as_str();
+            let b = self.entity_reverse_index[b_idx as usize].as_str();
+            if let Some(b_name) = names.get(b) {
+                suggestions.entry(a).or_insert_with(|| {
+                    format!("Often runs alongside {b_name} — consider grouping")
+                });
+            }
+            if let Some(a_name) = names.get(a) {
+                suggestions.entry(b).or_insert_with(|| {
+                    format!("Often runs alongside {a_name} — consider grouping")
+                });
+            }
+        }
+        suggestions
+    }
+
+    #[cfg(test)]
+    fn previous_grouping_suggestions(&self, entities: &[EntitySnapshot]) -> HashMap<&str, String> {
+        if self.cooccurrence.is_empty() {
+            return HashMap::new();
+        }
+        let threshold = (self.cooccurrence_sample_count as f32 * 0.8).ceil() as u32;
+        let names: HashMap<&str, &str> = entities
+            .iter()
+            .map(|entity| (entity.entity_id.as_str(), entity.display_name.as_str()))
+            .collect();
         // Dense pair graphs reuse the existing integer IDs. Resolve each name
         // once instead of hashing both strings for every qualifying pair.
         // Keep sparse graphs on borrowed maps so old interned IDs do not grow
@@ -2287,6 +2393,48 @@ mod tests {
     }
 
     #[test]
+    fn dense_historical_grouping_preserves_first_successful_partners() {
+        let entities = vec![
+            entity_with_process("a", "測定 🗼", 1, 1),
+            entity_with_process("b", "", 2, 1),
+            entity_with_process("c", "nul\0inside", 3, 1),
+            entity_with_process("b", "last duplicate café", 4, 1),
+        ];
+        for first in [100, u16::MAX - 4] {
+            for samples in [3, 5, 7, 100] {
+                for _ in 0..8 {
+                    let mut history = History::new();
+                    history.next_entity_idx = first;
+                    let ids: Vec<_> = ["a", "b", "c", "missing", "also-missing"]
+                        .map(|id| history.intern_entity_id(id))
+                        .into();
+                    history.cooccurrence_sample_count = samples;
+                    let threshold = (samples as f32 * 0.8).ceil() as u32;
+                    for (a_position, &a) in ids.iter().enumerate() {
+                        for (b_position, &b) in ids.iter().enumerate().skip(a_position) {
+                            let count = if (a_position + b_position) % 3 == 0 {
+                                threshold - 1
+                            } else {
+                                threshold
+                            };
+                            history.cooccurrence.insert((a, b), count);
+                        }
+                    }
+                    assert!(history.cooccurrence.len() > entities.len() * 2);
+                    assert!(history.entity_reverse_index.len() > entities.len() * 2);
+                    let actual: std::collections::HashMap<String, String> = history
+                        .grouping_suggestions(&entities)
+                        .into_iter()
+                        .map(|(k, v)| (k.to_owned(), v))
+                        .collect();
+                    assert_eq!(actual, legacy_grouping_suggestions(&history, &entities));
+                    assert!(history.grouping_suggestions(&[]).is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn sparse_grouping_preserves_wrapped_indices_and_empty_graphs() {
         let mut history = History::new();
         history.next_entity_idx = u16::MAX;
@@ -2314,7 +2462,13 @@ mod tests {
         let mut history = History::new();
         let shape =
             std::env::var("AETOWER_HISTORY_BENCH_SHAPE").unwrap_or_else(|_| "dense".to_owned());
-        assert!(matches!(shape.as_str(), "dense" | "sparse"));
+        assert!(matches!(
+            shape.as_str(),
+            "dense" | "sparse" | "dense_high_index" | "sparse_high_index"
+        ));
+        if shape.ends_with("high_index") {
+            history.next_entity_idx = u16::MAX - 499;
+        }
         let entities: Vec<_> = (0..500)
             .map(|index| {
                 entity_with_process(
@@ -2325,16 +2479,19 @@ mod tests {
                 )
             })
             .collect();
-        for entity in &entities {
-            history.intern_entity_id(&entity.entity_id);
-        }
+        let indices: Vec<_> = entities
+            .iter()
+            .map(|entity| history.intern_entity_id(&entity.entity_id))
+            .collect();
         history.cooccurrence_sample_count = 12;
         for a in 0..500u16 {
             for b in (a + 1)..500u16 {
-                if shape == "sparse" && b != a + 1 {
+                if shape.starts_with("sparse") && b != a + 1 {
                     continue;
                 }
-                history.cooccurrence.insert((a, b), 12);
+                history
+                    .cooccurrence
+                    .insert((indices[a as usize], indices[b as usize]), 12);
             }
         }
         // Shared partner names make the serialized oracle stable across the
@@ -2355,13 +2512,26 @@ mod tests {
         }
         let variant = std::env::var("AETOWER_HISTORY_BENCH_VARIANT")
             .unwrap_or_else(|_| "candidate".to_owned());
-        assert!(matches!(variant.as_str(), "legacy" | "candidate"));
-        let iterations = 50;
+        assert!(matches!(
+            variant.as_str(),
+            "legacy" | "previous" | "candidate"
+        ));
+        let iterations = std::env::var("AETOWER_HISTORY_BENCH_ITERATIONS")
+            .map(|value| value.parse::<usize>().unwrap())
+            .unwrap_or(50);
+        let previous: std::collections::BTreeMap<_, _> = history
+            .previous_grouping_suggestions(&entities)
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect();
+        assert_eq!(previous, expected);
         let started = std::time::Instant::now();
         let mut checksum = 0;
         for _ in 0..iterations {
             checksum += if variant == "legacy" {
                 std::hint::black_box(legacy_grouping_suggestions(&history, &entities)).len()
+            } else if variant == "previous" {
+                std::hint::black_box(history.previous_grouping_suggestions(&entities)).len()
             } else {
                 std::hint::black_box(history.grouping_suggestions(&entities)).len()
             };

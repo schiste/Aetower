@@ -1,0 +1,106 @@
+{
+  "status": "source_and_fixture_validated_packaging_and_app_pending",
+  "change": "For dense graphs with disproportionate historical indices, track successful grouping partners with a bounded bitset (at most 8 KiB). Existing dense short-index path and sparse borrowed maps remain. Empty names return early. Pair order, first successful partner, thresholds, text, schema and cadence preserved.",
+  "history_source_sha256": "76c2bb040cdced3bf1f3560b0051b6b27c63c59446230e0c690ed228707f9cb1",
+  "fixture": {
+    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-bounded-grouping-fixture-v1/results.json",
+    "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+    "binary_sha256": "6c425e9a1d648d7cb41f8a4dda3c664f0ffc65f7d7c90442f413bfed314165ba",
+    "scope": "Compare immediately preceding indexed/borrowed helper with bounded-bitset candidate in the same release test binary. Four 500-entity shapes: dense/sparse with short/maximal historical indices. 100 operations per dense-high-index child, 500 otherwise. Common setup validates both against original legacy output; not app-wide savings",
+    "memory_scope": "macOS wait4 maximum process RSS includes fixture setup and the common legacy/candidate validation before timing, so it cannot isolate memory savings from the changed helper",
+    "processes": 48,
+    "output_bytes": 46500,
+    "summary": {
+      "dense": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 1.566165,
+            "median_operation_wall_seconds": 0.3716089585,
+            "mean_max_process_rss_bytes": 9715712
+          },
+          "candidate": {
+            "total_cpu_seconds": 1.52224,
+            "median_operation_wall_seconds": 0.2775395625,
+            "mean_max_process_rss_bytes": 9803093.333333334
+          }
+        },
+        "cpu_percent_change": -2.8046214798568503
+      },
+      "dense_high_index": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 6.072502999999999,
+            "median_operation_wall_seconds": 1.1596158545000002,
+            "mean_max_process_rss_bytes": 11580757.333333334
+          },
+          "candidate": {
+            "total_cpu_seconds": 0.568836,
+            "median_operation_wall_seconds": 0.0671424165,
+            "mean_max_process_rss_bytes": 11796480
+          }
+        },
+        "cpu_percent_change": -90.63259417080567
+      },
+      "sparse": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 0.373264,
+            "median_operation_wall_seconds": 0.0854608335,
+            "mean_max_process_rss_bytes": 5130922.666666667
+          },
+          "candidate": {
+            "total_cpu_seconds": 0.396632,
+            "median_operation_wall_seconds": 0.0805460835,
+            "mean_max_process_rss_bytes": 5144576
+          }
+        },
+        "cpu_percent_change": 6.260448368982807
+      },
+      "sparse_high_index": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 0.389599,
+            "median_operation_wall_seconds": 0.0937675415,
+            "mean_max_process_rss_bytes": 8142848
+          },
+          "candidate": {
+            "total_cpu_seconds": 0.40143799999999996,
+            "median_operation_wall_seconds": 0.11501802050000001,
+            "mean_max_process_rss_bytes": 8151040
+          }
+        },
+        "cpu_percent_change": 3.0387654999114444
+      }
+    }
+  },
+  "validation": {
+    "release_history_passed": 25,
+    "manual_fixture_ignored": 1,
+    "clippy": "strict release all-targets -D warnings passed",
+    "oracles": "Original algorithm plus immediately preceding helper; dense/sparse short/maximal indices, multiple pair orders, threshold edges, duplicate/missing names, Unicode/NUL, self-pairs and empty names."
+  },
+  "app_comparison": {
+    "status": "pending",
+    "scope": "Production app comparison required. Dense-high-index fixture savings do not establish this branch is active in current idle app workloads or establish app-wide CPU, physical footprint or wakeup savings."
+  },
+  "build_axis": {
+    "production_accounting_fix_commit": "185a50f3644e",
+    "regression": "All 13 build-pipeline tests passed. Real wrapper preserves both fake-Cargo children CPU and runtime/generator failures; regression fails against retained original wrapper specifically for missing CPU.",
+    "corrected_compiler_results": "performance-loop13.json#corrected_compiler_comparison",
+    "native_thread_probe": {
+      "status": "explicit_native_limit_verified_fixture_only",
+      "unmodified_backends_observed_threads": {
+        "swiftbuild": 10,
+        "native": 10
+      },
+      "explicit_native_frontend_threads": 2,
+      "matched_output": "711520\n",
+      "retained_output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-native-thread-probe/explicit-native/summary.json",
+      "limits": "Small real Swift package only. Native backend is deprecated by installed SwiftPM. No default backend, app compiler cap or app build performance change retained; full app build/test/package compatibility requires validation."
+    }
+  },
+  "limits": [
+    "Dense-high-index process CPU falls 90.6%; unchanged short dense path observes -2.8%, sparse +6.3%, sparse high index +3.0%. Sparse regressions remain visible; no broad helper or app-wide gain claimed.",
+    "Maximum process RSS includes common setup/oracle checks; dense-high-index mean rises 11.04 to 11.25 MiB. No helper memory saving established."
+  ]
+}
