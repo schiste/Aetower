@@ -29,8 +29,19 @@ output bytes** match in every process. Total CPU is **2.510229 → 1.291731
 seconds (48.5% less)**; median operation wall time **0.847 → 0.287s**. Mean
 maximum-process RSS is **9.71 → 9.65 MiB**, but includes common fixture setup
 and both implementations' validation, so it cannot isolate helper memory.
-Packaging and app comparison are pending; the fixture result does not establish
-an app-wide CPU, memory or wakeup saving.
+Production packaging passes and the generated binding bytes remain unchanged.
+Its absolute cost using existing compiler caches is 114.929s wall, 116.230 CPU
+seconds and 710.75 MiB sampled peak tree RSS; this is not a build comparison.
+The retained app pair has identical unsigned Swift code, metadata and 110 common
+payload files, with only the Rust library changed. Four hidden-idle ABBA windows
+verify both loaded images and all 300 measurement-period visibility observations.
+Observed means are CPU **3.680% → 3.972% (+7.9%)**, physical footprint **127.88 →
+128.55 MiB (+0.5%)**, and interrupt wakeups **4.844 → 4.989/s (+3.0%)**. The two
+candidate windows differ substantially; shared host load and app workloads remain
+uncontrolled. These results establish no app-wide saving and require further
+regression investigation. Setup failures are excluded from measurements, and
+the narrower fixture gain does not override the app result. The change remains
+in draft.
 
 A CI debug-info experiment is rejected. Twelve alternating cold history-package
 builds and unchanged repeats run the same 20 tests. Line tables reduce logical
@@ -44,7 +55,17 @@ The next build comparison isolates the binding generator's UniFFI CLI features
 from runtime tests while retaining all tests and serial execution. Its actual
 runtime-test dependency features then match the subsequent bridge build,
 including serde_json and serde_core. Four cold full-workspace test/build sequences
-and unchanged repeats are running; no build saving is claimed yet. Evidence
+and unchanged repeats stopped on an unchanged baseline repeat: the storage-scan
+completion test still reported `running` after its 120-second deadline. The cold
+baseline passed all 518 cases (511 passed, seven manual tests ignored), but no
+candidate pipeline ran. The failed cohort is retained; no build saving is claimed.
+The same completion test passes alone in 0.27 seconds with the retained binary,
+and all 161 storage tests pass as a group. The intermittent failure remains
+unexplained; no test deadline or production storage behavior was changed.
+The next comparison will isolate test compilation and subsequent product builds,
+then verify candidate test execution separately against the passed baseline's
+case/status counts. Those compilation timings will exclude test execution and
+must not be presented as a complete CI-job saving. Evidence
 and current limits are in [`performance-loop12.json`](performance-loop12.json).
 
 ## Pass 11: compile decoder correctness checks once; reject native UTF-8 trial
