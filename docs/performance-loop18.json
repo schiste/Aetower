@@ -1,5 +1,5 @@
 {
-  "status": "source_validated_allocation_traffic_reduced_app_runtime_pending",
+  "status": "allocation_traffic_reduced_but_app_physical_footprint_increased_candidate_held_for_review",
   "baseline_commit": "aab2d15c2a4a6a1c55f6bb63ebfa7a4785e351c5",
   "change": "Move battery health, boot session, Bluetooth devices, network interfaces, disk health and per-core CPU from the collected sample into HostSnapshot instead of cloning. No remaining raw-host use; process/self/timing uses preserved.",
   "allocation_oracle": {
@@ -210,5 +210,185 @@
   "compiler_checks": {
     "formatting": "cargo fmt --all -- --check passed; broker receipt 6948b3dab107ea75745506615b693dbd",
     "clippy": "cargo clippy --locked --release -p aetower-core --all-targets -- -D warnings passed; one Cargo job; broker receipt 47a70b0a3c36e754f4915514bbd5148d"
+  },
+  "runtime_products_build": {
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop18-runtime-products-v1/results.json",
+    "post_build_identity_recovery": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop18-runtime-products-v1/identity-recovery.json",
+    "cost": {
+      "command": [
+        "/bin/sh",
+        "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/scripts/build-rust.sh",
+        "--profile",
+        "release"
+      ],
+      "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+      "exit_status": 0,
+      "wall_seconds": 382.722,
+      "user_cpu_seconds": 311.593,
+      "system_cpu_seconds": 8.598,
+      "average_cpu_percent": 83.7,
+      "sampled_peak_tree_rss_bytes": 1577353216,
+      "rss_samples": 347,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    },
+    "source_commit": "4f0c03e9c5a4a37136a877dd87b843112501e27c",
+    "cargo_jobs": 1,
+    "canonical_inputs_unchanged": true,
+    "scope": "Successful normal batched release runtime roots, debug host bindgen and generated bindings; retained dependency target; no Swift compilation. Absolute validation cost, not cold or matched comparison.",
+    "post_build_inspection_failure": "PATH resolved dwarfdump to /opt/homebrew/bin/dwarfdump, whose --uuid command returned 1 after the successful build. Retained original failure receipt. /usr/bin/dwarfdump verified the identical retained output; no compilation repeated.",
+    "rust_uuid": "F041494B-6FBE-3E99-B5C4-EE203FD63304"
+  },
+  "controlled_app_pair": {
+    "status": "complete",
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-production-package-v1/Aetower.app",
+        "source": "aab2d15c2a4a6a1c55f6bb63ebfa7a4785e351c5 production Rust; common pass-17 compiled Swift and other payloads",
+        "executable_sha256": "cab6e666d964d0b64b90d5ec9906db311a7b662f0a68962458743fe32b43370a",
+        "rust_sha256": "fffbc9ea72061e3a0cb5c97d0bec8356efe883468307d13d2a367e22f33f8370",
+        "rust_uuid": "C3C15E29-5980-3E31-BC1C-CA2702EB672D",
+        "variant": "baseline",
+        "swift_executable_uuid": "7C2620A6-4F95-3D3B-A482-96A3B3CA6127"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop18-candidate/Aetower.app",
+        "source": "4f0c03e9c5a4a37136a877dd87b843112501e27c production Rust; common pass-17 compiled Swift and other payloads",
+        "executable_sha256": "1546ca65a99238478f9148628dda5481289beacb3ee64b3d3cf13f535e502a83",
+        "rust_sha256": "20454b8f634a83469af4a405a872dcedad92964de2ef9a64f9875b8e7bfada3a",
+        "rust_uuid": "F041494B-6FBE-3E99-B5C4-EE203FD63304",
+        "variant": "candidate",
+        "swift_executable_uuid": "7C2620A6-4F95-3D3B-A482-96A3B3CA6127"
+      }
+    ],
+    "exported_symbols_equal": true,
+    "exported_symbol_count": 370,
+    "common_file_count": 112,
+    "common_files_sha256": "f1587df18a3b2d90072689abf5d94c6736721101430d0aefb72b954d1244026b",
+    "unsigned_swift_executable_equal": true,
+    "scope": "Controlled retained app pair, not a new full Swift package. Only bundled Rust library and required signatures differ. Baseline is the pass-17 normal package; candidate library uses normal batched runtime feature graph. No install, release or notarization."
+  },
+  "whole_app_runtime": {
+    "status": "complete",
+    "all_eight_windows_verified": true,
+    "cohorts": [
+      {
+        "configuration": {
+          "sequence": "ABBA",
+          "settle_seconds": 60,
+          "duration_seconds": 90,
+          "interval_seconds": 2,
+          "target_environment_keys": [
+            "HOME",
+            "LANG",
+            "LC_CTYPE",
+            "LOGNAME",
+            "PATH",
+            "TMPDIR",
+            "USER"
+          ],
+          "visibility": "retry startup hide within a bounded 30-second period until observed hidden; observe hidden status and zero normal onscreen windows every two seconds; invalidate on any observed change"
+        },
+        "means": {
+          "baseline": {
+            "average_cpu_percent": 3.184838616441618,
+            "average_phys_footprint_bytes": 126964757.17575757,
+            "interrupt_wakeups_per_second": 2.953821873920705
+          },
+          "candidate": {
+            "average_cpu_percent": 3.1168045611345803,
+            "average_phys_footprint_bytes": 141411568.37373737,
+            "interrupt_wakeups_per_second": 1.8093057423105499
+          }
+        },
+        "candidate_change_percent": {
+          "average_cpu_percent": -2.1361853299509126,
+          "average_phys_footprint_bytes": 11.378599478578955,
+          "interrupt_wakeups_per_second": -38.74695836316634
+        }
+      },
+      {
+        "configuration": {
+          "sequence": "BAAB",
+          "settle_seconds": 60,
+          "duration_seconds": 90,
+          "interval_seconds": 2,
+          "target_environment_keys": [
+            "HOME",
+            "LANG",
+            "LC_CTYPE",
+            "LOGNAME",
+            "PATH",
+            "TMPDIR",
+            "USER"
+          ],
+          "visibility": "retry startup hide within a bounded 30-second period until observed hidden; observe hidden status and zero normal onscreen windows every two seconds; invalidate on any observed change"
+        },
+        "means": {
+          "baseline": {
+            "average_cpu_percent": 2.4906729904377864,
+            "average_phys_footprint_bytes": 138010217.92525253,
+            "interrupt_wakeups_per_second": 1.8087950113752087
+          },
+          "candidate": {
+            "average_cpu_percent": 2.345410784187441,
+            "average_phys_footprint_bytes": 145319880.08888888,
+            "interrupt_wakeups_per_second": 1.660049468105454
+          }
+        },
+        "candidate_change_percent": {
+          "average_cpu_percent": -5.832247220250808,
+          "average_phys_footprint_bytes": 5.296464474532847,
+          "interrupt_wakeups_per_second": -8.22346049907916
+        }
+      }
+    ],
+    "combined_descriptive_means": {
+      "baseline": {
+        "average_cpu_percent": 2.837755803439702,
+        "average_phys_footprint_bytes": 132487487.55050504,
+        "average_resident_size_bytes": 270713816.6949495,
+        "interrupt_wakeups_per_second": 2.3813084426479567,
+        "pkg_idle_wakeups_per_second": 0.0
+      },
+      "candidate": {
+        "average_cpu_percent": 2.7311076726610106,
+        "average_phys_footprint_bytes": 143365724.2313131,
+        "average_resident_size_bytes": 246147378.16565657,
+        "interrupt_wakeups_per_second": 1.734677605208002,
+        "pkg_idle_wakeups_per_second": 0.0027771976019126433
+      }
+    },
+    "combined_descriptive_change_percent": {
+      "average_cpu_percent": -3.7581856285668014,
+      "average_phys_footprint_bytes": 8.210765319752333,
+      "average_resident_size_bytes": -9.07468958519222,
+      "interrupt_wakeups_per_second": -27.15443433782635,
+      "pkg_idle_wakeups_per_second": null
+    },
+    "limitations": "Four windows per variant across two orders on a shared live host; existing user settings and changing host inputs. App process only, children excluded. Signatures/retained images verified; common compiled Swift. Do not pool with earlier common Swift images or interpret allocation traffic as whole-app savings.",
+    "verified_receipts": [
+      "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/measurements/loop18-hidden-runtime-abba-v1/summary-verified.json",
+      "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/measurements/loop18-hidden-runtime-baab-v1/summary-verified.json"
+    ],
+    "decision": "Hold ownership-transfer candidate in the draft for review: physical footprint is higher in both orders, despite fewer constructor allocations, lower descriptive CPU/wakeup means and lower RSS. This is not a whole-app memory win. Shared live inputs and host variation prevent causal attribution; allocation traffic alone does not establish retained physical memory. No merge, installation or release.",
+    "supervisor_execution_receipt": "0c087c26814b3c9e9ef7ebca25e6aac2"
+  },
+  "hosted_quality": {
+    "source_commit": "4f0c03e9c5a4a37136a877dd87b843112501e27c",
+    "run_url": "https://github.com/schiste/Aetower/actions/runs/41309265799",
+    "status": "failed_dependency_policy_preflight",
+    "expensive_steps_skipped": [
+      "Rust build artifact restore",
+      "SwiftPM artifact restore",
+      "remaining quality tool installation",
+      "full pre-push gate",
+      "Rust/Swift artifact saves"
+    ],
+    "scope": "No successful whole-hosted-job claim or waived gate."
+  },
+  "build_job_comparison": {
+    "status": "running_not_interpreted",
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop18-build-job-comparison-v1/results.json",
+    "plan": "Two-one-one-two Cargo jobs; clean only owned MCP/CLI/FFI release roots; retain dependency cache; normal batched products and bindgen; compare unit graph, flags and exact binaries. Compiler execution started only after both app cohorts and independent raw audit completed. No default concurrency change yet."
   }
 }

@@ -29,8 +29,41 @@ sampled peak tree RSS**; no comparative build saving is inferred.
 
 Build work reuses the retained Rust target with one Cargo job, and retains the
 pass-17 app for later comparisons without recompiling unchanged Swift code.
-Package job counts do not bound compiler-internal threads. No matched build-job
-comparison or new whole-CI saving is established yet.
+Package job counts do not bound compiler-internal threads. The normal batched
+Rust runtime rebuild passes with one Cargo job at **382.722s wall / 320.191
+CPU-seconds / 1504.28 MiB sampled peak tree RSS**. All tracked build/binding
+inputs remain unchanged. A post-build UUID command selected a conflicting
+Homebrew tool and failed; the absolute system tool verifies the retained
+identical library without repeating compilation. Original failure is retained.
+These are absolute retained-cache costs, not a cold or comparative saving.
+
+The controlled app pair preserves **370 exported symbols**, unsigned Swift
+bytes and **112 other payload files**; both signatures verify. Common Swift
+UUID is `7C2620A6-4F95-3D3B-A482-96A3B3CA6127`; Rust is baseline
+`C3C15E29-5980-3E31-BC1C-CA2702EB672D` and candidate
+`F041494B-6FBE-3E99-B5C4-EE203FD63304`. This reuses the retained normal package
+with only Rust and required signatures replaced, avoiding a Swift rebuild.
+
+Both ABBA and BAAB app cohorts complete with 60-second settles, 90-second
+samples and two-second observation intervals. All eight raw CPU/wakeup/RSS/
+footprint summaries, PID identities, hidden observations, loaded bundled images
+and disk reserves independently verify. ABBA observes CPU **-2.14%**, physical
+footprint **+11.38%**, interrupt wakeups **-38.75%**; BAAB observes **-5.83%**,
+**+5.30%**, **-8.22%**. Combined descriptive means are CPU **2.838 → 2.731%**,
+physical footprint **126.35 → 136.72 MiB (+8.21%)**, RSS **258.17 → 234.74 MiB
+(-9.07%)**, interrupt wakeups **2.381 → 1.735/s (-27.15%)**. Package-idle wakeups
+are near zero and have no meaningful percentage comparison. Four windows per
+variant, shared host load and live settings/inputs limit interpretation; these
+are app-process counters and exclude children. Do not pool earlier Swift images.
+
+**Hold the ownership-transfer candidate in the draft for review.** Physical
+footprint rose in both orders, so fewer allocations are not a whole-app memory
+win. No causal regression or general CPU/wakeup saving is established. Retain
+all unfavorable evidence; no merge, installation or release occurred. A balanced
+**two-one-one-two** normal-runtime rebuild comparison is now running to test
+compiler pressure with unchanged flags and products. No concurrency default is
+changed yet. Hosted quality on exact `4f0c03e` rejects dependency policy before
+Rust/Swift artifact restores and the full build gate; no policy is waived.
 
 ## Pass 17: stream scan publication; measure SQLite test-profile costs
 
