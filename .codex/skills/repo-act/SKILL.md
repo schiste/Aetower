@@ -79,6 +79,9 @@ description: Use after repo-onboarding or Explore when moving from orientation i
 - For retained Rust test benchmarks, verify the fully qualified filter executes
   the measured test. Require its result marker and expected workload counts;
   libtest can exit successfully when a filter selects zero tests.
+  For full-suite audits, compare executed cases and the existing ignored-case set
+  against native test listings. Preserve manual benchmarks as ignored; do not
+  reject a passing suite solely because its normal result includes ignored tests.
   When output depends on hash-map iteration, value equality alone is insufficient:
   clone the hash builder for old/new oracles and compare actual iteration order
   and emitted output across reorderings, duplicates and membership changes.
