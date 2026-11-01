@@ -1,5 +1,5 @@
 {
-  "status": "0 of four app windows verified; comparison incomplete",
+  "status": "complete; fixture and app observations retained",
   "runtime_source_commit": "62506dc3f1ae450a1437f165e133517c8afab13c",
   "decoder_benchmark": {
     "scope": "actual generated full entity sequence decoding plus equality checks; identical serialized payload; no app state or collection; no app-wide claim",
@@ -536,7 +536,7 @@
     }
   },
   "matched_app_comparison": {
-    "status": "running",
+    "status": "complete",
     "controller_pid": 46955,
     "apps": [
       {
@@ -567,9 +567,158 @@
       {
         "label": "A1",
         "variant": "baseline",
-        "status": "starting",
-        "pid": 47106
+        "status": "complete",
+        "pid": 47106,
+        "host_processes_start": 789,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          27.82421875,
+          22.99951171875,
+          21.28173828125
+        ],
+        "host_load_end": [
+          19.63623046875,
+          21.48828125,
+          20.869140625
+        ],
+        "wall_seconds": 90.0026796250022,
+        "samples": 46,
+        "user_time_seconds": 2.853831709,
+        "system_time_seconds": 1.297029875,
+        "average_cpu_percent": 4.61193111282313,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 448,
+        "interrupt_wakeups_per_second": 4.977629575770412,
+        "average_resident_size_bytes": 153434022.95652175,
+        "peak_resident_size_bytes": 273842176,
+        "average_phys_footprint_bytes": 149215826.08695653,
+        "peak_phys_footprint_bytes": 196232272,
+        "host_processes_end": 783,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "B1",
+        "variant": "candidate",
+        "status": "complete",
+        "pid": 86750,
+        "host_processes_start": 822,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          20.673828125,
+          21.53955078125,
+          20.93994140625
+        ],
+        "host_load_end": [
+          14.7724609375,
+          19.4755859375,
+          20.21044921875
+        ],
+        "wall_seconds": 90.00463350000791,
+        "samples": 46,
+        "user_time_seconds": 2.721328167,
+        "system_time_seconds": 1.227960458,
+        "average_cpu_percent": 4.387872569915695,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 405,
+        "interrupt_wakeups_per_second": 4.499768336926391,
+        "average_resident_size_bytes": 143684474.4347826,
+        "peak_resident_size_bytes": 240697344,
+        "average_phys_footprint_bytes": 150070999.6521739,
+        "peak_phys_footprint_bytes": 190055504,
+        "host_processes_end": 765,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "status": "complete",
+        "pid": 25753,
+        "host_processes_start": 748,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          17.6201171875,
+          19.56494140625,
+          20.19482421875
+        ],
+        "host_load_end": [
+          22.85693359375,
+          20.45361328125,
+          20.44775390625
+        ],
+        "wall_seconds": 90.01110604099813,
+        "samples": 46,
+        "user_time_seconds": 3.0158465,
+        "system_time_seconds": 1.6754675,
+        "average_cpu_percent": 5.211927956827025,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 446,
+        "interrupt_wakeups_per_second": 4.954944113194838,
+        "average_resident_size_bytes": 102502934.26086956,
+        "peak_resident_size_bytes": 146096128,
+        "average_phys_footprint_bytes": 121990280.17391305,
+        "peak_phys_footprint_bytes": 185418880,
+        "host_processes_end": 718,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "status": "complete",
+        "pid": 52854,
+        "host_processes_start": 710,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          22.888671875,
+          21.10791015625,
+          20.705078125
+        ],
+        "host_load_end": [
+          29.08203125,
+          24.1298828125,
+          21.93994140625
+        ],
+        "wall_seconds": 90.00087170800543,
+        "samples": 46,
+        "user_time_seconds": 2.6207785,
+        "system_time_seconds": 1.621300583,
+        "average_cpu_percent": 4.713375551253326,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 445,
+        "interrupt_wakeups_per_second": 4.944396554777124,
+        "average_resident_size_bytes": 99685954.7826087,
+        "peak_resident_size_bytes": 175341568,
+        "average_phys_footprint_bytes": 126002215.30434783,
+        "peak_phys_footprint_bytes": 193021032,
+        "host_processes_end": 751,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
       }
-    ]
-  }
+    ],
+    "means": {
+      "baseline": {
+        "average_cpu_percent": 4.662653332038228,
+        "average_phys_footprint_bytes": 137609020.6956522,
+        "interrupt_wakeups_per_second": 4.961013065273768
+      },
+      "candidate": {
+        "average_cpu_percent": 4.799900263371359,
+        "average_phys_footprint_bytes": 136030639.91304347,
+        "interrupt_wakeups_per_second": 4.727356225060614
+      }
+    },
+    "candidate_change_percent": {
+      "average_cpu_percent": 2.9435371141593336,
+      "average_phys_footprint_bytes": -1.1470038625589818,
+      "interrupt_wakeups_per_second": -4.709861416183547
+    },
+    "limits": "four fresh app-process windows with existing settings and no driven interaction on a shared host; no builds during sampling; population/load vary; these are observed means, not general or controlled causal savings"
+  },
+  "app_result": "No consistent app-wide gain established: CPU mean +2.94%, footprint -1.15%, wakeups -4.71%; strong within-variant variation and shared-host changes prevent causal memory/wakeup claims."
 }

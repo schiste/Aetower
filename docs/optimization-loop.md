@@ -34,9 +34,18 @@ packaging after release tests costs **276.500s wall / 229.352 CPU-seconds /
 1,694.91 MiB sampled peak tree RSS**, and its unchanged repeat costs
 **14.115s / 9.332 CPU-seconds / 362.72 MiB**. These are absolute costs.
 The retained app pair shares all nonsignature payload files except its Swift
-executable; the four-window app comparison is running. Fixture sources, retained binary
+executable. Fixture sources, retained binary
 identities and all process results are in
 [`performance-loop9.json`](performance-loop9.json).
+
+All four fresh A/B/B/A app windows complete, each with 60s settling, 90s
+sampling and verified loaded Swift/main and bundled Rust identities/mappings.
+No builds run during sampling. Mean CPU is **4.663% → 4.800% (+2.9%)**,
+physical footprint **131.23 → 129.73 MiB (-1.1%)**, and interrupt wakeups
+**4.961 → 4.727/s (-4.7%)**. Candidate CPU varies 4.388% → 5.212%; footprint
+also drifts substantially within both variants. These shared-host observations
+establish no consistent app-wide CPU gain or causal memory/wakeup saving. The
+verified fixture CPU reduction is not promoted into an app-wide claim.
 
 Three thread-control experiments were rejected: ordinary forwarded flags and
 frontend bridging are overridden by Swift Build's later ten-thread argument,
