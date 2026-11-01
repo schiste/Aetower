@@ -59,6 +59,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   controller. Discover the active backend's output paths instead of assuming a
   conventional layout. Abbreviated progress logs alone are insufficient; if
   outputs disappear before the audit, leave that historical claim unverified.
+  Separate compiler execution from fresh-artifact republication or install-name
+  normalization. An unchanged root-product hash with a new timestamp can be
+  legitimate; inspect dependency/root identities and emitted build actions
+  before calling that timestamp change a compiler-cache failure.
 - For compiler-pressure changes, inspect the actual compilation subprocess
   arguments, including duplicate flags and their effective order. Package job
   counts need not limit frontend threads; forwarded flags and compiler wrappers
