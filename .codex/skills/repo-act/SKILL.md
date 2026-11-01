@@ -41,6 +41,13 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   Shared compiler-cache servers can execute outside the measured process tree:
   disable the wrapper for both comparison runs when complete compiler accounting
   is required, or state that limitation explicitly.
+  Check descendant CPU accounting when a shell waits for work and then uses
+  `exec`: on this host, earlier children's CPU can disappear from the final
+  `wait4`/`getrusage` result. Cross-check with children reporting their own CPU
+  clocks, both with and without the sampler. If accounting fails, retain and
+  invalidate the affected CPU comparison; rerun both variants with matched
+  explicit waits or separately recorded child receipts. Document any benchmark
+  orchestration transformation rather than treating missing CPU as a saving.
 - For retained Rust test benchmarks, verify the fully qualified filter executes
   the measured test. Require its result marker and expected workload counts;
   libtest can exit successfully when a filter selects zero tests.
@@ -65,7 +72,7 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   after requesting a visibility change, wait for the observed target state before
   starting counters and recheck it throughout each window. A control API's return
   value alone does not establish the state that was measured.
-  if that state is uncontrolled, state the limitation rather than attributing
+  If that state is uncontrolled, state the limitation rather than attributing
   a CPU or wakeup difference to the source change alone.
   Retain baseline and candidate app bundles and benchmark executables outside
   mutable compiler-output directories; verify their hashes before later builds
