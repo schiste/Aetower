@@ -1,5 +1,6 @@
 """Exercise the generated decoder against the original and independent values."""
 from pathlib import Path
+import platform
 import runpy
 import shutil
 import subprocess
@@ -14,11 +15,12 @@ PREPARE = runpy.run_path(str(ROOT / "scripts/prepare-swift-bindings.py"))
 class SwiftBindingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Both harnesses use the same compiler and SDK within this test run.
-        # Keep their module cache together so Foundation is compiled only once.
-        cache = tempfile.TemporaryDirectory(prefix="aetower decoder modules ")
+        # Compile both checks once with the same compiler and SDK, while each
+        # test still runs and reports its own correctness checks independently.
+        cache = tempfile.TemporaryDirectory(prefix="aetower decoder harness ")
         cls.addClassCleanup(cache.cleanup)
-        cls.module_cache = Path(cache.name)
+        cls.build_dir = Path(cache.name)
+        cls.compiled = {}
 
     def test_template_drift_fails_before_publication(self):
         for text in ("different reader", PREPARE["INTEGER_COPY"] * 2, PREPARE["INTEGER_COPY"] + "unexpected string reader"):
@@ -42,6 +44,9 @@ class SwiftBindingTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("swiftc"), "Swift compiler unavailable")
     def test_integer_widths_alignment_endianness_and_truncation(self):
+        self.assert_swift_output("integers", "all integer widths")
+
+    def integer_program(self):
         source = (ROOT / "macos/Sources/AetowerBindings/aetower_ffi.swift").read_text()
         source = source.replace(PREPARE["INTEGER_LOAD"], PREPARE["INTEGER_COPY"])
         source = source.replace(PREPARE["STRING_DIRECT"], PREPARE["STRING_BYTES"])
@@ -86,21 +91,22 @@ try check(UInt64.self); try check(Int64.self)
 try check(UInt.self); try check(Int.self)
 print("all integer widths, alignments, endianness and truncations match")
 '''
-        program = "import Foundation\nenum UniffiInternalError: Error { case bufferOverflow }\n"
-        program += original.replace("func readInt<", "func readIntLegacy<")
-        program += candidate.replace("func readInt<", "func readIntCandidate<") + harness
-        self.assert_swift_output(program, "all integer widths")
+        program = original.replace("func readInt<", "func readIntLegacy<")
+        program += candidate.replace("func readInt<", "func readIntCandidate<")
+        return program + "\nfunc checkIntegers() throws {\n" + harness + "\n}\n"
 
     @unittest.skipUnless(shutil.which("swiftc"), "Swift compiler unavailable")
     def test_strings_preserve_utf8_bytes_offsets_and_truncation(self):
+        self.assert_swift_output("strings", "all UTF-8 bytes")
+
+    def string_program(self):
         source = (ROOT / "macos/Sources/AetowerBindings/aetower_ffi.swift").read_text()
         start = source.index("fileprivate func readBytes(")
         end = source.index("// Reads a float", start)
-        program = "import Foundation\nenum UniffiInternalError: Error { case bufferOverflow }\n"
-        program += PREPARE["INTEGER_LOAD"] + "\n" + source[start:end]
+        program = PREPARE["INTEGER_LOAD"] + "\n" + source[start:end]
         program += PREPARE["STRING_BYTES"].replace("    public static func read(", "fileprivate func readStringLegacy(")
         program += "\n" + PREPARE["STRING_DIRECT"].replace("    public static func read(", "fileprivate func readStringCandidate(")
-        program += r'''
+        harness = r'''
 let strings = ["", "a", "hello", "nul\0inside", "測定 🗼 café", "e\u{301}",
                String(repeating: "🗼x", count: 1024)]
 for expected in strings {
@@ -131,17 +137,28 @@ for expected in strings {
 }
 print("all UTF-8 bytes, offsets and truncations match")
 '''
-        self.assert_swift_output(program, "all UTF-8 bytes")
+        return program + "\nfunc checkStrings() throws {\n" + harness + "\n}\n"
 
-    def assert_swift_output(self, program, expected):
-        with tempfile.TemporaryDirectory(prefix="aetower decoder ") as temp:
-            path = Path(temp)
-            (path / "check.swift").write_text(program)
-            compiled = subprocess.run(["swiftc", "-O", "-module-cache-path", str(self.module_cache), str(path / "check.swift"), "-o", str(path / "check")],
-                                      capture_output=True, text=True)
-            self.assertEqual(compiled.returncode, 0, compiled.stderr)
-            result = subprocess.run([str(path / "check")], capture_output=True, text=True, check=True)
-            self.assertIn(expected, result.stdout)
+    def assert_swift_output(self, mode, expected):
+        cls = type(self)
+        stem = "check"
+        path = cls.build_dir
+        binary = path / stem
+        if stem not in cls.compiled:
+            program = "import Foundation\nenum UniffiInternalError: Error { case bufferOverflow }\n"
+            program += self.integer_program() + self.string_program()
+            program += '\nif CommandLine.arguments[1] == "integers" { try checkIntegers() } else { try checkStrings() }\n'
+            source = path / (stem + ".swift")
+            source.write_text(program)
+            target = ["-target", f"{platform.machine()}-apple-macosx15.0"] if platform.system() == "Darwin" else []
+            cls.compiled[stem] = subprocess.run([
+                "swiftc", "-O", *target, "-module-cache-path", str(path / "module-cache"),
+                str(source), "-o", str(binary),
+            ], capture_output=True, text=True)
+        compiled = cls.compiled[stem]
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        result = subprocess.run([str(binary), mode], capture_output=True, text=True, check=True)
+        self.assertIn(expected, result.stdout)
 
 
 if __name__ == "__main__":

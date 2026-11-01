@@ -5,6 +5,37 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 11: compile decoder correctness checks once; reject native UTF-8 trial
+
+The integer and string correctness checks now share one optimized Swift binary,
+with each test still running and reporting its own checks. Previously, each
+compiled a separate harness even though their compiler/SDK/module cache matched.
+The combined harness targets the app's existing macOS 15 minimum. All **28
+focused checks** and the working-tree quality guard pass; all integer widths,
+alignments, endian cases, UTF-8 bytes, reader offsets and truncations remain
+covered. Production app sources and generated binding bytes are unchanged.
+
+Twelve alternating fresh processes run the same three checks, with one empty
+temporary module cache per process. The six baseline processes invoke the
+compiler twice each; the six candidate processes invoke it once each. Total
+CPU is **29.138612 → 24.804453 seconds (14.9% less)**; median wall time
+**5.857 → 5.295 seconds (9.6% less)**. Mean maximum-process RSS is essentially
+flat, **300.75 → 301.39 MiB (+0.2%)**. These measure local test cost, not a whole
+successful build or hosted CI job. Host load and OS caches remain uncontrolled.
+
+The runtime experiment replaces Foundation's strict UTF-8 initializer with
+Swift's native strict validator over the same bounded byte slice. It passes
+28 focused checks, including contiguous storage and malformed UTF-8 checks.
+Twelve retained full-entity decoder processes preserve all values and the same
+**1,266,039 serialized bytes**, but CPU is **3.176532 → 3.185746 seconds
+(+0.3%)** and mean maximum-process RSS **17.64 → 17.83 MiB (+1.1%)**. This
+establishes no improvement, so the native initializer is discarded before a full
+app rebuild. The production Foundation reader is restored exactly; no app CPU,
+memory or wakeup gain is claimed. Trial Rust build/binding generation costs
+97.431s wall / 122.410 CPU-seconds / 970.75 MiB sampled peak tree RSS; these are
+absolute experiment costs. Final harness results and rejected-trial evidence
+are in [`performance-loop11.json`](performance-loop11.json).
+
 ## Pass 10: reject before compiler harnesses; history experiment reverted
 
 The rejected grouping experiment borrowed interned entity keys and display names. The
