@@ -41,6 +41,9 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   Shared compiler-cache servers can execute outside the measured process tree:
   disable the wrapper for both comparison runs when complete compiler accounting
   is required, or state that limitation explicitly.
+- For retained Rust test benchmarks, verify the fully qualified filter executes
+  the measured test. Require its result marker and expected workload counts;
+  libtest can exit successfully when a filter selects zero tests.
 - For CI ordering or cache changes, measure the entire job, including restores
   and failure-path saves. Verify that an early rejection reports the same policy
   findings and skips expensive transfers; faster failure is not a passing gate.
