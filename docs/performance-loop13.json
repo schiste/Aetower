@@ -1,0 +1,616 @@
+{
+  "status": "source_and_fixture_validated_app_comparison_pending",
+  "change": "Dense grouping resolves names once and uses interned numeric IDs across qualifying pairs; preserves original pair order, thresholds, duplicate-name semantics and hints. Sparse graphs or disproportionately old indices use borrowed maps. Refresh cadence, pair tracking, schemas and UI are unchanged.",
+  "history_source_sha256": "3e12b4be29f02d04f3b2d2ca69749f22701774135fcfa9fc9aee212d1dd586c1",
+  "fixture": {
+    "status": "complete",
+    "scope": "Dense complete and sparse-chain 500-entity grouping fixtures; 50 operations per child; original and adaptive indexed/borrowed helpers in the same retained release test binary; common setup validates exact output for the same pair order; not app-wide savings",
+    "memory_scope": "macOS wait4 maximum process RSS includes fixture setup and the common legacy/candidate validation before timing, so it cannot isolate memory savings from the changed helper",
+    "binary_sha256": "f6e5448d3533a854d5fbb9d93233f711341ed7bb5253ab39d0f0e2ddd1c0ff80",
+    "source_sha256": "3e12b4be29f02d04f3b2d2ca69749f22701774135fcfa9fc9aee212d1dd586c1",
+    "source_commit": "79df1ef40f0262cd97a29cbaa36eced1c56766f2",
+    "artifact": {
+      "reason": "compiler-artifact",
+      "package_id": "path+file:///private/tmp/aetower-build-performance/rust/crates/aetower-history#0.1.0",
+      "manifest_path": "/private/tmp/aetower-build-performance/rust/crates/aetower-history/Cargo.toml",
+      "target": {
+        "kind": [
+          "lib"
+        ],
+        "crate_types": [
+          "lib"
+        ],
+        "name": "aetower_history",
+        "src_path": "/private/tmp/aetower-build-performance/rust/crates/aetower-history/src/lib.rs",
+        "edition": "2024",
+        "doc": true,
+        "doctest": true,
+        "test": true
+      },
+      "profile": {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": false,
+        "overflow_checks": false,
+        "test": true
+      },
+      "features": [],
+      "filenames": [
+        "/private/tmp/aetower-build-performance/rust/target/release/deps/aetower_history-3a732c337808ca80"
+      ],
+      "executable": "/private/tmp/aetower-build-performance/rust/target/release/deps/aetower_history-3a732c337808ca80",
+      "fresh": false
+    },
+    "runs": [
+      {
+        "variant": "legacy",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 569405708,
+        "wall_seconds": 0.6446713749901392,
+        "user_cpu_seconds": 0.5778179999999999,
+        "system_cpu_seconds": 0.008062,
+        "max_rss_bytes": 9797632,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 14855417,
+        "wall_seconds": 0.04104741700575687,
+        "user_cpu_seconds": 0.036542,
+        "system_cpu_seconds": 0.002332,
+        "max_rss_bytes": 9060352,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 18678166,
+        "wall_seconds": 0.04617891600355506,
+        "user_cpu_seconds": 0.03954,
+        "system_cpu_seconds": 0.002915,
+        "max_rss_bytes": 9732096,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 742084292,
+        "wall_seconds": 0.7659415419911966,
+        "user_cpu_seconds": 0.614615,
+        "system_cpu_seconds": 0.010025,
+        "max_rss_bytes": 9666560,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 1073665125,
+        "wall_seconds": 1.1092496250057593,
+        "user_cpu_seconds": 0.610377,
+        "system_cpu_seconds": 0.013606,
+        "max_rss_bytes": 9682944,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 21689791,
+        "wall_seconds": 0.05171108301146887,
+        "user_cpu_seconds": 0.045868,
+        "system_cpu_seconds": 0.0032749999999999997,
+        "max_rss_bytes": 9715712,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 26699083,
+        "wall_seconds": 0.0552724169974681,
+        "user_cpu_seconds": 0.045010999999999995,
+        "system_cpu_seconds": 0.0032419999999999997,
+        "max_rss_bytes": 9633792,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 646670459,
+        "wall_seconds": 0.672773333004443,
+        "user_cpu_seconds": 0.648386,
+        "system_cpu_seconds": 0.006056,
+        "max_rss_bytes": 9633792,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 566340625,
+        "wall_seconds": 0.5900374999910127,
+        "user_cpu_seconds": 0.575809,
+        "system_cpu_seconds": 0.004484999999999999,
+        "max_rss_bytes": 9814016,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 15912417,
+        "wall_seconds": 0.05082545801997185,
+        "user_cpu_seconds": 0.033326,
+        "system_cpu_seconds": 0.0033179999999999998,
+        "max_rss_bytes": 9633792,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 36278916,
+        "wall_seconds": 0.07147691599675454,
+        "user_cpu_seconds": 0.047233,
+        "system_cpu_seconds": 0.003754,
+        "max_rss_bytes": 9568256,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "dense",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 597025333,
+        "wall_seconds": 0.6208965419791639,
+        "user_cpu_seconds": 0.598268,
+        "system_cpu_seconds": 0.006817999999999999,
+        "max_rss_bytes": 9043968,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 8337834,
+        "wall_seconds": 0.016586292011197656,
+        "user_cpu_seconds": 0.011205,
+        "system_cpu_seconds": 0.002754,
+        "max_rss_bytes": 5128192,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 4821458,
+        "wall_seconds": 0.015216916013741866,
+        "user_cpu_seconds": 0.008209,
+        "system_cpu_seconds": 0.003198,
+        "max_rss_bytes": 4980736,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 4855792,
+        "wall_seconds": 0.013675958005478606,
+        "user_cpu_seconds": 0.008402999999999999,
+        "system_cpu_seconds": 0.0026449999999999998,
+        "max_rss_bytes": 5013504,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 8168792,
+        "wall_seconds": 0.017135540983872488,
+        "user_cpu_seconds": 0.011701999999999999,
+        "system_cpu_seconds": 0.002715,
+        "max_rss_bytes": 5079040,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 9547208,
+        "wall_seconds": 0.017729457991663367,
+        "user_cpu_seconds": 0.012653,
+        "system_cpu_seconds": 0.002144,
+        "max_rss_bytes": 5095424,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 5818000,
+        "wall_seconds": 0.013012042007176206,
+        "user_cpu_seconds": 0.008453,
+        "system_cpu_seconds": 0.00213,
+        "max_rss_bytes": 5013504,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 4285917,
+        "wall_seconds": 0.009693041996797547,
+        "user_cpu_seconds": 0.006228,
+        "system_cpu_seconds": 0.001545,
+        "max_rss_bytes": 4947968,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 5421791,
+        "wall_seconds": 0.012512874993262812,
+        "user_cpu_seconds": 0.008019,
+        "system_cpu_seconds": 0.0023439999999999997,
+        "max_rss_bytes": 5193728,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 7644958,
+        "wall_seconds": 0.015940665995003656,
+        "user_cpu_seconds": 0.010782,
+        "system_cpu_seconds": 0.002408,
+        "max_rss_bytes": 5062656,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 3092875,
+        "wall_seconds": 0.010817208007210866,
+        "user_cpu_seconds": 0.005552,
+        "system_cpu_seconds": 0.002362,
+        "max_rss_bytes": 4931584,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 3150292,
+        "wall_seconds": 0.012247542006662115,
+        "user_cpu_seconds": 0.00577,
+        "system_cpu_seconds": 0.002366,
+        "max_rss_bytes": 4898816,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "shape": "sparse",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 5415459,
+        "wall_seconds": 0.014325958007248119,
+        "user_cpu_seconds": 0.008683,
+        "system_cpu_seconds": 0.0028929999999999997,
+        "max_rss_bytes": 5079040,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      }
+    ]
+  },
+  "fixture_summary": {
+    "dense": {
+      "legacy": {
+        "processes": 6,
+        "cpu_seconds": 3.6743249999999996,
+        "median_operation_wall_seconds": 0.621847896,
+        "mean_maximum_process_rss_bytes": 9606485.333333334
+      },
+      "candidate": {
+        "processes": 6,
+        "cpu_seconds": 0.266356,
+        "median_operation_wall_seconds": 0.0201839785,
+        "mean_maximum_process_rss_bytes": 9557333.333333334
+      },
+      "cpu_change_percent": -92.75088621719635,
+      "operation_wall_change_percent": -96.75419364931003
+    },
+    "sparse": {
+      "legacy": {
+        "processes": 6,
+        "cpu_seconds": 0.078302,
+        "median_operation_wall_seconds": 0.007906875,
+        "mean_maximum_process_rss_bytes": 5106346.666666667
+      },
+      "candidate": {
+        "processes": 6,
+        "cpu_seconds": 0.056860999999999995,
+        "median_operation_wall_seconds": 0.0045536875,
+        "mean_maximum_process_rss_bytes": 4964352
+      },
+      "cpu_change_percent": -27.382442338637592,
+      "operation_wall_change_percent": -42.40850525650147
+    }
+  },
+  "validation": {
+    "release_history_passed": 24,
+    "manual_fixture_ignored": 1,
+    "clippy": "strict release all-targets Clippy passed with -D warnings"
+  },
+  "app_comparison": {
+    "status": "pending",
+    "scope": "Production app comparison required; fixture savings do not establish app-wide CPU, footprint or wakeup savings."
+  },
+  "child_cpu_accounting_control": {
+    "status": "complete",
+    "scope": "Two sequential direct children each consume .3 seconds measured by their own process CPU clock; compare shell exec and explicit wait, with and without build sampler. No compiler work.",
+    "platform": "darwin",
+    "python": "3.14.7 (main, Aug  5 2026, 10:29:49) [Clang 17.0.0 (clang-1700.6.4.2)]",
+    "records": [
+      {
+        "shell": "exec",
+        "sampler": false,
+        "repeat": 0,
+        "children_self_reported_cpu": 0.6000840000000001,
+        "wait4_cpu": 0.33436699999999997
+      },
+      {
+        "shell": "exec",
+        "sampler": false,
+        "repeat": 1,
+        "children_self_reported_cpu": 0.600195,
+        "wait4_cpu": 0.33302799999999994
+      },
+      {
+        "shell": "exec",
+        "sampler": true,
+        "repeat": 0,
+        "children_self_reported_cpu": 0.600123,
+        "wait4_cpu": 0.39188,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-child-cpu-accounting/exec.sh",
+            "/opt/homebrew/opt/python@3.14/bin/python3.14",
+            "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-child-cpu-accounting/burn.py"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 0.743,
+          "user_cpu_seconds": 0.303,
+          "system_cpu_seconds": 0.023,
+          "average_cpu_percent": 44.0,
+          "sampled_peak_tree_rss_bytes": 2883584,
+          "rss_samples": 1,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        }
+      },
+      {
+        "shell": "exec",
+        "sampler": true,
+        "repeat": 1,
+        "children_self_reported_cpu": 0.6000890000000001,
+        "wait4_cpu": 0.42336799999999997,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-child-cpu-accounting/exec.sh",
+            "/opt/homebrew/opt/python@3.14/bin/python3.14",
+            "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-child-cpu-accounting/burn.py"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 0.775,
+          "user_cpu_seconds": 0.313,
+          "system_cpu_seconds": 0.02,
+          "average_cpu_percent": 43.0,
+          "sampled_peak_tree_rss_bytes": 311296,
+          "rss_samples": 1,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        }
+      },
+      {
+        "shell": "wait",
+        "sampler": false,
+        "repeat": 0,
+        "children_self_reported_cpu": 0.600249,
+        "wait4_cpu": 0.661034
+      },
+      {
+        "shell": "wait",
+        "sampler": false,
+        "repeat": 1,
+        "children_self_reported_cpu": 0.600046,
+        "wait4_cpu": 0.65655
+      },
+      {
+        "shell": "wait",
+        "sampler": true,
+        "repeat": 0,
+        "children_self_reported_cpu": 0.600044,
+        "wait4_cpu": 0.7324219999999999,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-child-cpu-accounting/wait.sh",
+            "/opt/homebrew/opt/python@3.14/bin/python3.14",
+            "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-child-cpu-accounting/burn.py"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 0.711,
+          "user_cpu_seconds": 0.627,
+          "system_cpu_seconds": 0.032,
+          "average_cpu_percent": 92.7,
+          "sampled_peak_tree_rss_bytes": 2752512,
+          "rss_samples": 1,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        }
+      },
+      {
+        "shell": "wait",
+        "sampler": true,
+        "repeat": 1,
+        "children_self_reported_cpu": 0.600123,
+        "wait4_cpu": 0.7401139999999999,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-child-cpu-accounting/wait.sh",
+            "/opt/homebrew/opt/python@3.14/bin/python3.14",
+            "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-child-cpu-accounting/burn.py"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 0.755,
+          "user_cpu_seconds": 0.631,
+          "system_cpu_seconds": 0.033,
+          "average_cpu_percent": 87.9,
+          "sampled_peak_tree_rss_bytes": 851968,
+          "rss_samples": 1,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        }
+      }
+    ],
+    "measurement_script_sha256": "23c3d3477074225ecd2e103f6202f4da6ef727de76d9182c0696fdf21de95d67"
+  },
+  "previous_compile_cohort": {
+    "status": "complete_cpu_comparison_invalid",
+    "retained_results": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop12-workspace-compile-graphs/results.json",
+    "summary": {
+      "cold": {
+        "baseline": {
+          "runs": 2,
+          "wall_seconds": [
+            199.331,
+            221.937
+          ],
+          "mean_wall_seconds": 210.63400000000001,
+          "sampled_peak_tree_rss_bytes": [
+            1467285504,
+            1509326848
+          ],
+          "mean_sampled_peak_tree_rss_bytes": 1488306176
+        },
+        "candidate": {
+          "runs": 2,
+          "wall_seconds": [
+            157.859,
+            228.358
+          ],
+          "mean_wall_seconds": 193.1085,
+          "sampled_peak_tree_rss_bytes": [
+            1289420800,
+            1181417472
+          ],
+          "mean_sampled_peak_tree_rss_bytes": 1235419136
+        }
+      },
+      "unchanged_repeat": {
+        "baseline": {
+          "runs": 2,
+          "wall_seconds": [
+            0.983,
+            1.085
+          ],
+          "mean_wall_seconds": 1.034,
+          "sampled_peak_tree_rss_bytes": [
+            458752,
+            75644928
+          ],
+          "mean_sampled_peak_tree_rss_bytes": 38051840
+        },
+        "candidate": {
+          "runs": 2,
+          "wall_seconds": [
+            1.775,
+            1.36
+          ],
+          "mean_wall_seconds": 1.5675,
+          "sampled_peak_tree_rss_bytes": [
+            38060032,
+            75563008
+          ],
+          "mean_sampled_peak_tree_rss_bytes": 56811520
+        }
+      }
+    },
+    "compiled_test_targets_per_phase": 25,
+    "verified_full_candidate_cases": 518,
+    "verified_full_candidate_passed": 511,
+    "verified_full_candidate_ignored": 7,
+    "limits": "Candidate shell exec loses the first Cargo child CPU on this host. CPU comparison invalid; retain wall/RSS observations, whose two cold runs per variant have wide spread. Warm repeats are slower with the extra Cargo invocation. Excludes test execution, Clippy, Swift and cache transfers; not whole CI. A corrected benchmark with matched explicit waits is prepared but not started."
+  },
+  "active_cpu_attribution": {
+    "status": "complete",
+    "retained_report": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-active-cpu-profile-v2/active-symbolization.json",
+    "scope": "Statistical Running-thread samples, not function durations; 30-second diagnostic baseline image, no candidate comparison; inclusive symbols overlap.",
+    "samples": 931,
+    "rust_frames_resolved": 318,
+    "swift_frames_resolved": 167,
+    "export_addresses_verified": 213,
+    "history_update_inclusive_samples": 162,
+    "history_samples_with_siphash_frame": 68,
+    "storage_capacity_enricher_inclusive_samples": 149,
+    "storage_capacity_enricher_samples_at_mach_msg_trap": 122,
+    "limit": "Statistical samples, not exclusive CPU durations. Symbol-free/unidentified frames remain unresolved. Inlined history stacks do not prove grouping accounts for all hash work. No app-wide or causal comparison."
+  }
+}

@@ -1257,11 +1257,14 @@
     }
   },
   "compiler_graph_comparison": {
-    "status": "running",
+    "status": "complete_cpu_comparison_invalid",
     "source_commit": "185ab0443333",
     "baseline_orchestration_commit": "097837d73273",
     "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop12-workspace-compile-graphs/results.json",
-    "scope": "four alternating cold test-compilation/runtime-product/generator-build pipelines, each followed by unchanged repeat; excludes test execution, Clippy, Swift and cache transfers; full candidate test execution follows separately against the passed baseline case/status counts; no performance benefit claimed yet"
+    "scope": "four alternating cold test-compilation/runtime-product/generator-build pipelines, each followed by unchanged repeat; excludes test execution, Clippy, Swift and cache transfers; full candidate test execution follows separately against the passed baseline case/status counts; no performance benefit claimed yet",
+    "candidate_test_execution": "518 exact case/status counts verified: 511 pass, 7 ignored",
+    "details": "performance-loop13.json",
+    "cpu_accounting": "Earlier child CPU is lost after the candidate shell exec on this host; independently reproduced with and without sampler. CPU comparison invalid; corrected matched-wait comparison prepared."
   },
   "active_cpu_followup": {
     "status": "recorded",
@@ -1401,6 +1404,20 @@
       ],
       "scope": "Time Profiler running-thread sample weights; statistical attribution, not measured function durations; raw Rust addresses still require the verified matching linker map"
     },
-    "limits": "30-second baseline diagnostic only; exact Rust source matches f41e21c11211, with pass-nine compiled Swift; source attribution of unknown Rust addresses and Swift frames remains pending; statistical sample weights are not function durations; only sanitized CPU tables retained"
+    "limits": "30-second baseline diagnostic only; exact Rust source matches f41e21c11211, with pass-nine compiled Swift; source attribution of unknown Rust addresses and Swift frames remains pending; statistical sample weights are not function durations; only sanitized CPU tables retained",
+    "symbolization": {
+      "status": "complete",
+      "retained_report": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-active-cpu-profile-v2/active-symbolization.json",
+      "scope": "Statistical Running-thread samples, not function durations; 30-second diagnostic baseline image, no candidate comparison; inclusive symbols overlap.",
+      "samples": 931,
+      "rust_frames_resolved": 318,
+      "swift_frames_resolved": 167,
+      "export_addresses_verified": 213,
+      "history_update_inclusive_samples": 162,
+      "history_samples_with_siphash_frame": 68,
+      "storage_capacity_enricher_inclusive_samples": 149,
+      "storage_capacity_enricher_samples_at_mach_msg_trap": 122,
+      "limit": "Statistical samples, not exclusive CPU durations. Symbol-free/unidentified frames remain unresolved. Inlined history stacks do not prove grouping accounts for all hash work. No app-wide or causal comparison."
+    }
   }
 }

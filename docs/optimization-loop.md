@@ -5,6 +5,43 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 13: index dense history grouping; verify child CPU accounting
+
+A matching-symbol diagnostic attributes 162 of 931 running-thread samples to
+history updates, including string hashing. Dense grouping now resolves each
+entity name once and uses its existing numeric ID across qualifying pairs.
+It preserves the original pair iteration order and first matching partner.
+Sparse graphs and indices disproportionate to active names use borrowed maps,
+so old interned IDs cannot cause large temporary arrays. Sampling cadence,
+thresholds, existing hints and displayed text remain unchanged.
+
+All **24 history release tests** and strict release Clippy for all targets pass;
+one manual fixture is ignored during normal tests. Oracle checks retain the
+original algorithm and cover both paths, multiple pair orders, duplicate IDs,
+missing names, Unicode/NUL text, thresholds, self-pairs and wrapped indices.
+Twenty-four retained release processes compare dense and sparse 500-entity
+graphs, with 50 operations in each process. Every variant emits the same
+**46,500 bytes**. Dense total CPU is **3.674325 → 0.266356s (-92.8%)**;
+sparse CPU is **0.078302 → 0.056861s (-27.4%)**. Mean maximum-process RSS
+is 9.16 → 9.11 MiB for dense graphs and 4.87 → 4.73 MiB for sparse graphs,
+but includes shared setup and validation of both algorithms. It cannot isolate
+helper memory savings. Production app comparison remains pending; these fixture
+results establish no app-wide CPU, physical-footprint or wakeup improvement.
+
+The compiler-only generator-feature cohort completed and its candidate separately
+passed exactly the original **518 cases: 511 passed, seven ignored**. Every
+compilation phase selected the same 25 test targets. Its CPU comparison is
+invalid: the candidate shell waits for Cargo and later uses `exec`, after which
+this host loses the earlier child's CPU from the reported descendant totals.
+An independent probe reproduces this with and without the sampler: two children
+reporting 0.3 CPU seconds each produce roughly 0.33s after `exec`, versus 0.66s
+with explicit waits. The cohort and wall/RSS observations remain retained;
+cold timings have wide spread, and unchanged candidate repeats are slower.
+A corrected comparison is prepared using matched explicit waits in both retained
+benchmark scripts. Production orchestration is unchanged. This remains a local
+compiler comparison, excluding execution, Clippy, Swift and cache transfers.
+Detailed evidence is in [`performance-loop13.json`](performance-loop13.json).
+
 ## Pass 12: compare borrowed host trends and metric cards
 
 Host-trend and metric-card change detection now compares borrowed fields
@@ -62,18 +99,20 @@ candidate pipeline ran. The failed cohort is retained; no build saving is claime
 The same completion test passes alone in 0.27 seconds with the retained binary,
 and all 161 storage tests pass as a group. The intermittent failure remains
 unexplained; no test deadline or production storage behavior was changed.
-The next comparison will isolate test compilation and subsequent product builds,
-then verify candidate test execution separately against the passed baseline's
-case/status counts. Those compilation timings will exclude test execution and
-must not be presented as a complete CI-job saving. Evidence
+The subsequent compiler-only cohort and separate candidate execution completed.
+The candidate matches all 518 case/status counts, but shell-exec accounting
+invalidates its CPU comparison; see pass 13. The retained compilation timings
+exclude test execution and cannot represent a complete CI-job saving. Evidence
 and current limits are in [`performance-loop12.json`](performance-loop12.json).
 
 A separate 30-second Time Profiler diagnostic of retained baseline sources
 records 931 running-thread samples: 61.3% of sample weight is on the main thread
 and 32.4% on one worker. Matching Swift symbols and a Rust linker map are
-retained, with 213 exported addresses independently verified. Source attribution
-is still pending; these sample weights are not function durations or an A/B
-result. Only sanitized CPU-table exports remain; the raw trace was deleted.
+retained, with 213 exported addresses independently verified. Symbol resolution verifies 318 Rust frames and 167 Swift frame addresses.
+History updates appear in 162 samples; storage-capacity enrichment appears in
+149, including 122 at a system message trap. These are overlapping statistical
+weights, not exclusive CPU durations or an A/B result. Unidentified frames
+remain unresolved. Only sanitized CPU-table exports remain; the raw trace was deleted.
 
 ## Pass 11: compile decoder correctness checks once; reject native UTF-8 trial
 
