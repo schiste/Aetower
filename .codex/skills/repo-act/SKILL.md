@@ -23,6 +23,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
 - Run the fastest relevant test command first.
 - Check likely entrypoints and impacted callers before finishing.
 - Re-run lint/build only after the focused validation passes.
+- Check temporary-volume free space against application write reserves before
+  interpreting persistence-test failures. When relocating `TMPDIR`, preserve
+  Unix socket path limits with a short alias and rerun the unchanged suite;
+  retain the original failure rather than weakening storage guards or deadlines.
 - Document any override-based maintainer note that affected the change plan.
 - For build-performance work, measure clean and unchanged repeat builds separately
   with the same toolchain, Cargo package/feature selection, profile, job count and compiler-cache settings. Record
