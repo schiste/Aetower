@@ -36,6 +36,11 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   counts need not limit frontend threads; forwarded flags and compiler wrappers
   may be overridden or bypassed by an integrated driver. Verify the effective
   limit on a small real build before applying it to the app or claiming a cap.
+  For compiler-command replay, retain temporary response files and output maps
+  while the driver is alive; captured arguments may reference expired files.
+  If reconstructing or omitting output-only inputs for a diagnostic, record
+  that transformation, redirect outputs privately and verify source/import
+  hashes before and after. A partial diagnostic is not a full-build comparison.
 - Report wall time and CPU seconds alongside memory. Label memory as either
   largest-process RSS or sampled aggregate tree RSS; they are not interchangeable.
   Shared compiler-cache servers can execute outside the measured process tree:
@@ -54,6 +59,9 @@ description: Use after repo-onboarding or Explore when moving from orientation i
 - For retained Rust test benchmarks, verify the fully qualified filter executes
   the measured test. Require its result marker and expected workload counts;
   libtest can exit successfully when a filter selects zero tests.
+  When output depends on hash-map iteration, value equality alone is insufficient:
+  clone the hash builder for old/new oracles and compare actual iteration order
+  and emitted output across reorderings, duplicates and membership changes.
 - For CI ordering or cache changes, measure the entire job, including restores
   and failure-path saves. Verify that an early rejection reports the same policy
   findings and skips expensive transfers; faster failure is not a passing gate.
