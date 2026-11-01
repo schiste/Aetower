@@ -1,5 +1,5 @@
 {
-  "status": "source_and_fixture_validated_packaging_and_app_pending",
+  "status": "source_fixture_and_package_validated_app_comparison_running",
   "change": "For dense graphs with disproportionate historical indices, track successful grouping partners with a bounded bitset (at most 8 KiB). Existing dense short-index path and sparse borrowed maps remain. Empty names return early. Pair order, first successful partner, thresholds, text, schema and cadence preserved.",
   "history_source_sha256": "76c2bb040cdced3bf1f3560b0051b6b27c63c59446230e0c690ed228707f9cb1",
   "fixture": {
@@ -80,8 +80,9 @@
     "oracles": "Original algorithm plus immediately preceding helper; dense/sparse short/maximal indices, multiple pair orders, threshold edges, duplicate/missing names, Unicode/NUL, self-pairs and empty names."
   },
   "app_comparison": {
-    "status": "pending",
-    "scope": "Production app comparison required. Dense-high-index fixture savings do not establish this branch is active in current idle app workloads or establish app-wide CPU, physical footprint or wakeup savings."
+    "status": "running",
+    "scope": "Production app comparison required. Dense-high-index fixture savings do not establish this branch is active in current idle app workloads or establish app-wide CPU, physical footprint or wakeup savings.",
+    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/measurements/loop14-hidden-runtime-v1/summary.json"
   },
   "build_axis": {
     "production_accounting_fix_commit": "185a50f3644e",
@@ -102,5 +103,133 @@
   "limits": [
     "Dense-high-index process CPU falls 90.6%; unchanged short dense path observes -2.8%, sparse +6.3%, sparse high index +3.0%. Sparse regressions remain visible; no broad helper or app-wide gain claimed.",
     "Maximum process RSS includes common setup/oracle checks; dense-high-index mean rises 11.04 to 11.25 MiB. No helper memory saving established."
-  ]
+  ],
+  "production_package": {
+    "command": [
+      "sh",
+      "scripts/package-macos.sh"
+    ],
+    "cwd": "/private/tmp/aetower-build-performance",
+    "exit_status": 0,
+    "wall_seconds": 129.323,
+    "user_cpu_seconds": 123.122,
+    "system_cpu_seconds": 7.401,
+    "average_cpu_percent": 100.9,
+    "sampled_peak_tree_rss_bytes": 653000704,
+    "rss_samples": 124,
+    "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed",
+    "scope": "Absolute production packaging cost using existing compiler caches, two package jobs and ad-hoc signing; no notarization or stapling. Not a comparative build result."
+  },
+  "retained_app_pair": {
+    "source_commit": "7b613d8e21181d5b4a447f39847f77fee217a2b8",
+    "production_rust_diff_from_baseline": " rust/crates/aetower-history/src/lib.rs | 186 +++++++++++++++++++++++++++++++--\n 1 file changed, 178 insertions(+), 8 deletions(-)\n",
+    "bindings_sha256": "ef9bef0300b0f7153cac17f3d7821782aaf7fe60e3cb120f1a1ecf7681d93cad",
+    "build_environment": {
+      "RUSTFLAGS": null,
+      "CARGO_ENCODED_RUSTFLAGS": null,
+      "CARGO_PROFILE_RELEASE_DEBUG": null,
+      "CARGO_PROFILE_RELEASE_LTO": null
+    },
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-baseline/Aetower.app",
+        "source": "33cfa0e262e0 production Rust; bounded indexed grouping with borrowed-map historical fallback; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "87ce728febf3f1e368458acbd8aad582b4ef1a3fbee1596e56555425729fda59",
+        "rust_sha256": "43f4a9823d2140a6c72aabec6587bda5fe0bbe2a42ce963b646cdf60be0ef3f0",
+        "rust_uuid": "11E83747-048B-34D6-AE0B-A1F50C6B95A1",
+        "variant": "baseline",
+        "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.9.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1068",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-candidate/Aetower.app",
+        "source": "7b613d8e2118 production Rust; bounded bitset grouping for dense graphs with disproportionate historical indices; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "1d7086cb86eff144de6f549f32d1dcd6a9612ebec62720ce8d579b63ce6cedb8",
+        "rust_sha256": "5d10830681f2b023d30901da2746c090664c4b96beef5e20dc4d39b887cd65bc",
+        "rust_uuid": "5CC71201-CD6B-3411-B19B-E4900678853E",
+        "variant": "candidate",
+        "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.9.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1068",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+      }
+    ],
+    "scope": "same production package with only baseline Rust dylib replaced, then ad-hoc re-signed; identical unsigned compiled Swift, metadata and other nonsignature payload files",
+    "common_file_count": 110,
+    "common_files_sha256": "34aaf906f4c56fe3c80c157197aaf8d9d7c8e84de49cf8272f7930343ea2c58f",
+    "baseline_library_retained_source": {
+      "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-candidate/Aetower.app",
+      "source": "33cfa0e262e0 production Rust; bounded indexed grouping for dense graphs and borrowed keys for sparse graphs; common compiled Swift, metadata and other dependencies",
+      "executable_sha256": "8f403f8f242e498bfebf05dadaafceda6e211b454762e49fde9853108adecb85",
+      "rust_sha256": "43f4a9823d2140a6c72aabec6587bda5fe0bbe2a42ce963b646cdf60be0ef3f0",
+      "rust_uuid": "11E83747-048B-34D6-AE0B-A1F50C6B95A1",
+      "variant": "candidate",
+      "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+      "info_plist": {
+        "CFBundleDisplayName": "Aetower",
+        "CFBundleExecutable": "Aetower",
+        "CFBundleIdentifier": "com.aetower.app",
+        "CFBundleIconFile": "Aetower",
+        "CFBundleName": "Aetower",
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": "0.9.0",
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "com.aetower.app.oauth",
+            "CFBundleURLSchemes": [
+              "aetower"
+            ]
+          }
+        ],
+        "CFBundleVersion": "1065",
+        "LSMinimumSystemVersion": "15.0",
+        "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+        "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+        "SUEnableAutomaticChecks": true
+      },
+      "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+    }
+  }
 }

@@ -29,9 +29,12 @@ and this candidate across four 500-entity graph shapes. All emit identical
 observe **+6.3%** and sparse high-index graphs **+3.0%**. These unfavorable
 observations remain visible. Common setup and oracle validation limit memory
 attribution: dense high-index mean maximum-process RSS rises **11.04 → 11.25
-MiB**. No helper memory saving is established. Production packaging and a fresh
-app comparison are pending; whether this branch is active in the current idle
-app workload is unverified.
+MiB**. No helper memory saving is established. Production packaging passes at
+129.323s wall, 130.523 CPU seconds and 622.75 MiB sampled peak tree RSS using
+existing caches; these are absolute costs, not a build comparison. The retained
+app pair shares identical unsigned Swift code, metadata and 110 common payload
+files, with only Rust changed. A fresh hidden-idle ABBA app comparison is running;
+whether the new branch is active in that idle workload remains unverified.
 
 A small real Swift probe finds **ten frontend threads** with both default and
 native backends at two package jobs. An explicit `-num-threads 2` is honored by
