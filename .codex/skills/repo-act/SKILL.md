@@ -48,6 +48,9 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   invalidate the affected CPU comparison; rerun both variants with matched
   explicit waits or separately recorded child receipts. Document any benchmark
   orchestration transformation rather than treating missing CPU as a saving.
+  When fixing accounting, exercise the real orchestration wrapper with
+  self-measuring child stubs. Verify both total CPU and failure propagation,
+  and check that the regression detects missing CPU in the retained old wrapper.
 - For retained Rust test benchmarks, verify the fully qualified filter executes
   the measured test. Require its result marker and expected workload counts;
   libtest can exit successfully when a filter selects zero tests.
