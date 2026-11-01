@@ -78,6 +78,46 @@ whether dynamic-only bridge emission avoids unused static-archive work without
 introducing duplicated feature-graph compilation. Evidence is in
 [`performance-loop16.json`](performance-loop16.json).
 
+The first bridge probe confirms equal exported symbols, but a separate FFI-only
+Cargo graph omits `syn/full` and recompiles **16 targets**; the following CLI/MCP
+step recompiles **22**. The initial baseline also rebuilds changed runtime inputs,
+so its timings do not form a matched comparison. This split is not adopted.
+A new four-phase ABBA comparison preserves the existing multi-product graph and
+varies only `cdylib+staticlib` versus `cdylib` in the bridge manifest. Each phase
+cleans only FFI, measures the complete release Rust/binding script and an unchanged
+repeat, audits actual compiled/fresh artifacts and preserves generated-binding
+hashes/timestamps plus CLI/MCP product hashes. The original manifest is restored
+in `finally`; no artifact-type default is adopted yet. The first warm-up failed
+with `No space left on device` writing a compiler object to the internal target
+cache; zero comparison samples were collected and the manifest was restored.
+All **1,453,941,048 cached file bytes** and timestamps are verified on the
+external volume before removing the owned original and linking its old path to
+the relocated cache. Internal free space rises to **1,602,547,712 bytes**. The
+fresh versioned warm-up recompiles only FFI, reusing the copied dependencies.
+The fresh ABBA comparison completes. Each rebuild compiles **only FFI** and each
+unchanged repeat compiles nothing. Means are wall **53.127 → 52.560s**, CPU
+**82.323 → 81.515s**, sampled peak tree RSS **898.12 → 826.64 MiB (-8.0%)**.
+CPU/wall are essentially flat amid large within-variant variation; only two
+rebuilds per variant and shared-host load limit generalization. Unchanged-repeat
+means are wall **1.356 → 1.464s**, CPU **0.692 → 0.601s**; their sampled RSS is
+not interpretable at one-second resolution.
+
+Dynamic-only emission omits the **24,080,992-byte (23.0 MiB)** static archive.
+Bindings and timestamps, CLI/MCP hashes and exported symbol lists match; dylib
+size is identical, but code-section hashes differ, so machine-code identity is
+not claimed. Retain the dynamic-only default while keeping explicit archive
+emission available through `cargo rustc --crate-type cdylib,staticlib`. The app
+build removes exact obsolete root/deps archive paths after a successful selected
+profile build, preventing older cache contents from leaving a stale bridge.
+The measured artifact-selection comparison precedes this cleanup addition;
+production package validation is pending. No whole-CI or app gain is established.
+
+**15 build-pipeline regressions** pass, including selected-profile stale-archive
+cleanup and failure preservation. The quality guard passes. Both complete test
+graphs compile with the new default and preserve all **25 logical executable
+targets**; the FFI cases rerun with identical statuses. The source implementation
+already passed all 517 workspace cases before the artifact-default change.
+
 ## Pass 15: reverted active-set cache; Swift optimizer diagnostics
 
 The now-reverted cooccurrence proposal retained sorted unique active indices. Pair increments

@@ -1,5 +1,5 @@
 {
-  "status": "network_source_validated_bridge_build_probe_pending",
+  "status": "runtime_and_build_changes_published_package_validation_pending",
   "runtime_experiment": {
     "status": "rejected_not_retained_in_production_source",
     "proposal": "For changed cooccurrence membership, use a u16-domain bounded bitset only when requested bit payload is no larger than the active-index u16 payload; retain HashSet for sparse historical indices. Keep the prior unchanged-membership cache.",
@@ -496,5 +496,627 @@
       "failure": "chau7::tests::repeated_fetches_close_chau7_socket_connections: path must be shorter than SUN_LEN",
       "resolution_under_validation": "Confirmed: short TMPDIR alias to external volume passes the complete unchanged suite, 517 passed and nine ignored."
     }
+  },
+  "bridge_split_probe": {
+    "status": "complete_split_not_adopted",
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-ffi-linkage-probe-v1/results.json",
+    "receipt_sha256": "a299876e9b34f05c36ff372561c5980023301f0434d40f6c2e7521f9aa8f04ad",
+    "inputs_unchanged": true,
+    "same_exported_symbols": true,
+    "scope": "Exploratory baseline multi-product build followed by dynamic-only FFI split build, current warm dependency cache. First invocation updates the changed runtime source; not a matched timing comparison. Compilation artifacts reveal whether splitting changes feature-graph work. No production script edits.",
+    "compiled_targets_by_step": {
+      "baseline": 20,
+      "dynamic": 16,
+      "cli-repeat": 22
+    },
+    "observed_feature_difference": "syn 3.0.6 full is enabled in the existing multi-product graph and absent from the FFI-only graph. FFI-only compiles 16 targets and the subsequent CLI/MCP build compiles 22 targets. These are not matched timing samples; the initial baseline also rebuilds changed runtime inputs.",
+    "decision": "Do not split the bridge into a separate cargo rustc invocation in the production pipeline; test artifact selection while retaining the existing multi-product package/feature graph."
+  },
+  "bridge_artifact_experiment": {
+    "status": "dynamic_default_retained_package_and_app_validation_pending",
+    "controller": "tmp/loop16-ffi-artifact-comparison-v2.py",
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-ffi-artifact-comparison-v2/results.json",
+    "scope": "Four ABBA full production release Rust/binding pipeline runs with warm dependencies and only FFI cleaned before each; unchanged repeat per phase. Vary only FFI manifest cdylib+staticlib vs cdylib. Same package/feature selection; output-only Cargo JSON wrapper audits compiled/fresh targets. Original manifest restored in finally. Excludes fully cold workspace, Swift/package, transfers and whole CI.",
+    "adoption": "Retain cdylib-only default and remove exact obsolete archive paths after successful app-profile builds. Static archives remain available explicitly through cargo rustc --crate-type cdylib,staticlib. The comparison isolates manifest artifact selection before the stale-archive cleanup was added; final package validation is pending.",
+    "failed_warmup": {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-ffi-artifact-comparison-v1/results.json",
+      "error": "No space left on device writing FFI compiler object to this worktree Cargo target cache",
+      "original_manifest_restored": true,
+      "valid_comparison_samples": 0,
+      "guard_receipt": "fe4fd2c486d42dc20c3817e74ebc6353"
+    },
+    "receipt_sha256": "f05a83b6b1af40f24cda41aa840c994b3c4ee6fdcd392cad613736a02579a707",
+    "phases": [
+      {
+        "label": "A1",
+        "variant": "baseline",
+        "status": "complete",
+        "host_load_start": [
+          10.798828125,
+          11.05859375,
+          11.92529296875
+        ],
+        "rebuild": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 60.7,
+            "user_cpu_seconds": 84.854,
+            "system_cpu_seconds": 2.79,
+            "average_cpu_percent": 144.4,
+            "sampled_peak_tree_rss_bytes": 941932544,
+            "rss_samples": 59,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [
+            [
+              "aetower_ffi",
+              [
+                "cdylib",
+                "staticlib"
+              ],
+              [
+                "cdylib",
+                "staticlib"
+              ]
+            ]
+          ],
+          "artifacts": 314
+        },
+        "unchanged_repeat": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 1.624,
+            "user_cpu_seconds": 0.484,
+            "system_cpu_seconds": 0.308,
+            "average_cpu_percent": 48.7,
+            "sampled_peak_tree_rss_bytes": 2605056,
+            "rss_samples": 2,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [],
+          "artifacts": 314
+        },
+        "dylib_bytes": 11292056,
+        "dylib_sha256": "5be092b4ba4beefeceffcc9a41f3a5997ec73c2f00ccab860c1f20dabe8d097d",
+        "sections": {
+          "__TEXT,__text": {
+            "bytes": 8953004,
+            "sha256": "e54f39296b12bb1384823e66379bea6144bd281c2e0db1dd1cc2f2461aa007c4"
+          },
+          "__TEXT,__stubs": {
+            "bytes": 3000,
+            "sha256": "07b8b25dfe5ffc786345faa2f4c648ade2d5e695f007176ad4b2784287892bae"
+          },
+          "__TEXT,__stub_helper": {
+            "bytes": 3024,
+            "sha256": "d429e693e9fce94278b883467f5ff3efcc3a47bc72f9aa1ed1c84c15f8e50063"
+          },
+          "__TEXT,__cstring": {
+            "bytes": 71279,
+            "sha256": "4c01fef44c779fd7263b04340077f881eff6e5db7845a0715038d2134147f6c4"
+          },
+          "__TEXT,__gcc_except_tab": {
+            "bytes": 282864,
+            "sha256": "1349cf08c9009f8d86535be934928c2ece356a60181c2bc79f4867e2528e316e"
+          },
+          "__TEXT,__const": {
+            "bytes": 899400,
+            "sha256": "8d7681d1a58fb3692f24a35524c88b6a72b4f6c22750bf89d96437df1bf56009"
+          },
+          "__TEXT,__unwind_info": {
+            "bytes": 98912,
+            "sha256": "51d260e30baa82aa1b527256cf4ed889d86de38211caad9b17d59707e6a9d332"
+          },
+          "__TEXT,__eh_frame": {
+            "bytes": 576908,
+            "sha256": "780d0d7984f19bb2f705171846d73f984f02025f4700c9c8246292cfe3d318d4"
+          },
+          "__DATA_CONST,__const": {
+            "bytes": 187088,
+            "sha256": "70e12c7bc92d0268e34507ba9c4eb6e3fe9db59d7813b54fe8b8354ff9da1b67"
+          },
+          "__DATA_CONST,__got": {
+            "bytes": 80,
+            "sha256": "420979138761afd97b9afee3c0f2736ceb517bb2cff64ebcebfc3e8270a1776f"
+          },
+          "__DATA,__la_symbol_ptr": {
+            "bytes": 2000,
+            "sha256": "d40c5c46b057e7055381ea81e3085cef0b0b437ddb6180ad0300a9a8827a91ac"
+          },
+          "__DATA,__data": {
+            "bytes": 18432,
+            "sha256": "62e0aefd86eb2d4c3fb14a5259e7ac9d1e188c8ead064c2100c5be503d942114"
+          },
+          "__DATA,__thread_vars": {
+            "bytes": 312,
+            "sha256": "65e82d79861768538b8d6272d10666aaa57c777a050c864eb3e94c441b620068"
+          },
+          "__DATA,__thread_data": {
+            "bytes": 33,
+            "sha256": "a65da3a8c2866e0b7a3394aa55334eafefc46a0afe38987cb10a8ecbcc2fd419"
+          }
+        },
+        "exports_sha256": "455e4d7d0baaab3f6780273c596e38aca039768fd3647450679cf56100054433",
+        "static_archive_bytes": 24080992,
+        "bindings_and_cli_products_unchanged": true,
+        "host_load_end": [
+          10.5654296875,
+          11.14208984375,
+          11.90869140625
+        ]
+      },
+      {
+        "label": "B1",
+        "variant": "candidate",
+        "status": "complete",
+        "host_load_start": [
+          10.5654296875,
+          11.14208984375,
+          11.90869140625
+        ],
+        "rebuild": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 58.002,
+            "user_cpu_seconds": 88.711,
+            "system_cpu_seconds": 3.039,
+            "average_cpu_percent": 158.2,
+            "sampled_peak_tree_rss_bytes": 838598656,
+            "rss_samples": 57,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [
+            [
+              "aetower_ffi",
+              [
+                "cdylib"
+              ],
+              [
+                "cdylib"
+              ]
+            ]
+          ],
+          "artifacts": 314
+        },
+        "unchanged_repeat": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 1.912,
+            "user_cpu_seconds": 0.41,
+            "system_cpu_seconds": 0.245,
+            "average_cpu_percent": 34.3,
+            "sampled_peak_tree_rss_bytes": 2572288,
+            "rss_samples": 2,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [],
+          "artifacts": 314
+        },
+        "dylib_bytes": 11292056,
+        "dylib_sha256": "3b4708b7978f2ed5391369cf90f32e8d05e4772d96f7982cfb3186662bccb85b",
+        "sections": {
+          "__TEXT,__text": {
+            "bytes": 8953004,
+            "sha256": "dcfdd2823a9a35b15a9c2ebd2b6a7e315a05cc32fd3a95631c689a92d7adff30"
+          },
+          "__TEXT,__stubs": {
+            "bytes": 3000,
+            "sha256": "07b8b25dfe5ffc786345faa2f4c648ade2d5e695f007176ad4b2784287892bae"
+          },
+          "__TEXT,__stub_helper": {
+            "bytes": 3024,
+            "sha256": "d429e693e9fce94278b883467f5ff3efcc3a47bc72f9aa1ed1c84c15f8e50063"
+          },
+          "__TEXT,__cstring": {
+            "bytes": 71279,
+            "sha256": "4c01fef44c779fd7263b04340077f881eff6e5db7845a0715038d2134147f6c4"
+          },
+          "__TEXT,__gcc_except_tab": {
+            "bytes": 282864,
+            "sha256": "0bd287e08f0290858954bb6f65ab8ac384979dad0a059396da568ba771c1d847"
+          },
+          "__TEXT,__const": {
+            "bytes": 899400,
+            "sha256": "95d4fee018a5257aec9e329aeeb7dd93e9b77d282e375d8a68b2566be67836f1"
+          },
+          "__TEXT,__unwind_info": {
+            "bytes": 98912,
+            "sha256": "a0fdf50292d362a22223af656c39bfc7f4f193bc4611c7313f42adf9a20dcb6f"
+          },
+          "__TEXT,__eh_frame": {
+            "bytes": 576908,
+            "sha256": "2b2b1ffdf0ae43b69fdca26a94ef31cd6472696a1a97f0328b2954057562eac1"
+          },
+          "__DATA_CONST,__const": {
+            "bytes": 187088,
+            "sha256": "6a0738219bec12528e67419b6c9f9077409735590882d343fa14ba6b385e8a1a"
+          },
+          "__DATA_CONST,__got": {
+            "bytes": 80,
+            "sha256": "420979138761afd97b9afee3c0f2736ceb517bb2cff64ebcebfc3e8270a1776f"
+          },
+          "__DATA,__la_symbol_ptr": {
+            "bytes": 2000,
+            "sha256": "d40c5c46b057e7055381ea81e3085cef0b0b437ddb6180ad0300a9a8827a91ac"
+          },
+          "__DATA,__data": {
+            "bytes": 18432,
+            "sha256": "62e0aefd86eb2d4c3fb14a5259e7ac9d1e188c8ead064c2100c5be503d942114"
+          },
+          "__DATA,__thread_vars": {
+            "bytes": 312,
+            "sha256": "65e82d79861768538b8d6272d10666aaa57c777a050c864eb3e94c441b620068"
+          },
+          "__DATA,__thread_data": {
+            "bytes": 33,
+            "sha256": "a65da3a8c2866e0b7a3394aa55334eafefc46a0afe38987cb10a8ecbcc2fd419"
+          }
+        },
+        "exports_sha256": "455e4d7d0baaab3f6780273c596e38aca039768fd3647450679cf56100054433",
+        "static_archive_bytes": 0,
+        "bindings_and_cli_products_unchanged": true,
+        "host_load_end": [
+          12.40087890625,
+          11.4375,
+          11.95703125
+        ]
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "status": "complete",
+        "host_load_start": [
+          12.40087890625,
+          11.4375,
+          11.95703125
+        ],
+        "rebuild": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 47.118,
+            "user_cpu_seconds": 69.409,
+            "system_cpu_seconds": 1.871,
+            "average_cpu_percent": 151.3,
+            "sampled_peak_tree_rss_bytes": 894992384,
+            "rss_samples": 46,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [
+            [
+              "aetower_ffi",
+              [
+                "cdylib"
+              ],
+              [
+                "cdylib"
+              ]
+            ]
+          ],
+          "artifacts": 314
+        },
+        "unchanged_repeat": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 1.016,
+            "user_cpu_seconds": 0.344,
+            "system_cpu_seconds": 0.203,
+            "average_cpu_percent": 53.8,
+            "sampled_peak_tree_rss_bytes": 2408448,
+            "rss_samples": 1,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [],
+          "artifacts": 314
+        },
+        "dylib_bytes": 11292056,
+        "dylib_sha256": "3b4708b7978f2ed5391369cf90f32e8d05e4772d96f7982cfb3186662bccb85b",
+        "sections": {
+          "__TEXT,__text": {
+            "bytes": 8953004,
+            "sha256": "dcfdd2823a9a35b15a9c2ebd2b6a7e315a05cc32fd3a95631c689a92d7adff30"
+          },
+          "__TEXT,__stubs": {
+            "bytes": 3000,
+            "sha256": "07b8b25dfe5ffc786345faa2f4c648ade2d5e695f007176ad4b2784287892bae"
+          },
+          "__TEXT,__stub_helper": {
+            "bytes": 3024,
+            "sha256": "d429e693e9fce94278b883467f5ff3efcc3a47bc72f9aa1ed1c84c15f8e50063"
+          },
+          "__TEXT,__cstring": {
+            "bytes": 71279,
+            "sha256": "4c01fef44c779fd7263b04340077f881eff6e5db7845a0715038d2134147f6c4"
+          },
+          "__TEXT,__gcc_except_tab": {
+            "bytes": 282864,
+            "sha256": "0bd287e08f0290858954bb6f65ab8ac384979dad0a059396da568ba771c1d847"
+          },
+          "__TEXT,__const": {
+            "bytes": 899400,
+            "sha256": "95d4fee018a5257aec9e329aeeb7dd93e9b77d282e375d8a68b2566be67836f1"
+          },
+          "__TEXT,__unwind_info": {
+            "bytes": 98912,
+            "sha256": "a0fdf50292d362a22223af656c39bfc7f4f193bc4611c7313f42adf9a20dcb6f"
+          },
+          "__TEXT,__eh_frame": {
+            "bytes": 576908,
+            "sha256": "2b2b1ffdf0ae43b69fdca26a94ef31cd6472696a1a97f0328b2954057562eac1"
+          },
+          "__DATA_CONST,__const": {
+            "bytes": 187088,
+            "sha256": "6a0738219bec12528e67419b6c9f9077409735590882d343fa14ba6b385e8a1a"
+          },
+          "__DATA_CONST,__got": {
+            "bytes": 80,
+            "sha256": "420979138761afd97b9afee3c0f2736ceb517bb2cff64ebcebfc3e8270a1776f"
+          },
+          "__DATA,__la_symbol_ptr": {
+            "bytes": 2000,
+            "sha256": "d40c5c46b057e7055381ea81e3085cef0b0b437ddb6180ad0300a9a8827a91ac"
+          },
+          "__DATA,__data": {
+            "bytes": 18432,
+            "sha256": "62e0aefd86eb2d4c3fb14a5259e7ac9d1e188c8ead064c2100c5be503d942114"
+          },
+          "__DATA,__thread_vars": {
+            "bytes": 312,
+            "sha256": "65e82d79861768538b8d6272d10666aaa57c777a050c864eb3e94c441b620068"
+          },
+          "__DATA,__thread_data": {
+            "bytes": 33,
+            "sha256": "a65da3a8c2866e0b7a3394aa55334eafefc46a0afe38987cb10a8ecbcc2fd419"
+          }
+        },
+        "exports_sha256": "455e4d7d0baaab3f6780273c596e38aca039768fd3647450679cf56100054433",
+        "static_archive_bytes": 0,
+        "bindings_and_cli_products_unchanged": true,
+        "host_load_end": [
+          8.775390625,
+          10.5849609375,
+          11.609375
+        ]
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "status": "complete",
+        "host_load_start": [
+          8.775390625,
+          10.5849609375,
+          11.609375
+        ],
+        "rebuild": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 45.554,
+            "user_cpu_seconds": 75.137,
+            "system_cpu_seconds": 1.865,
+            "average_cpu_percent": 169.0,
+            "sampled_peak_tree_rss_bytes": 941555712,
+            "rss_samples": 45,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [
+            [
+              "aetower_ffi",
+              [
+                "cdylib",
+                "staticlib"
+              ],
+              [
+                "cdylib",
+                "staticlib"
+              ]
+            ]
+          ],
+          "artifacts": 314
+        },
+        "unchanged_repeat": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 1.087,
+            "user_cpu_seconds": 0.363,
+            "system_cpu_seconds": 0.229,
+            "average_cpu_percent": 54.4,
+            "sampled_peak_tree_rss_bytes": 25952256,
+            "rss_samples": 2,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [],
+          "artifacts": 314
+        },
+        "dylib_bytes": 11292056,
+        "dylib_sha256": "5be092b4ba4beefeceffcc9a41f3a5997ec73c2f00ccab860c1f20dabe8d097d",
+        "sections": {
+          "__TEXT,__text": {
+            "bytes": 8953004,
+            "sha256": "e54f39296b12bb1384823e66379bea6144bd281c2e0db1dd1cc2f2461aa007c4"
+          },
+          "__TEXT,__stubs": {
+            "bytes": 3000,
+            "sha256": "07b8b25dfe5ffc786345faa2f4c648ade2d5e695f007176ad4b2784287892bae"
+          },
+          "__TEXT,__stub_helper": {
+            "bytes": 3024,
+            "sha256": "d429e693e9fce94278b883467f5ff3efcc3a47bc72f9aa1ed1c84c15f8e50063"
+          },
+          "__TEXT,__cstring": {
+            "bytes": 71279,
+            "sha256": "4c01fef44c779fd7263b04340077f881eff6e5db7845a0715038d2134147f6c4"
+          },
+          "__TEXT,__gcc_except_tab": {
+            "bytes": 282864,
+            "sha256": "1349cf08c9009f8d86535be934928c2ece356a60181c2bc79f4867e2528e316e"
+          },
+          "__TEXT,__const": {
+            "bytes": 899400,
+            "sha256": "8d7681d1a58fb3692f24a35524c88b6a72b4f6c22750bf89d96437df1bf56009"
+          },
+          "__TEXT,__unwind_info": {
+            "bytes": 98912,
+            "sha256": "51d260e30baa82aa1b527256cf4ed889d86de38211caad9b17d59707e6a9d332"
+          },
+          "__TEXT,__eh_frame": {
+            "bytes": 576908,
+            "sha256": "780d0d7984f19bb2f705171846d73f984f02025f4700c9c8246292cfe3d318d4"
+          },
+          "__DATA_CONST,__const": {
+            "bytes": 187088,
+            "sha256": "70e12c7bc92d0268e34507ba9c4eb6e3fe9db59d7813b54fe8b8354ff9da1b67"
+          },
+          "__DATA_CONST,__got": {
+            "bytes": 80,
+            "sha256": "420979138761afd97b9afee3c0f2736ceb517bb2cff64ebcebfc3e8270a1776f"
+          },
+          "__DATA,__la_symbol_ptr": {
+            "bytes": 2000,
+            "sha256": "d40c5c46b057e7055381ea81e3085cef0b0b437ddb6180ad0300a9a8827a91ac"
+          },
+          "__DATA,__data": {
+            "bytes": 18432,
+            "sha256": "62e0aefd86eb2d4c3fb14a5259e7ac9d1e188c8ead064c2100c5be503d942114"
+          },
+          "__DATA,__thread_vars": {
+            "bytes": 312,
+            "sha256": "65e82d79861768538b8d6272d10666aaa57c777a050c864eb3e94c441b620068"
+          },
+          "__DATA,__thread_data": {
+            "bytes": 33,
+            "sha256": "a65da3a8c2866e0b7a3394aa55334eafefc46a0afe38987cb10a8ecbcc2fd419"
+          }
+        },
+        "exports_sha256": "455e4d7d0baaab3f6780273c596e38aca039768fd3647450679cf56100054433",
+        "static_archive_bytes": 24080992,
+        "bindings_and_cli_products_unchanged": true,
+        "host_load_end": [
+          8.34765625,
+          10.23388671875,
+          11.42626953125
+        ]
+      }
+    ],
+    "means": {
+      "baseline": {
+        "rebuild": {
+          "wall_seconds": 53.127,
+          "cpu_seconds": 82.32300000000001,
+          "sampled_peak_tree_rss_bytes": 941744128
+        },
+        "unchanged_repeat": {
+          "wall_seconds": 1.3555000000000001,
+          "cpu_seconds": 0.692,
+          "sampled_peak_tree_rss_bytes": 14278656
+        }
+      },
+      "candidate": {
+        "rebuild": {
+          "wall_seconds": 52.56,
+          "cpu_seconds": 81.515,
+          "sampled_peak_tree_rss_bytes": 866795520
+        },
+        "unchanged_repeat": {
+          "wall_seconds": 1.464,
+          "cpu_seconds": 0.601,
+          "sampled_peak_tree_rss_bytes": 2490368
+        }
+      }
+    },
+    "rebuild_candidate_change_percent": {
+      "wall_seconds": -1.06725393867525,
+      "cpu_seconds": -0.9814997023918082,
+      "sampled_peak_tree_rss_bytes": -7.958489548447711
+    },
+    "verification": {
+      "same_exports": true,
+      "same_text_section": false,
+      "same_all_loadable_sections": false,
+      "inputs_unchanged": true,
+      "manifest_restored": true
+    },
+    "interpretation": "Two rebuilds per variant on a shared host, with substantial within-variant spread. CPU and wall means essentially flat; sampled peak tree RSS 7.96% lower. Avoid emitting a 24080992-byte static archive. Identical bindings/hashes/timestamps, CLI/MCP binaries and exports; dylib size equal but code sections differ. Do not claim identical machine code or a whole-CI/runtime improvement. Unchanged-repeat RSS is not interpretable with the one-second sampler.",
+    "post_default_validation": {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-dynamic-bridge-validation-v1/results.json",
+      "receipt_sha256": "4fd5b8f5376c345c8cdfc2e9acef979cefb1bf2dc3b2db874dd405164b39a3ee",
+      "exact_test_targets_preserved": 25,
+      "ffi_passed": 19,
+      "exact_ffi_cases_match": true,
+      "inputs_unchanged": true,
+      "pipeline_regressions_passed": 15,
+      "quality_guard": "passed",
+      "scope": "Compile both complete production test graphs under the dynamic-only manifest and compare the exact 25 logical executable targets to the successful 517-case workspace run. Execute the FFI tests with the same runtime workspace features; source implementation already passed all 517 cases. This is target/ABI regression validation, not a build-cost comparison."
+    }
+  },
+  "owned_cargo_cache_relocation": {
+    "status": "complete",
+    "source": "/private/tmp/aetower-build-performance/rust/target",
+    "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/rust-production-target",
+    "original_available_bytes": 197677056,
+    "external_available_bytes": 440784887808,
+    "scope": "Relocate only the ignored Cargo-generated target cache belonging to this worktree. No application data or other sessions changed.",
+    "verified_files": 4536,
+    "verified_file_bytes": 1453941048,
+    "inventory_sha256": "f4958fbe1b59176aa6520fad79e2e0c1772d23108ee3fe7b2092baef53ce55fe",
+    "wall_seconds": 25.688439207995543,
+    "final_available_bytes": 1602547712,
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v1/results.json",
+    "receipt_sha256": "4f795b7a66327c580f1252846184ea70766b0f911159c705aa2dfafe56c9f77d",
+    "reuse_evidence": "The new comparison warm-up recompiles only FFI; copied runtime dependencies are reused."
   }
 }

@@ -38,6 +38,10 @@ for profile in $PROFILES; do
     if [ "$(otool -D "$dylib" | tail -n 1)" != '@rpath/libaetower_ffi.dylib' ]; then
         install_name_tool -id '@rpath/libaetower_ffi.dylib' "$dylib"
     fi
+    # The app links the dylib. Remove archives left by older restored caches,
+    # so a successful app build cannot leave a stale static bridge behind.
+    rm -f "$ROOT/rust/target/$profile/libaetower_ffi.a" \
+        "$ROOT/rust/target/$profile/deps/libaetower_ffi.a"
 done
 
 # Build the host generator in debug even when generating release bindings.

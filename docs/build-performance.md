@@ -19,6 +19,20 @@ dependencies do not enter the shipped engine's feature graph. A release-only
 build therefore still has a debug host tool, but no debug runtime build.
 UniFFI generates the Swift source, header and module map in one invocation.
 
+The bridge emits the dynamic library linked by the app. It skips the unused
+static archive; the app build also removes old archives from restored caches
+for the selected profile. Integrations that need a static archive can request
+both artifacts explicitly, outside the app build:
+
+```sh
+cargo rustc --locked --manifest-path rust/Cargo.toml -p aetower-ffi --lib \
+  --release --crate-type cdylib,staticlib
+```
+
+Cargo's [`--crate-type` override](https://doc.rust-lang.org/cargo/commands/cargo-rustc.html#compilation-options)
+keeps archive generation available without adding a separate feature graph to
+the normal app pipeline.
+
 Bindings and staged bridge libraries are replaced only when their contents
 change. The bridge plugin accepts a single available configuration; select
 the matching Swift configuration (`swift build -c release` for release).

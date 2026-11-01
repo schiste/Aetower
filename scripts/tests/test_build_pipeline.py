@@ -102,6 +102,31 @@ sys.exit(9 if os.environ.get("FAIL_TEST_STAGE") == stage else 0)
                 self.assertEqual(result.returncode, 9 if failure else 0)
                 self.assertEqual(self.calls(), expected[:1] if failure == "runtime" else expected)
 
+    def test_app_build_discards_stale_archives_only_for_selected_profiles(self):
+        archives = {}
+        for profile in ("debug", "release"):
+            archives[profile] = [
+                self.root / "rust/target" / profile / name
+                for name in ("libaetower_ffi.a", "deps/libaetower_ffi.a")
+            ]
+            for path in archives[profile]:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"stale static bridge")
+        self.run_build()
+        self.assertTrue(all(not path.exists() for path in archives["debug"]))
+        self.assertTrue(all(path.read_bytes() == b"stale static bridge"
+                            for path in archives["release"]))
+        self.run_build("--profile", "release")
+        self.assertTrue(all(not path.exists() for path in archives["release"]))
+
+    def test_failed_runtime_build_preserves_existing_archives(self):
+        archive = self.root / "rust/target/debug/libaetower_ffi.a"
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(b"previous static bridge")
+        self.executable("cargo", "#!/bin/sh\nexit 9\n")
+        self.assertEqual(self.run_build(check=False).returncode, 9)
+        self.assertEqual(archive.read_bytes(), b"previous static bridge")
+
     def test_telemetry_smoke_resolves_cargo_from_path(self):
         self.env.pop("CARGO_BIN")
         subprocess.run(["sh", str(self.root / "scripts/telemetry-smoke.sh")],
