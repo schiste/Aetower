@@ -1,6 +1,6 @@
 {
-  "status": "fixture comparisons, release unit tests and strict Clippy complete; production app validation pending",
-  "runtime_source_commit": "pending; actual release test source SHA-256 retained in grouping fixture",
+  "status": "0 of four app windows verified; comparison incomplete",
+  "runtime_source_commit": "4449be5bdd9434a6fadfb8ff19cf144dbb6fc9e9",
   "history_grouping_fixture": {
     "status": "complete",
     "scope": "dense 500-entity grouping fixture; 50 grouping operations per child; original and borrowed-key helpers in the same retained release test binary; common setup validates their exact output for the same pair order; not app-wide savings",
@@ -468,7 +468,8 @@
     "python_proof": "all six baseline selected-gate runs execute the full 28-check suite successfully before the expected advisory rejection; focused pipeline run also passes all 12 tests",
     "strict_clippy": "pass; all history targets, -D warnings",
     "shellcheck_warning_severity": "pass",
-    "quality_guard_working_tree": "pass"
+    "quality_guard_working_tree": "pass",
+    "signed_package_smoke": "pass; strict deep signatures and Mach-O relocation checks"
   },
   "release_test_build": {
     "command": [
@@ -493,5 +494,189 @@
     "rss_samples": 24,
     "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
   },
-  "limits": "grouping fixture CPU and local gate rejection-path savings only; no app-wide or successful-hosted-CI improvement established"
+  "limits": "grouping fixture CPU and local gate rejection-path savings only; no app-wide or successful-hosted-CI improvement established",
+  "package": {
+    "command": [
+      "aethyme",
+      "broker",
+      "advanced",
+      "exec",
+      "--session",
+      "8",
+      "--",
+      "sh",
+      "scripts/package-macos.sh"
+    ],
+    "cwd": "/private/tmp/aetower-build-performance",
+    "exit_status": 0,
+    "wall_seconds": 122.793,
+    "user_cpu_seconds": 126.926,
+    "system_cpu_seconds": 7.508,
+    "average_cpu_percent": 109.5,
+    "sampled_peak_tree_rss_bytes": 787595264,
+    "rss_samples": 119,
+    "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+  },
+  "package_repeat": {
+    "command": [
+      "aethyme",
+      "broker",
+      "advanced",
+      "exec",
+      "--session",
+      "8",
+      "--",
+      "sh",
+      "scripts/package-macos.sh"
+    ],
+    "cwd": "/private/tmp/aetower-build-performance",
+    "exit_status": 0,
+    "wall_seconds": 11.334,
+    "user_cpu_seconds": 6.061,
+    "system_cpu_seconds": 2.403,
+    "average_cpu_percent": 74.7,
+    "sampled_peak_tree_rss_bytes": 466534400,
+    "rss_samples": 12,
+    "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+  },
+  "retained_pair": {
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop10-baseline/Aetower.app",
+        "source": "f41e21c11211 production Rust; owned grouping keys; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "dd3a459fc4efdc2a8545cd69e82f636d9690fbc071e50a7be5b5039bf043e206",
+        "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+        "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+        "variant": "baseline",
+        "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.1.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1056",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop10-candidate/Aetower.app",
+        "source": "4449be5bdd94 production Rust; borrowed grouping keys; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "7feff6c7eacbe7855ddc1ff5cf4af0693cc2da73d451abbbba487dca0608f015",
+        "rust_sha256": "8271ecc2ddbb2fcd5b74728c718b3ddb9bd6ca77faaa306a5e1f0ae69c8aaaee",
+        "rust_uuid": "2D8CEF43-B080-38FB-A04D-27A115C64395",
+        "variant": "candidate",
+        "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.1.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1056",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+      }
+    ],
+    "scope": "same production package with only baseline Rust dylib replaced, then ad-hoc re-signed; identical unsigned compiled Swift, metadata and other nonsignature payload files",
+    "common_file_count": 110,
+    "common_files_sha256": "efab06b24abca19359606c492321220b043ebc3c1aca6e965db9270bd6990ca3",
+    "baseline_library_retained_source": {
+      "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop9-candidate/Aetower.app",
+      "source": "62506dc3f1ae compiled Swift; checked integers with direct string decoder; common production Rust, bundle metadata and dependencies",
+      "executable_sha256": "51bc40450343984a9700d6491a91cfbbae247fe71125a7c0ec4612e0b36fe678",
+      "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+      "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+      "variant": "candidate",
+      "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+      "info_plist": {
+        "CFBundleDisplayName": "Aetower",
+        "CFBundleExecutable": "Aetower",
+        "CFBundleIdentifier": "com.aetower.app",
+        "CFBundleIconFile": "Aetower",
+        "CFBundleName": "Aetower",
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "com.aetower.app.oauth",
+            "CFBundleURLSchemes": [
+              "aetower"
+            ]
+          }
+        ],
+        "CFBundleVersion": "1052",
+        "LSMinimumSystemVersion": "15.0",
+        "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+        "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+        "SUEnableAutomaticChecks": true
+      }
+    }
+  },
+  "package_cache_note": "Swift sources unchanged; package log reports only AetowerApp product link tasks, no UI or binding compilation; packaging measurements include broker guard overhead and are absolute costs",
+  "matched_app_comparison": {
+    "status": "running",
+    "controller_pid": 98043,
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop10-baseline/Aetower.app",
+        "source": "f41e21c11211 production Rust; owned grouping keys; common compiled Swift and bundle",
+        "executable_sha256": "dd3a459fc4efdc2a8545cd69e82f636d9690fbc071e50a7be5b5039bf043e206",
+        "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+        "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+        "variant": "baseline"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop10-candidate/Aetower.app",
+        "source": "4449be5bdd94 production Rust; borrowed grouping keys; common compiled Swift and bundle",
+        "executable_sha256": "7feff6c7eacbe7855ddc1ff5cf4af0693cc2da73d451abbbba487dca0608f015",
+        "rust_sha256": "8271ecc2ddbb2fcd5b74728c718b3ddb9bd6ca77faaa306a5e1f0ae69c8aaaee",
+        "rust_uuid": "2D8CEF43-B080-38FB-A04D-27A115C64395",
+        "variant": "candidate"
+      }
+    ],
+    "configuration": {
+      "sequence": "ABBA",
+      "settle_seconds": 60.0,
+      "duration_seconds": 90.0,
+      "interval_seconds": 2.0
+    },
+    "scope": "app-process counters; existing settings; no driven interaction; image inspection after sampling",
+    "windows": [
+      {
+        "label": "A1",
+        "variant": "baseline",
+        "status": "starting",
+        "pid": 98127
+      }
+    ]
+  }
 }

@@ -20,7 +20,13 @@ matches in every process. Six legacy processes use **3.688513 CPU-seconds**,
 versus **2.840176** for six candidate processes: **23.0% less fixture CPU**.
 Mean maximum process RSS is 9.35 → 9.10 MiB, but includes a shared legacy and
 candidate correctness check before timing and cannot isolate helper memory
-savings. Production packaging and the app comparison are pending.
+savings. Signed production packaging and smoke pass: **122.793s wall /
+134.434 CPU-seconds / 751.11 MiB sampled peak tree RSS**; unchanged repeat
+**11.334s / 8.464 CPU-seconds / 444.92 MiB**. These absolute costs include the
+broker guard. Swift sources are unchanged and only app-product link tasks run.
+The retained pair has identical unsigned Swift executables and common metadata
+and payload files; only the Rust library and signatures differ. Its four-window
+app comparison is running.
 
 The local full gate now runs its selected mandatory dependency audit before
 the build-pipeline tests, which include real Swift compiler harnesses. Twelve
