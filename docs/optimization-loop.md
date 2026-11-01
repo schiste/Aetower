@@ -1104,3 +1104,5 @@ suite despite unchanged Swift sources and generated bindings. That invalidation
 path remains under investigation; this build does not demonstrate lower build
 pressure. The earlier attribution operation comparison measures the retained
 Rust implementation directly and is independent of these package timings.
+
+Pass 16 outcome: both fresh app orders completed, but the reversed cohort did not reproduce the initial footprint improvement. The network-history runtime change is withdrawn as a precaution; source is restored to its pre-candidate bytes. Keep the measured bridge build improvement and all experiment evidence, with no whole-app gain claim. Next pass evaluates streaming scan-generation publication with an all-table database oracle and late-row decoding/rollback validation, then dependency-specific SQLite optimization for total CI compile-plus-test cost.

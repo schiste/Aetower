@@ -359,7 +359,48 @@ impl History {
         // Network: emit an event the first time an entity contacts a new remote
         // host. Seed silently on first observation so existing connections at
         // launch don't fire a backlog of events.
-        self.update_network_history(captured_at_millis, entities);
+        for entity in entities.iter() {
+            let current = entity_remote_hosts(entity);
+            if current.is_empty() {
+                continue;
+            }
+            if let Some(previous) = self.previous_remote_hosts.get(&entity.entity_id) {
+                let mut new_hosts: Vec<&String> = current.difference(previous).collect();
+                if !new_hosts.is_empty() {
+                    new_hosts.sort();
+                    let shown = new_hosts
+                        .iter()
+                        .take(3)
+                        .map(|host| host.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let more = new_hosts.len().saturating_sub(3);
+                    let detail = if more > 0 {
+                        format!("Now contacting {shown} (+{more} more)")
+                    } else {
+                        format!("Now contacting {shown}")
+                    };
+                    self.push_event(
+                        captured_at_millis,
+                        TimelineCategory::Network,
+                        TimelineSeverity::Info,
+                        Some(entity.entity_id.clone()),
+                        format!("{} opened a new connection", entity.display_name),
+                        detail,
+                    );
+                }
+            }
+            self.previous_remote_hosts
+                .insert(entity.entity_id.clone(), current);
+        }
+        {
+            let active_entity_id_set: HashSet<&str> = entities
+                .iter()
+                .map(|entity| entity.entity_id.as_str())
+                .collect();
+            self.previous_remote_hosts
+                .retain(|id, _| active_entity_id_set.contains(id.as_str()));
+        }
 
         // Feature 6: Co-occurrence tracking with compact u16 indices.
         //
@@ -548,125 +589,6 @@ impl History {
             self.host_history.snapshot(),
             forecast,
         )
-    }
-
-    fn update_network_history(&mut self, captured_at_millis: u64, entities: &[EntitySnapshot]) {
-        for entity in entities {
-            if entity.network_connections.is_empty() {
-                continue;
-            }
-            let Some(previous) = self.previous_remote_hosts.get(&entity.entity_id) else {
-                // First observation is silent and needs only the owned set.
-                let current = owned_entity_remote_hosts(entity);
-                if !current.is_empty() {
-                    self.previous_remote_hosts
-                        .insert(entity.entity_id.clone(), current);
-                }
-                continue;
-            };
-            let current = entity_remote_hosts(entity);
-            // Empty observations deliberately preserve the previous nonempty
-            // set, matching the existing disappearance/reappearance behavior.
-            if current.is_empty()
-                || (current.len() == previous.len()
-                    && current.iter().all(|host| previous.contains(*host)))
-            {
-                continue;
-            }
-            let mut new_hosts: Vec<&str> = current
-                .iter()
-                .copied()
-                .filter(|host| !previous.contains(*host))
-                .collect();
-            if !new_hosts.is_empty() {
-                new_hosts.sort();
-                let shown = new_hosts
-                    .iter()
-                    .take(3)
-                    .copied()
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let more = new_hosts.len().saturating_sub(3);
-                let detail = if more > 0 {
-                    format!("Now contacting {shown} (+{more} more)")
-                } else {
-                    format!("Now contacting {shown}")
-                };
-                self.push_event(
-                    captured_at_millis,
-                    TimelineCategory::Network,
-                    TimelineSeverity::Info,
-                    Some(entity.entity_id.clone()),
-                    format!("{} opened a new connection", entity.display_name),
-                    detail,
-                );
-            }
-            if let Some(previous) = self.previous_remote_hosts.get_mut(&entity.entity_id) {
-                previous.retain(|host| current.contains(host.as_str()));
-                previous.extend(new_hosts.into_iter().map(str::to_owned));
-                // Release excess capacity when hosts disappear, as replacing the
-                // set with a freshly collected one did previously.
-                previous.shrink_to(current.len());
-            }
-        }
-        if !self.previous_remote_hosts.is_empty() {
-            let active_entity_id_set: HashSet<&str> = entities
-                .iter()
-                .map(|entity| entity.entity_id.as_str())
-                .collect();
-            self.previous_remote_hosts
-                .retain(|id, _| active_entity_id_set.contains(id.as_str()));
-        }
-    }
-
-    #[cfg(test)]
-    fn previous_update_network_history(
-        &mut self,
-        captured_at_millis: u64,
-        entities: &[EntitySnapshot],
-    ) {
-        for entity in entities.iter() {
-            let current = owned_entity_remote_hosts(entity);
-            if current.is_empty() {
-                continue;
-            }
-            if let Some(previous) = self.previous_remote_hosts.get(&entity.entity_id) {
-                let mut new_hosts: Vec<&String> = current.difference(previous).collect();
-                if !new_hosts.is_empty() {
-                    new_hosts.sort();
-                    let shown = new_hosts
-                        .iter()
-                        .take(3)
-                        .map(|host| host.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let more = new_hosts.len().saturating_sub(3);
-                    let detail = if more > 0 {
-                        format!("Now contacting {shown} (+{more} more)")
-                    } else {
-                        format!("Now contacting {shown}")
-                    };
-                    self.push_event(
-                        captured_at_millis,
-                        TimelineCategory::Network,
-                        TimelineSeverity::Info,
-                        Some(entity.entity_id.clone()),
-                        format!("{} opened a new connection", entity.display_name),
-                        detail,
-                    );
-                }
-            }
-            self.previous_remote_hosts
-                .insert(entity.entity_id.clone(), current);
-        }
-        {
-            let active_entity_id_set: HashSet<&str> = entities
-                .iter()
-                .map(|entity| entity.entity_id.as_str())
-                .collect();
-            self.previous_remote_hosts
-                .retain(|id, _| active_entity_id_set.contains(id.as_str()));
-        }
     }
 
     fn grouping_suggestions(&self, entities: &[EntitySnapshot]) -> HashMap<&str, String> {
@@ -2094,20 +2016,7 @@ fn set_recent_change_summary(entity: &mut EntitySnapshot, summary: String) {
 
 /// Distinct remote hosts (host without port, excluding listening wildcards) an
 /// entity is currently connected to.
-fn entity_remote_hosts(entity: &EntitySnapshot) -> HashSet<&str> {
-    entity
-        .network_connections
-        .iter()
-        .filter_map(|connection| connection.remote.as_deref())
-        .map(|remote| match remote.rsplit_once(':') {
-            Some((host, _port)) if !host.is_empty() => host,
-            _ => remote,
-        })
-        .filter(|host| !host.is_empty() && *host != "*")
-        .collect()
-}
-
-fn owned_entity_remote_hosts(entity: &EntitySnapshot) -> HashSet<String> {
+fn entity_remote_hosts(entity: &EntitySnapshot) -> HashSet<String> {
     entity
         .network_connections
         .iter()
@@ -2257,249 +2166,6 @@ mod tests {
     };
 
     use super::History;
-
-    fn network_entity(id: &str, remotes: &[Option<&str>]) -> aetower_model::EntitySnapshot {
-        let mut entity = entity_with_process(id, &format!("{id} 測定\0🗼"), 1, 1);
-        entity.network_connections = remotes
-            .iter()
-            .map(|remote| aetower_model::NetworkConnection {
-                protocol: "tcp".to_owned(),
-                local: "local:0".to_owned(),
-                remote: remote.map(str::to_owned),
-                state: "established".to_owned(),
-            })
-            .collect();
-        entity
-    }
-
-    fn canonical_network_state(
-        history: &History,
-    ) -> std::collections::BTreeMap<&str, std::collections::BTreeSet<&str>> {
-        history
-            .previous_remote_hosts
-            .iter()
-            .map(|(id, hosts)| (id.as_str(), hosts.iter().map(String::as_str).collect()))
-            .collect()
-    }
-
-    fn assert_network_equivalent(expected: &History, actual: &History) {
-        assert_eq!(
-            canonical_network_state(actual),
-            canonical_network_state(expected)
-        );
-        assert_eq!(
-            format!("{:?}", actual.timeline),
-            format!("{:?}", expected.timeline)
-        );
-        for (id, hosts) in &actual.previous_remote_hosts {
-            assert!(
-                hosts.capacity() <= expected.previous_remote_hosts[id].capacity(),
-                "retained host capacity grew for {id}"
-            );
-        }
-    }
-
-    #[test]
-    fn network_history_preserves_events_membership_and_capacity() {
-        let mut expected = History::new();
-        let mut actual = History::new();
-        let mut cases = vec![
-            vec![],
-            vec![network_entity(
-                "a",
-                &[None, Some(""), Some("*"), Some("*:443")],
-            )],
-            vec![network_entity(
-                "a",
-                &[
-                    Some("a.example:443"),
-                    Some("b.example:80"),
-                    Some("c.example:443"),
-                    Some("c.example:80"),
-                ],
-            )],
-            vec![network_entity(
-                "a",
-                &[
-                    Some("c.example:80"),
-                    Some("b.example:443"),
-                    Some("a.example:80"),
-                    Some("c.example:443"),
-                ],
-            )],
-            vec![network_entity(
-                "a",
-                &[
-                    Some("z.example:80"),
-                    Some("d.example:80"),
-                    Some("e.example:80"),
-                    Some("f.example:80"),
-                    Some("g.example:80"),
-                    Some("a.example:443"),
-                ],
-            )],
-            vec![network_entity("a", &[Some("a.example:443")])],
-            vec![network_entity("a", &[None])],
-            vec![network_entity(
-                "a",
-                &[
-                    Some("[::1]:1234"),
-                    Some(":443"),
-                    Some(":"),
-                    Some("*"),
-                    Some("測定:443"),
-                    Some("a.example:80"),
-                ],
-            )],
-            vec![
-                network_entity("a", &[Some("first:80")]),
-                network_entity("a", &[Some("second:443")]),
-            ],
-            vec![],
-            vec![
-                network_entity("a", &[Some("seed:443")]),
-                network_entity("b", &[Some("零\0🗼:443")]),
-            ],
-            vec![network_entity("a", &[Some("seed:80")])],
-            vec![network_entity("a", &[])],
-            vec![],
-        ];
-        let mut large = network_entity("capacity", &[]);
-        large.network_connections = (0..1024)
-            .map(|i| aetower_model::NetworkConnection {
-                protocol: "tcp".to_owned(),
-                local: String::new(),
-                remote: Some(format!("host-{i}:443")),
-                state: String::new(),
-            })
-            .collect();
-        cases.push(vec![large]);
-        cases.push(vec![network_entity("capacity", &[Some("host-0:80")])]);
-        cases.push(vec![network_entity(
-            "capacity",
-            &[Some("host-0:443"), Some("new:443")],
-        )]);
-        cases.push(vec![]);
-        for (index, entities) in cases.into_iter().enumerate() {
-            expected.previous_update_network_history(index as u64 * 2000, &entities);
-            actual.update_network_history(index as u64 * 2000, &entities);
-            assert_network_equivalent(&expected, &actual);
-        }
-    }
-
-    #[test]
-    #[ignore = "manual network history comparison; no concurrent builds"]
-    fn network_history_benchmark() {
-        let variant =
-            std::env::var("AETOWER_NETWORK_VARIANT").unwrap_or_else(|_| "candidate".to_owned());
-        let shape = std::env::var("AETOWER_NETWORK_SHAPE").unwrap_or_else(|_| "stable".to_owned());
-        assert!(matches!(variant.as_str(), "previous" | "candidate"));
-        assert!(matches!(
-            shape.as_str(),
-            "none" | "stable" | "reordered" | "churn"
-        ));
-        let mut entities: Vec<_> = (0..256)
-            .map(|index| {
-                let mut entity = network_entity(&format!("entity-{index:04}"), &[]);
-                if shape != "none" {
-                    entity.network_connections = (0..64)
-                        .map(|connection| aetower_model::NetworkConnection {
-                            protocol: "tcp".to_owned(),
-                            local: "local:0".to_owned(),
-                            remote: Some(format!(
-                                "host-{:02}.example:{}",
-                                connection % 16,
-                                1000 + connection
-                            )),
-                            state: "established".to_owned(),
-                        })
-                        .collect();
-                }
-                entity
-            })
-            .collect();
-        let mut expected = History::new();
-        let mut actual = History::new();
-        for step in 0..8 {
-            if shape == "reordered" {
-                entities.reverse();
-                for entity in &mut entities {
-                    entity.network_connections.reverse();
-                }
-            }
-            if shape == "churn" {
-                entities[0].network_connections.last_mut().unwrap().remote =
-                    Some(format!("warm-new-{step}.example:443"));
-            }
-            expected.previous_update_network_history(step * 2000, &entities);
-            actual.update_network_history(step * 2000, &entities);
-            assert_network_equivalent(&expected, &actual);
-        }
-        let mut history = if variant == "previous" {
-            expected
-        } else {
-            actual
-        };
-        let sample: fn(&mut History, u64, &[aetower_model::EntitySnapshot]) =
-            if variant == "previous" {
-                History::previous_update_network_history
-            } else {
-                History::update_network_history
-            };
-        // Keep both standalone callees behind the same opaque call boundary;
-        // a reference used only in tests must not gain a special inlined caller.
-        let sample = std::hint::black_box(sample);
-        let iterations = 1000;
-        let started = std::time::Instant::now();
-        for step in 0..iterations {
-            if shape == "reordered" {
-                entities.reverse();
-                for entity in &mut entities {
-                    entity.network_connections.reverse();
-                }
-            }
-            if shape == "churn" {
-                entities[0].network_connections.last_mut().unwrap().remote =
-                    Some(format!("measured-new-{step}.example:443"));
-            }
-            sample(
-                &mut history,
-                20_000 + step * 2000,
-                std::hint::black_box(&entities),
-            );
-            // Match update's existing final timeline bound in both variants.
-            while history.timeline.len() > 120 {
-                history.timeline.pop_front();
-            }
-            std::hint::black_box(&history.previous_remote_hosts);
-        }
-        let elapsed = started.elapsed().as_nanos();
-        if let Ok(path) = std::env::var("AETOWER_NETWORK_OUTPUT") {
-            std::fs::write(
-                path,
-                format!(
-                    "{:?}",
-                    (canonical_network_state(&history), &history.timeline)
-                ),
-            )
-            .unwrap();
-        }
-        println!(
-            "NETWORK_HISTORY_BENCH {{\"variant\":\"{variant}\",\"shape\":\"{shape}\",\"iterations\":{iterations},\"entity_count\":{},\"connection_count\":{},\"tracked_entities\":{},\"host_count\":{},\"timeline_count\":{},\"operation_nanoseconds\":{elapsed}}}",
-            entities.len(),
-            entities
-                .iter()
-                .map(|e| e.network_connections.len())
-                .sum::<usize>(),
-            history.previous_remote_hosts.len(),
-            history
-                .previous_remote_hosts
-                .values()
-                .map(|s| s.len())
-                .sum::<usize>(),
-            history.timeline.len()
-        );
-    }
 
     fn entity_with_process(
         id: &str,
