@@ -5,6 +5,92 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 23: evaluate native signing and fix release-library loading
+
+Full numeric runtime metrics locate enrichment at about 80% of elapsed engine
+tick time in the initial retained shipping capture. A second capture uses a
+matching diagnostic Rust link map, verifies all 370 exported addresses and the
+loaded UUID, and observes at least ten `codesign` children. The 83 inclusive
+`Command::output` samples identify waiting/capture work; neither inclusive
+samples nor elapsed phase durations establish exclusive CPU consumption.
+The first observer misread a PID count as a byte count; its empty child-count
+result is invalid and retained with an owned-child calibration and correction.
+
+The experimental macOS signing resolver reads public Security.framework metadata,
+using the unchanged shared signature classifier and the already locked
+Core Foundation binding. Unsupported, failed or incomplete reads retain the
+existing CLI fallback. Cache policy, four-background-resolution budget, eager
+connected priority, output fields and collection cadence are unchanged.
+Create/Copy owners reject null before construction and release their objects.
+This reads displayed metadata; it does not validate certificate trust.
+See [Apple signing information](https://developer.apple.com/documentation/security/seccodecopysigninginformation(_:_:_:))
+and [certificate metadata](https://developer.apple.com/documentation/security/kseccodeinfocertificates).
+
+An oracle compiled from the exact integrated source matches all **30 complete
+verdicts**, spanning Apple, Developer ID, Mac App Store, ad-hoc, unsigned,
+symlink and invalid inputs; one case uses the CLI fallback. Eight serial
+ABBA/BAAB diagnostic processes each resolve 32 uncached paths. Mean elapsed
+time falls **1.796 → 0.105s**,
+and parent-plus-reaped-child CPU **1.427 →
+0.072s (95.0% less)**.
+The CLI runs **32 → 4 times**. Parent CPU itself rises; peak self RSS rises
+**5.90 → 12.22 MiB**,
+while largest-child peak RSS falls **36.85 →
+2.13 MiB**. These separate kernel maxima
+are not aggregate app memory. The opt3/codegen1/LTO-off resolver probe is a
+diagnostic, not a production-profile or whole-app comparison. Existing cache
+hits do not perform this work; no 95% overall app CPU saving is claimed.
+
+All **72 final-source core release cases** pass with exact native coverage,
+including null/error/unsigned/owned-ad-hoc paths, plus strict all-target core
+Clippy and formatting; strict release Clippy also passes for the changed FFI
+packaging. The signed candidate native load check passes before the app
+cohort. The canonical shipping pipeline preserves bindings
+and **370 exports**, using one Cargo job and normal release profiles (MCP8,
+other roots1). Its absolute cost is **374.397s wall /
+171.861 CPU-seconds /
+456.89 MiB sampled peak tree RSS**;
+this is not a matched compiler gain. The previous pass's 373 active tests
+remain prior-source coverage, not a new final-source suite result.
+
+Four hidden app windows in ABBA order use the same compiled Swift/resources,
+30 seconds settling and 30 seconds counters per window. Loaded Rust/Swift
+identities, source hashes and app shutdown are verified. App-process means
+are **4.002% → 4.442% CPU**,
+**114.54 → 124.25 MiB physical footprint**,
+and **2.113 → 2.165 interrupt wakeups/s**.
+These are two windows per variant on changing live host inputs; counters
+exclude codesign children and Security system services. Keep the individual
+windows and memory tradeoff visible; no universal app/host/energy saving is
+inferred. Full numeric phase queries run after each measured interval.
+
+The first canonical library passed build, exports and signature checks, but
+dyld rejected a misaligned string pool before app startup. An owned minimal
+fixture reproduces the [Rust/LLVM stripping defect](https://github.com/rust-lang/rust/issues/157750).
+The FFI release package now strips local/debug symbols at macOS link time,
+disabling the failing later rewrite. The fixed minimal fixture loads at the
+same file size. The original failed cohort remains retained; the complete
+ABBA comparison above starts again in a fresh directory. Core tests predate
+only this packaging fix; core code and effective optimization flags match.
+The FFI override leaves non-macOS FFI symbols unstripped; no non-macOS bridge
+shipping artifact has been validated. CLI/MCP strip policy is unchanged.
+
+The candidate means are higher for app CPU, physical footprint and interrupt
+wakeups. A further eight-process probe compares the same native resolver with
+and without per-call autorelease pools over 300 calls per process; every
+verdict matches, and mean final physical footprint is 5.95 → 5.99 MiB. Pooling
+does not recover memory. **Withdraw the native signing path as a precaution**
+under the hardware-footprint objective; this is not proof that the code caused
+the entire app-memory difference. Keep the independent release-link fix and
+all evidence. These are withdrawn-candidate measurements, not final shipping
+validation; the next pass records its own final-source results.
+
+All original failed prototypes and corrected observer/calibration evidence
+remain in retained artifacts. No app is installed or released. Canonical
+skill lessons are published separately in draft [PR22](https://github.com/schiste/Aetower/pull/22);
+they are not installed in the main checkout's skill consumer.
+Details, receipt hashes and scope limits: [performance-loop23.json](performance-loop23.json).
+
 ## Pass 22: replace helper idle polling with macOS kernel notifications
 
 The macOS stdio helper now waits for stdin/socket readiness and parent exit

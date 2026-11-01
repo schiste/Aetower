@@ -61,3 +61,8 @@ strip = "symbols"
 # Other release crates retain the workspace default of one codegen unit.
 [profile.release.package.aetower-mcp]
 codegen-units = 8
+
+# Keep Rust's post-link strip from misaligning Mach-O LINKEDIT entries. The
+# macOS bridge strips local/debug symbols in the linker instead (see build.rs).
+[profile.release.package.aetower-ffi]
+strip = "none"
