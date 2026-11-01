@@ -119,6 +119,9 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   value alone does not establish the state that was measured.
   If that state is uncontrolled, state the limitation rather than attributing
   a CPU or wakeup difference to the source change alone.
+  Before inferring missing runtime work, verify which phases a summary includes
+  and inspect existing full numeric metrics. Distinguish repeated latest-tick
+  samples from new ticks; elapsed phase timings are not phase CPU attribution.
   Retain baseline and candidate app bundles and benchmark executables outside
   mutable compiler-output directories; verify their hashes before later builds
   can overwrite them. Retest changed host load without recompilation, and
