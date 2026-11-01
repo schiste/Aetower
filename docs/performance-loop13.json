@@ -1,5 +1,5 @@
 {
-  "status": "source_fixture_production_package_and_hidden_app_comparison_validated_corrected_compiler_comparison_running",
+  "status": "source_fixture_production_package_hidden_app_and_corrected_compiler_comparison_complete",
   "change": "Dense grouping resolves names once and uses interned numeric IDs across qualifying pairs; preserves original pair order, thresholds, duplicate-name semantics and hints. Sparse graphs or disproportionately old indices use borrowed maps. Refresh cadence, pair tracking, schemas and UI are unchanged.",
   "history_source_sha256": "3e12b4be29f02d04f3b2d2ca69749f22701774135fcfa9fc9aee212d1dd586c1",
   "fixture": {

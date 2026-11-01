@@ -54,8 +54,16 @@ A small real Swift probe finds **ten frontend threads** with both default and
 native backends at two package jobs. An explicit `-num-threads 2` is honored by
 the native backend and both executables emit `711520`. The installed SwiftPM
 marks that backend deprecated. No app default or compiler cap is changed;
-an actual app build/test compatibility probe is running, while packaging and
-comparative pressure measurements remain required.
+the actual fresh-scratch app build passes with four compilation frontend commands
+using two threads and all three packaging products present. Its absolute cost is
+227.699s wall and 205.674 CPU seconds, with existing shared caches; this is not an
+A/B result. The 212-case UI compatibility execution is running, while packaging
+and comparative pressure measurements remain required. Its generated resource accessor
+searches the bundle root and then an absolute build-directory fallback, whereas
+packaging copies resources under `Contents/Resources`. Build-tree UI tests cannot
+establish packaged portability; relocated resource access requires verification.
+The latest inspected hosted quality run 41272193025 fails at dependency-policy
+preflight, before compilation; no hosted compiler saving is established.
 Detailed evidence is in [`performance-loop14.json`](performance-loop14.json).
 
 ## Pass 13: index dense history grouping; verify child CPU accounting

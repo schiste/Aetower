@@ -390,7 +390,63 @@
     "native_app_validation": {
       "status": "running",
       "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-native-app-validation-v1/results.json",
-      "scope": "Actual app build/test compatibility probe; deprecated native backend, two package jobs, explicit two frontend threads, release optimization. Not a comparative performance result; no default changed."
+      "scope": "Actual app build/test compatibility probe; deprecated native backend, two package jobs, explicit two frontend threads, release optimization. Not a comparative performance result; no default changed.",
+      "resource_lookup_inspection": {
+        "scope": "Static inspection only; relocated packaged runtime behavior remains unverified.",
+        "accessor": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-native-app-validation-v1/resource_bundle_accessor-inspected.swift",
+        "sha256": "902eacaa501d7996d05c60bbab9e43df360bdb264ef9bf94cd340a2cbc231e0d",
+        "generated_lookup": "Bundle.main.bundleURL/AetowerMac_AetowerUI.bundle, followed by absolute native build directory fallback.",
+        "packager_copy_destination": "Aetower.app/Contents/Resources/AetowerMac_AetowerUI.bundle",
+        "caller": "macos/Sources/AetowerUI/AethymeAgentContractKit.swift:137, Bundle.module.url",
+        "implication": "Build-tree tests can use the fallback and do not establish packaged resource portability. Validate relocation and resource access before changing the backend."
+      },
+      "build": {
+        "exit_status": 0,
+        "observed_frontend_threads": [
+          2,
+          2,
+          2,
+          2
+        ],
+        "required_products": {
+          "AetowerApp": true,
+          "Sparkle.framework": true,
+          "AetowerMac_AetowerUI.bundle": true
+        },
+        "absolute_cost": {
+          "command": [
+            "/usr/bin/swift",
+            "build",
+            "--package-path",
+            "/private/tmp/aetower-build-performance/macos",
+            "--scratch-path",
+            "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-native-app-validation-v1/scratch",
+            "-c",
+            "release",
+            "-j",
+            "2",
+            "--build-system",
+            "native",
+            "-Xswiftc",
+            "-num-threads",
+            "-Xswiftc",
+            "2",
+            "-v",
+            "-Xswiftc",
+            "-v"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 227.699,
+          "user_cpu_seconds": 189.786,
+          "system_cpu_seconds": 15.888,
+          "average_cpu_percent": 90.3,
+          "sampled_peak_tree_rss_bytes": 2095185920,
+          "rss_samples": 220,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scope": "Single fresh-scratch app build with existing shared dependency/SDK caches; no comparative saving established. UI test execution remains running."
+      }
     }
   },
   "limits": [
@@ -524,5 +580,13 @@
       },
       "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
     }
+  },
+  "latest_inspected_ci": {
+    "run_id": 41272193025,
+    "url": "https://github.com/schiste/Aetower/actions/runs/41272193025",
+    "head": "441430749635d87bdb8783515b5fe48e9cf47aea",
+    "conclusion": "failure",
+    "failed_step": "Dependency policy preflight",
+    "scope": "No hosted compiler-stage measurement; mandatory policy gate remains enabled."
   }
 }
