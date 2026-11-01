@@ -30,6 +30,9 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   When relocating `TMPDIR`, preserve Unix socket path limits with a short alias
   and rerun the unchanged suite; retain original failures rather than weakening
   storage guards or deadlines.
+  If a read-only SQLite fixture audit fails, test immutable read mode only after
+  every writer has exited and no uncheckpointed WAL remains. Verify primary-file
+  hashes before/after; never apply this shortcut to a live database.
 - Document any override-based maintainer note that affected the change plan.
 - Before long resource experiments, persist the controller PID and progress in a
   durable receipt. Missing or truncated tool output does not prove termination.
