@@ -5,6 +5,57 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 19: reduce compiler pressure and per-tick network work
+
+Release MCP now uses four codegen units; other release crates keep one. The
+normal runtime pipeline with equally cleaned MCP/core/CLI/FFI roots and retained
+dependencies is measured in order **1–4–4–1**, with two Cargo jobs throughout.
+Means improve **199.921 → 158.012s wall (-20.96%)**, **281.745 → 260.308
+CPU-seconds (-7.61%)**, and **1882.33 → 1449.81 MiB sampled peak process-tree
+RSS (-22.98%)**. Ordered compiler options differ only in MCP partition count
+and artifact identity. Unit graphs/features, binding bytes and 370 exports
+match; products repeat exactly within each variant. This partial-root rebuild
+comparison excludes cold dependencies, Swift and whole CI. It establishes no
+hard CPU/thread/memory cap.
+
+The tradeoff is **366144 extra library bytes (+3.24%, about 358 KiB)**. Eight
+serial shipping storage tests in order **1–4–4–1–4–1–1–4** all pass: each checks
+100000 staged rows and unchanged five-second report-query budgets. Mean CPU is
+**29.848 → 29.586s**; sampled runtime peak RSS is **16.04 → 16.86 MiB**.
+Elapsed time varies with shared host/I/O. No runtime-memory saving is established.
+All **277 active MCP release tests** pass; one live-database benchmark stays
+ignored. The canonical manifest pipeline builds all normal runtime roots and
+bindings, verifies effective flags and exports, and passes strict all-target MCP
+Clippy and formatting. Its absolute cost is retained in the JSON.
+
+Network snapshots now borrow sysinfo's map instead of constructing a throughput
+map each tick. Interface order, duplicates, missing/first-tick zeros, arithmetic,
+output fields, cadence and wake sources are preserved; no persistent state is
+added. Twelve private cases repeated three times produce identical complete
+output bytes and vector capacities, including maximum counters and unusual
+elapsed intervals. Populated steady-state snapshots remove one allocation:
+**330 → 190 bytes** for two interfaces, **5160 → 3040** for 32,
+**4707 → 475** for sparse/duplicate cache entries, and **82440 → 48640** for
+512. Empty/first-tick cases are unchanged.
+
+Eight alternating constructor workloads in a separate executable without an
+allocation counter preserve row counts/checksums. Mean CPU falls
+**0.57775 → 0.39675s (-31.33%)**. This diagnostic uses immutable fake counters,
+exact function bodies and the real output model; it is not a whole-collector/app
+measurement. Allocation traffic is not retained memory, and subsecond RSS
+samples are unreliable. All **24 collector unit tests and one doctest** pass;
+two manual benchmarks remain ignored. Strict collector Clippy and formatting
+pass. The first audit incorrectly rejected those ignored tests; its failure is
+retained and corrected against native executed/ignored listings without rerunning
+successful tests or performance windows. Temporary fixtures are removed and
+canonical input hashes verify.
+
+Whole-app CPU, physical footprint and wakeup comparison remains pending.
+Pass 18's ownership candidate stays withdrawn. The inspected hosted check at
+head `709be2a` fails dependency-policy preflight before compilation; no passing
+whole-CI or hosted saving is claimed. Detailed scopes, receipt hashes, costs
+and limitations: [performance-loop19.json](performance-loop19.json).
+
 ## Pass 18: reduce snapshot allocation traffic and hardware pressure
 
 A candidate transferred six owned host fields from the collector into its

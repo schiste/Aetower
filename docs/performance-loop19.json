@@ -1,0 +1,648 @@
+{
+  "status": "canonical_changes_validated_whole_app_comparison_pending",
+  "baseline_commit": "709be2afb4d891d645633d3e3ce35992d3b56a96",
+  "compiler_comparison": {
+    "scope": "Partial-root rebuild of normal runtime pipeline, not cold dependency compilation, Swift, whole CI or app memory. Compiler partitioning hypothesis; no hard memory or CPU thread cap. Product code may differ across codegen variants, so ABI and runtime equivalence require separate checks. Sampled aggregate tree RSS, shared-host load uncontrolled.",
+    "configuration": {
+      "sequence": "codegen 1-4-4-1",
+      "cargo_jobs": 2,
+      "root_clean_packages": [
+        "aetower-mcp",
+        "aetower-core",
+        "aetower-cli",
+        "aetower-ffi"
+      ],
+      "profile": "release",
+      "compiler_wrappers": "disabled",
+      "cache": "retained dependencies; selected runtime roots cleaned before each sample",
+      "diagnostic_transformation": "CARGO_BIN shim adds -vv --message-format=json and a per-package release codegen-units override for aetower-mcp. The same pinned Cargo, jobs=2, all normal batched runtime roots, host bindgen and binding publication are retained. Other compiler settings must remain unchanged."
+    },
+    "means": {
+      "1": {
+        "wall_seconds": 199.9205,
+        "cpu_seconds": 281.7445,
+        "sampled_peak_tree_rss_bytes": 1973764096
+      },
+      "4": {
+        "wall_seconds": 158.012,
+        "cpu_seconds": 260.30800000000005,
+        "sampled_peak_tree_rss_bytes": 1520238592
+      }
+    },
+    "percent_change_four_vs_one": {
+      "wall_seconds": -20.962582626594074,
+      "cpu_seconds": -7.6084892517866205,
+      "sampled_peak_tree_rss_bytes": -22.97769550672787
+    },
+    "runtime_unit_graph_equal": true,
+    "effective_options_audit": {
+      "status": "complete",
+      "product_sizes": [
+        {
+          "index": 1,
+          "units": 1,
+          "bytes": {
+            "libaetower_ffi.dylib": 11292056,
+            "aetower": 1194096,
+            "aetower-mcp": 443312
+          }
+        },
+        {
+          "index": 2,
+          "units": 4,
+          "bytes": {
+            "libaetower_ffi.dylib": 11658200,
+            "aetower": 1194112,
+            "aetower-mcp": 443440
+          }
+        },
+        {
+          "index": 3,
+          "units": 4,
+          "bytes": {
+            "libaetower_ffi.dylib": 11658200,
+            "aetower": 1194112,
+            "aetower-mcp": 443440
+          }
+        },
+        {
+          "index": 4,
+          "units": 1,
+          "bytes": {
+            "libaetower_ffi.dylib": 11292056,
+            "aetower": 1194096,
+            "aetower-mcp": 443312
+          }
+        }
+      ],
+      "effective_codegen_options_equal_except_mcp_partition_count": true,
+      "ignored_identity_options": [
+        "metadata",
+        "extra-filename"
+      ],
+      "scope": "Actual ordered rustc -C options match except intentional MCP codegen partition count and compiler artifact identity. Unit graph/features/profiles are separately verified. File sizes are on-disk bytes, not app resident memory or physical footprint."
+    },
+    "exported_symbols_equal": true,
+    "products_equal_within_variant": true,
+    "canonical_inputs_unchanged": true
+  },
+  "mcp_release_validation": {
+    "passed": 277,
+    "total": 278,
+    "exact_native_case_coverage": true,
+    "canonical_inputs_unchanged": true,
+    "cost": {
+      "command": [
+        "/Users/christophehenner/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--message-format=json",
+        "--manifest-path",
+        "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/rust/Cargo.toml",
+        "-p",
+        "aetower-mcp",
+        "--config",
+        "profile.release.package.aetower-mcp.codegen-units=4",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+      "exit_status": 0,
+      "wall_seconds": 426.658,
+      "user_cpu_seconds": 303.238,
+      "system_cpu_seconds": 40.164,
+      "average_cpu_percent": 80.5,
+      "sampled_peak_tree_rss_bytes": 1370914816,
+      "rss_samples": 390,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    }
+  },
+  "storage_runtime_comparison": {
+    "scope": "Whole native selected test process: initialization, 100000-row staging, report builds and cleanup. Identical source and test case names; codegen unit count varies only for MCP. Exact expected workload assertions, not a full database-byte export oracle. Shared host and I/O remain uncontrolled. No whole-app, hosted-CI or causal gain claim.",
+    "workload": "Unchanged shipping release test asserts checked publication of all 100000 synthetic indexed rows, real artifact retained, no write error and both report queries below unchanged five-second budgets. Database namespace and root are unique per process under the short TMP alias. No user database is used.",
+    "sequence": [
+      1,
+      4,
+      4,
+      1,
+      4,
+      1,
+      1,
+      4
+    ],
+    "means": {
+      "1": {
+        "wall_seconds": 75.56825,
+        "cpu_seconds": 29.848,
+        "sampled_peak_tree_rss_bytes": 16822272
+      },
+      "4": {
+        "wall_seconds": 71.36375000000001,
+        "cpu_seconds": 29.585749999999997,
+        "sampled_peak_tree_rss_bytes": 17678336
+      }
+    },
+    "all_eight_native_tests_passed": true,
+    "canonical_inputs_unchanged": true
+  },
+  "network_constructor": {
+    "scope": "Deterministic exact-body network constructor diagnostic using a read-only fake counter provider and real output model; separate CPU executable has no tracking allocator. All normal real-provider collector tests follow. No whole-app performance or retained footprint claim.",
+    "source_plan": {
+      "canonical_source_sha256": "03167cc1eb9f588b35ba775586dc1351566fa4013d8f49a10fbafa7e3888473b",
+      "locked_sysinfo": "0.38.4",
+      "verified_lookup": "Networks implements Deref<Target=HashMap<String, NetworkData>>, so get(&str) borrows the existing map. Cached metadata order, duplicates, first-tick zeros, missing zeros and floating-point division/cast expressions are retained. No persistent state, timers or cadence changes.",
+      "diagnostic_counter_provider": "Exact old/new function bodies with renamed functions; local Networks alias is a HashMap<String, FakeNetworkData> exposing immutable received/transmitted u64 accessors. Real NetworkInterfaceSnapshot model, exact metadata fields and all body expressions retained. This isolates deterministic arithmetic/lookup/allocation behavior, not live sysinfo refresh or whole collector/app performance.",
+      "oracle": "All five output fields encoded as ordered length-prefixed UTF-8, little-endian u64 rates and bool; exact bytes and Vec capacities compared across 12 cases and 3 repetitions. Includes first tick, empty data, missing/duplicate/reordered cache entries, maximum counters and zero/negative/NaN/infinite elapsed intervals.",
+      "cpu_scope": "Separate native integration executable without allocator instrumentation; complete constructor loops over small/normal/dense/stale fake data. CPU/wall/tree RSS are bounded fixture costs only. No app-wide gain inferred."
+    },
+    "count_fields": [
+      "allocation_requests",
+      "allocated_bytes",
+      "deallocation_requests",
+      "deallocated_bytes",
+      "reallocations",
+      "reallocated_requested_bytes"
+    ],
+    "cases": [
+      {
+        "case": "empty",
+        "repetition": 0,
+        "baseline": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "candidate": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 0,
+        "output_bytes": 8
+      },
+      {
+        "case": "empty-both",
+        "repetition": 0,
+        "baseline": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "candidate": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 0,
+        "output_bytes": 8
+      },
+      {
+        "case": "first",
+        "repetition": 0,
+        "baseline": [
+          65,
+          3040,
+          0,
+          0,
+          0,
+          0
+        ],
+        "candidate": [
+          65,
+          3040,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 32,
+        "output_bytes": 1800
+      },
+      {
+        "case": "small",
+        "repetition": 0,
+        "baseline": [
+          6,
+          330,
+          1,
+          140,
+          0,
+          0
+        ],
+        "candidate": [
+          5,
+          190,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 2,
+        "output_bytes": 120
+      },
+      {
+        "case": "normal",
+        "repetition": 0,
+        "baseline": [
+          66,
+          5160,
+          1,
+          2120,
+          0,
+          0
+        ],
+        "candidate": [
+          65,
+          3040,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 32,
+        "output_bytes": 1800
+      },
+      {
+        "case": "stale",
+        "repetition": 0,
+        "baseline": [
+          12,
+          4707,
+          1,
+          4232,
+          0,
+          0
+        ],
+        "candidate": [
+          11,
+          475,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 5,
+        "output_bytes": 288
+      },
+      {
+        "case": "dense",
+        "repetition": 0,
+        "baseline": [
+          1026,
+          82440,
+          1,
+          33800,
+          0,
+          0
+        ],
+        "candidate": [
+          1025,
+          48640,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 512,
+        "output_bytes": 28680
+      },
+      {
+        "case": "zero-interval",
+        "repetition": 0,
+        "baseline": [
+          18,
+          1296,
+          1,
+          536,
+          0,
+          0
+        ],
+        "candidate": [
+          17,
+          760,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 8,
+        "output_bytes": 456
+      },
+      {
+        "case": "negative",
+        "repetition": 0,
+        "baseline": [
+          18,
+          1296,
+          1,
+          536,
+          0,
+          0
+        ],
+        "candidate": [
+          17,
+          760,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 8,
+        "output_bytes": 456
+      },
+      {
+        "case": "nan",
+        "repetition": 0,
+        "baseline": [
+          18,
+          1296,
+          1,
+          536,
+          0,
+          0
+        ],
+        "candidate": [
+          17,
+          760,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 8,
+        "output_bytes": 456
+      },
+      {
+        "case": "infinite",
+        "repetition": 0,
+        "baseline": [
+          18,
+          1296,
+          1,
+          536,
+          0,
+          0
+        ],
+        "candidate": [
+          17,
+          760,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 8,
+        "output_bytes": 456
+      },
+      {
+        "case": "no-networks",
+        "repetition": 0,
+        "baseline": [
+          5,
+          190,
+          0,
+          0,
+          0,
+          0
+        ],
+        "candidate": [
+          5,
+          190,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacity": 2,
+        "output_bytes": 120
+      }
+    ],
+    "oracles": {
+      "dense": {
+        "bytes": 28680,
+        "sha256": "eaaa2ba72b32a164c1fd5e14531036a942ecf3db796f52d6fab33a71744a7c9c"
+      },
+      "empty": {
+        "bytes": 8,
+        "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+      },
+      "empty-both": {
+        "bytes": 8,
+        "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+      },
+      "first": {
+        "bytes": 1800,
+        "sha256": "6a95a61816383fc87a0528f80f4d3f190b4d9601c252d97af31ca2e9d56cfafb"
+      },
+      "infinite": {
+        "bytes": 456,
+        "sha256": "5037921adcfe5421ff98874c6c0a71f1da5ed0c0b60056893a5819482c2c594a"
+      },
+      "nan": {
+        "bytes": 456,
+        "sha256": "5037921adcfe5421ff98874c6c0a71f1da5ed0c0b60056893a5819482c2c594a"
+      },
+      "negative": {
+        "bytes": 456,
+        "sha256": "5037921adcfe5421ff98874c6c0a71f1da5ed0c0b60056893a5819482c2c594a"
+      },
+      "no-networks": {
+        "bytes": 120,
+        "sha256": "d362d3f778320cd999e62e7ca9e1f20f862f87a9e11e713457dbed61dbeb848e"
+      },
+      "normal": {
+        "bytes": 1800,
+        "sha256": "e19bee6474b364bd5aeb7fe615a9a8ef81778fa6797f70afae1e5eef20b6a4d6"
+      },
+      "small": {
+        "bytes": 120,
+        "sha256": "9d494fc3e66431a3b9f7e81bcda52577e6abbff50af61c2f069586752b8b4436"
+      },
+      "stale": {
+        "bytes": 288,
+        "sha256": "6be466c4b2153e70bb86d6a9999d15fbdcefa352cad79d0f5f1ae0f887ff192c"
+      },
+      "zero-interval": {
+        "bytes": 456,
+        "sha256": "df5e0907671ed65a57695ad8cd1320aa6ca093060b18f783b3b5abc297225121"
+      }
+    },
+    "repetitions": 3,
+    "cpu_sequence": [
+      "baseline",
+      "candidate",
+      "candidate",
+      "baseline",
+      "candidate",
+      "baseline",
+      "baseline",
+      "candidate"
+    ],
+    "cpu_means": {
+      "baseline": {
+        "wall_seconds": 1.01675,
+        "cpu_seconds": 0.57775,
+        "sampled_peak_tree_rss_bytes": 1769472
+      },
+      "candidate": {
+        "wall_seconds": 0.53225,
+        "cpu_seconds": 0.39675,
+        "sampled_peak_tree_rss_bytes": 2363392
+      }
+    },
+    "cpu_percent_change": {
+      "wall_seconds": -47.65183181706417,
+      "cpu_seconds": -31.32842925140632
+    },
+    "all_eight_cpu_workloads_and_checksums_match": true,
+    "normal_validation": {
+      "status": "complete",
+      "controller_pid": 45315,
+      "original_failure_retained": true,
+      "correction": "Audit now preserves and independently verifies the normal ignored-case set. No test or benchmark rerun.",
+      "normal_tests": {
+        "passed": 25,
+        "ignored": 2,
+        "expected_native_cases": 26,
+        "exact_native_case_coverage": true,
+        "ignored_cases": {
+          "top_level_tests::counter_table_reuse_benchmark": 1,
+          "top_level_tests::metadata_cache_pruning_benchmark": 1
+        }
+      },
+      "steps": [
+        {
+          "name": "clippy",
+          "status": "complete"
+        },
+        {
+          "name": "format",
+          "status": "complete"
+        }
+      ],
+      "child_pid": 45525,
+      "canonical_inputs_unchanged": true
+    },
+    "original_audit_failure_retained": true,
+    "fixtures_removed": true,
+    "canonical_inputs_unchanged_after_candidate_application": true
+  },
+  "canonical_release_validation": {
+    "status": "complete",
+    "steps": [
+      {
+        "name": "build",
+        "status": "complete",
+        "cost": {
+          "command": [
+            "/bin/sh",
+            "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/scripts/build-rust.sh",
+            "--profile",
+            "release"
+          ],
+          "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+          "exit_status": 0,
+          "wall_seconds": 230.437,
+          "user_cpu_seconds": 263.652,
+          "system_cpu_seconds": 8.599,
+          "average_cpu_percent": 118.1,
+          "sampled_peak_tree_rss_bytes": 1476296704,
+          "rss_samples": 214,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        }
+      },
+      {
+        "name": "clippy",
+        "status": "complete"
+      },
+      {
+        "name": "format",
+        "status": "complete"
+      }
+    ],
+    "effective_release_flags": [
+      {
+        "crate": "aetower_collector",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower_mcp",
+        "effective_codegen_units": 4
+      },
+      {
+        "crate": "aetower_identity",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower_attribution",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower_core",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower_ffi",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower_mcp",
+        "effective_codegen_units": 4
+      }
+    ],
+    "products": {
+      "libaetower_ffi.dylib": {
+        "sha256": "03f214289ed134fd3d2748e3428b917b8fbd819e28fe189326636034e5cb8103",
+        "bytes": 11658200
+      },
+      "aetower": {
+        "sha256": "7e986b86fec8fb1e65b348d5f472a1ad3d37e6f3f930ad1e50e50778ea50902b",
+        "bytes": 1194112
+      },
+      "aetower-mcp": {
+        "sha256": "256e188d95a7b53547e937575d5b104ecc0e87a45337cddad157bbee23d5cf56",
+        "bytes": 443440
+      }
+    },
+    "exports_equal": true,
+    "canonical_inputs_unchanged_after_candidate_application": true
+  },
+  "hosted_ci": {
+    "status": "failure_at_dependency_policy_preflight_before_compilation",
+    "head": "709be2afb4d891d645633d3e3ce35992d3b56a96",
+    "url": "https://github.com/schiste/Aetower/actions/runs/41314286119"
+  },
+  "limitations": [
+    "Compiler comparison is a selected-root rebuild with dependencies retained, not empty-target or whole CI. Shared host load is uncontrolled.",
+    "Four-unit library adds 366144 on-disk bytes (+3.24%); no smaller app or lower runtime-memory claim.",
+    "Paired storage test checks real 100000-row staging and unchanged query budgets, not all database bytes or whole app.",
+    "Network CPU fixture substitutes immutable fake counters while retaining exact bodies and real output model. Normal real-provider tests validate production source. Allocation traffic is not retained/physical memory; subsecond sampled RSS is unreliable.",
+    "No app-wide CPU/memory/wakeup saving established. Pass-18 ownership candidate remains withdrawn. No installed app, release or merge changed."
+  ],
+  "retained_receipt_sha256": {
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-compiler-pressure-plan-v1/results.json": "c4e636cfa1d05076fe54eb515a06e97e6b257cdfecee81e7d13fab22954b2198",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-compiler-pressure-plan-v1/compiler-options-and-size-audit.json": "3fc4bb4b725b50fa4db1815a465562c8c0604a9c8bbeb906e2498b7a1d373de5",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-mcp-release-validation-v1/results.json": "90e2f4648cd567ee4c9d25f675b796b9bb625ba68052e3ec37e5185123705933",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-storage-profile-runtime-v1/results.json": "64f341f58a5bc7dadefdd86fd75ece7557c176b26577111f879fe7c905b34ba3",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-network-lookup-validation-v1/results.json": "b313cb425b543a63a6c037c43f4d78e8ef9a9e83a7756a048b2b8e387737f6b4",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-network-lookup-validation-v1/validation-recovery.json": "f9b71de5c74c874f07ee82e5ff30d5c7edf32e8ae8c2a43cff42c2671fc48f38",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-canonical-release-v1/results.json": "b71290ad51e89df2ea15fbdeec7c3ad5af35fd0977e86cee90262e74ab4238ca"
+  }
+}

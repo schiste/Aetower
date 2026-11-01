@@ -56,3 +56,8 @@ codegen-units = 1
 strip = "symbols"
 # panic stays "unwind": uniffi converts Rust panics into Swift-visible errors via
 # catch_unwind at the FFI boundary; panic = "abort" would kill the host app instead.
+
+# Split the large MCP crate to reduce measured release compiler memory and CPU.
+# Other release crates retain the workspace default of one codegen unit.
+[profile.release.package.aetower-mcp]
+codegen-units = 4

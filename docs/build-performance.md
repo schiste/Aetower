@@ -53,6 +53,12 @@ shared budget through `-j`. A job budget limits compiler concurrency, not
 CPU percentage or memory allocation; a compiler can itself use threads.
 Direct Cargo and Swift commands outside these scripts retain their own defaults.
 
+Release MCP uses four codegen units to reduce measured compiler peak RSS and
+CPU time; other release crates retain one. This trades about 358 KiB more
+bridge-library disk space for 23% less sampled compiler-tree RSS in a matched
+partial-root rebuild. See [pass 19](performance-loop19.json) for scope and limits;
+this does not establish lower app physical footprint.
+
 ## Preserve caches between builds
 
 Packaging and local CI preserve SwiftPM's build directory and packaging's
