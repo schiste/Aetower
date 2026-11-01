@@ -27,7 +27,10 @@ valid row; prior publication and growth remain intact. Strict all-target Clippy
 passes. The large-index test now checks tail-flush success and actual 100000-row
 cardinality before its unchanged five-second query budgets; the strengthened
 case passes at **87.970s wall** under current debug SQLite (absolute validation
-cost). Full workspace validation remains pending. The build/CI candidate is a
+cost). Full workspace validation passes **517 cases, eight ignored**, matching
+the exact expected case/status multiset with inputs unchanged. Its absolute
+cache-reusing pipeline cost is **157.184s wall / 100.118 CPU-seconds / 1162.75 MiB
+sampled peak tree RSS**; it is not a cold or matched build comparison. The build/CI candidate is a
 dependency-specific debug SQLite optimization; no manifest setting is adopted
 yet and compile cost must be included. See
 [`performance-loop17.json`](performance-loop17.json).

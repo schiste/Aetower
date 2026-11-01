@@ -1,5 +1,5 @@
 {
-  "status": "runtime_candidate_focused_validated_ci_profile_and_full_workspace_pending",
+  "status": "runtime_candidate_full_workspace_validated_sqlite_cold_repeat_comparison_ready",
   "runtime_change": {
     "source": "rust/crates/aetower-mcp/src/reports/storage/state_store.rs",
     "source_sha256": "7af9e01cebbc33bff515d89deb9d49808ff43e19a24e0a0a6bed6283a810b4cf",
@@ -699,13 +699,39 @@
       },
       "requirements": "Checked tail flush, no write error, exactly 100000 physical index rows; original five-second first/repeat report budgets unchanged. Absolute current-debug validation cost, not a balanced performance or cold compilation comparison."
     },
-    "full_workspace": "pending"
+    "full_workspace": {
+      "status": "complete",
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-current-workspace-validation-v1/results.json",
+      "sha256": "a793f387ed2ef227b26bc01f020ab1d5acaf768d9c2a7bee979b0c367e86eed4",
+      "passed": 517,
+      "ignored": 8,
+      "total": 525,
+      "exact_expected_cases": true,
+      "inputs_unchanged": true,
+      "cost": {
+        "command": [
+          "sh",
+          "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+        ],
+        "cwd": "/private/tmp/aetower-build-performance",
+        "exit_status": 0,
+        "wall_seconds": 157.184,
+        "user_cpu_seconds": 71.987,
+        "system_cpu_seconds": 28.131,
+        "average_cpu_percent": 63.7,
+        "sampled_peak_tree_rss_bytes": 1219231744,
+        "rss_samples": 154,
+        "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+      },
+      "scope": "Complete current serial Rust workspace through the unchanged production two-graph wrapper, including required cached compilation; two jobs and full debug info. Absolute correctness cost, not a cold or A/B build comparison. Exact prior case/status multiset minus withdrawn network oracle/manual fixture plus the new generation-rollback regression."
+    }
   },
   "build_ci_candidate": {
-    "status": "planned_not_adopted",
+    "status": "matched_full_rust_pipeline_comparison_ready_not_adopted",
     "proposal": "Measure libsqlite3-sys-specific development/test optimization, initially level 1, preserving workspace debug info, assertions, overflow checks, selectors, dataset size and report budgets. Include compilation and cold/repeat costs before adoption or CI claims.",
     "reference": "https://doc.rust-lang.org/cargo/reference/profiles.html",
-    "hosted_scope": "Existing mandatory dependency-policy preflight still fails; no successful hosted build/cache saving established."
+    "hosted_scope": "Existing mandatory dependency-policy preflight still fails; no successful hosted build/cache saving established.",
+    "measurement_plan": "ABBA levels 0/1/1/0; empty-target complete workspace compile and execution plus unchanged complete repeat in every phase. Same production two-graph wrapper, 25 executable targets and exact 517-passed/eight-ignored cases. Audit effective C/Rust profiles and require repeat compilation to be empty; report cold and repeat costs separately. No whole hosted CI claim."
   },
   "excluded_setup_attempts": [
     {
