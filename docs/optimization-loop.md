@@ -19,16 +19,25 @@ is restored. Its binary, candidate source and all unfavorable results remain
 retained. A future attempt needs call-context/compiler investigation and new
 measurements; the favorable churn result alone is insufficient.
 
-The next build experiment will compare the original storage audit helper against
-an `@inline(never)` candidate using four matched actual UI object compilations.
-It remains queued while a reversed-order pass-15 app cohort investigates the
-unfavorable footprint result. Compiler flags/defaults remain unchanged; no Swift
-annotation is retained in production source. Evidence is in
+The reversed-order pass-15 app cohort is complete: CPU **+4.7%**, physical
+footprint **+2.6%**, wakeups **+0.4%** relative to its baseline. It does not
+confirm the initial favorable CPU/wakeup means. Both cohorts have higher candidate
+mean footprint, with substantial per-window variation and uncontrolled inputs.
+The membership cache is therefore removed as a precaution pending stronger
+allocation evidence; this is not proof it caused the footprint difference.
+The exact pass-14 history source is restored (SHA-256 begins `76c2bb040cdc`),
+matching the source previously validated with **516 workspace cases, eight ignored**
+and 25 history release cases. Fresh validation is queued after compiler measurements.
+
+Four matched actual UI object compilations are now comparing the original storage
+audit helper against an `@inline(never)` candidate. Compiler flags/defaults are
+unchanged. The controller temporarily swaps the Swift source, hashes all inputs
+and restores the original in `finally`; the annotation remains experimental. Evidence is in
 [`performance-loop16.json`](performance-loop16.json).
 
-## Pass 15: skip unchanged active-set pruning; diagnose Swift optimizer cost
+## Pass 15: reverted active-set cache; Swift optimizer diagnostics
 
-Cooccurrence samples now retain their sorted unique active indices. Pair increments
+The now-reverted cooccurrence proposal retained sorted unique active indices. Pair increments
 keep the original order and duplicate semantics; when membership is unchanged,
 the previous pruning already guarantees that every stored pair is active, so the
 full retention scan is redundant. Changed membership still performs the original
@@ -37,7 +46,7 @@ uses two bytes per unique u16 index: at most 128 KiB plus metadata, normally
 1,000 bytes for the 500-entity fixture. Sampling cadence, counters, grouping order,
 text and schemas remain unchanged.
 
-All **26 history release tests** and strict release all-targets Clippy pass, with
+For that proposal, **26 history release tests** and strict release all-targets Clippy pass, with
 two ignored manual fixtures. Oracles clone the hash builder and compare exact
 counts, actual table iteration order and resulting grouping text across stable,
 reordered and duplicate IDs, churn, disappearance/reappearance, empty input and
@@ -62,7 +71,16 @@ footprint **134.33 → 146.50 MiB (+9.1%)**, and wakeups **5.505 → 5.127/s (-6
 The physical footprint result is unfavorable and requires follow-up. Baseline memory
 spans **122.61–146.05 MiB** and candidate memory **143.37–149.62 MiB**; shared-host
 load, undriven inputs and two windows per variant prevent causal attribution.
-A reversed-order same-pair cohort is running before claiming a footprint improvement.
+The separate BAAB follow-up observes CPU **3.448% → 3.609% (+4.7%)**,
+physical footprint **137.58 → 141.14 MiB (+2.6%)**, and wakeups
+**5.161 → 5.183/s (+0.4%)**. All four windows verify both loaded images and 300 visibility observations. The cache is removed as a precaution: CPU/wakeup direction is not
+consistent and both cohorts have higher mean footprint. No causal regression
+claim is made. Eight windows and both raw cohorts remain retained. Descriptively
+combining four windows per variant gives CPU **-4.2%**, footprint **+5.8%**,
+wakeups **-3.3%**, without resolving the uncontrolled workload or order effects.
+Both Rust libraries have identical static Mach-O segment sizes; this does not
+establish equal residency or identify heap allocation. Current production source
+restores the preceding pass-14 implementation; the fixture saving is experimental.
 
 Build investigation replays the captured native frontend command with private
 outputs and hashed sources/imported modules. Typecheck-only execution across 91

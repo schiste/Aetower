@@ -1,5 +1,5 @@
 {
-  "status": "first_runtime_candidate_rejected_build_experiment_queued",
+  "status": "runtime_proposals_reverted_compiler_comparison_running",
   "runtime_experiment": {
     "status": "rejected_not_retained_in_production_source",
     "proposal": "For changed cooccurrence membership, use a u16-domain bounded bitset only when requested bit payload is no larger than the active-index u16 payload; retain HashSet for sparse historical indices. Keep the prior unchanged-membership cache.",
@@ -86,15 +86,34 @@
     "decision": "Reject this first version: compact churn CPU improves 34.9%, but the steady fixture CPU rises 19.3% and maximum-process RSS also rises. The stable hot path was intended to be unchanged. A future attempt requires investigating compiler/call context and remeasurement; favorable churn alone does not establish a net improvement. Restored exact preceding production source; no source changes from this experiment remain."
   },
   "build_experiment": {
-    "status": "queued_after_app_followup",
+    "status": "running",
     "proposal": "Use the retained actual release UI frontend command to compare the original storage audit helper against an inline(never) candidate, in four matched ABBA optimized object compilations. Preserve optimization, sources/imports and two frontend threads; use fresh private module caches/outputs. Restore original source in finally. No compiler backend/default change.",
     "controller": "tmp/loop16-swift-inlining-comparison.py",
     "scope": "UI object compilation diagnostic only; excludes separate module emission, dependencies, linking, packaging, runtime and whole CI. A retained annotation additionally needs app/default-build compatibility and footprint validation.",
-    "official_guidance": "https://developer.apple.com/videos/play/wwdc2026/262/"
+    "official_guidance": "https://developer.apple.com/videos/play/wwdc2026/262/",
+    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-swift-inlining-comparison-v1/results.json"
   },
   "app_followup": {
-    "status": "running",
+    "status": "complete",
     "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/measurements/loop15-hidden-runtime-v2/summary.json",
-    "scope": "Same retained production pass-15 app pair in BAAB order, after the complete initial ABBA cohort. No compiler/fixture benchmark overlaps capture. Initial unfavorable memory results remain reported in performance-loop15.json."
+    "scope": "Same retained production pass-15 app pair in BAAB order, after the complete initial ABBA cohort. No compiler/fixture benchmark overlaps capture. Initial unfavorable memory results remain reported in performance-loop15.json.",
+    "means": {
+      "baseline": {
+        "average_cpu_percent": 3.44796109604521,
+        "average_phys_footprint_bytes": 144262569.47826087,
+        "interrupt_wakeups_per_second": 5.160889461349346
+      },
+      "candidate": {
+        "average_cpu_percent": 3.6085034606114714,
+        "average_phys_footprint_bytes": 147994034.86956522,
+        "interrupt_wakeups_per_second": 5.183386586047199
+      }
+    },
+    "candidate_change_percent": {
+      "average_cpu_percent": 4.656153596118084,
+      "average_phys_footprint_bytes": 2.586579044584836,
+      "interrupt_wakeups_per_second": 0.43591564722198495
+    },
+    "decision": "Precautionary removal of preceding membership cache; see pass 15 for both cohorts, all windows and source identity."
   }
 }
