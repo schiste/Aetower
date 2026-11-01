@@ -1031,11 +1031,121 @@
     "finding": "Matching CPU stacks reach capacity enrichment through both snapshot refresh and the ten-second storage-situation publisher. The Rust report already deduplicates volume devices. Sharing cached capacity between those paths would change which reading reaches the UI; no cadence or caching change retained."
   },
   "corrected_compiler_comparison": {
-    "status": "running",
+    "status": "complete",
     "source_commit": "33cfa0e262e08263c89db79bad5dbcd63e0c9511",
     "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop13-workspace-compile-graphs-explicit-wait/results.json",
-    "scope": "Four ABBA cold Rust test-compilation/runtime-build/generator-build pipelines with unchanged repeats; full test execution separately checks 523 expected cases, including four new history oracle tests and one ignored manual fixture. Excludes Clippy, Swift and cache transfers; not whole hosted CI.",
-    "benchmark_transformation": "Final exec replaced with an ordinary child call and explicit status exit in both retained script copies; root path overridden. Production orchestration unchanged.",
-    "accounting": "Independent explicit-wait control preserves both children's self-reported CPU; both compiler wrappers disabled; source/support hashes checked before phases; Cargo/rustc identities recorded. No new compiler saving claimed until completion."
+    "output_sha256": "1de5ff9e8f8b9b9707f9113f5eefe6b2ee0d6c88b6c045422f65d5846a9c4d2e",
+    "scope": "four alternating cold Rust test-compilation/runtime-build/generator-build pipelines, each with an unchanged repeat; test compilation only, excludes test execution, Clippy, Swift and cache transfers; not a whole CI job; final candidate test execution separately verified against the passed baseline cohort",
+    "baseline_orchestration_commit": "097837d73273da16c632cfe05a4b8f43be95f855",
+    "benchmark_transformation": "Both retained orchestration scripts replace their final exec with an ordinary child invocation followed by explicit exit of its status; original test/build selection, order, flags and failures are preserved. This prevents the independently reproduced shell-exec child-CPU loss on this host. Root path is also overridden for retained copies.",
+    "production_accounting_fix_commit": "185a50f3644e",
+    "accounting": "Both compiler wrappers disabled; independently checked child CPU with explicit waits; fixed Rust sources/support files hashed before phases; full debug info, incremental mode, jobs=2, Cargo/rustc 1.92.0.",
+    "compiled_test_targets_per_phase": 25,
+    "separate_candidate_execution": {
+      "exit_status": 0,
+      "passed": 515,
+      "ignored": 8,
+      "total": 523,
+      "verified_original_cases_plus_declared_additions": true
+    },
+    "measurements": {
+      "cold": {
+        "variants": {
+          "baseline": {
+            "runs": [
+              {
+                "wall_seconds": 350.205,
+                "cpu_seconds": 392.368,
+                "sampled_peak_tree_rss_bytes": 1214283776,
+                "rss_samples": 338
+              },
+              {
+                "wall_seconds": 256.096,
+                "cpu_seconds": 349.88300000000004,
+                "sampled_peak_tree_rss_bytes": 1790328832,
+                "rss_samples": 248
+              }
+            ],
+            "mean_wall_seconds": 303.15049999999997,
+            "mean_cpu_seconds": 371.1255,
+            "mean_sampled_peak_tree_rss_bytes": 1502306304
+          },
+          "candidate": {
+            "runs": [
+              {
+                "wall_seconds": 150.07,
+                "cpu_seconds": 229.692,
+                "sampled_peak_tree_rss_bytes": 1251262464,
+                "rss_samples": 146
+              },
+              {
+                "wall_seconds": 140.78,
+                "cpu_seconds": 216.292,
+                "sampled_peak_tree_rss_bytes": 1207500800,
+                "rss_samples": 137
+              }
+            ],
+            "mean_wall_seconds": 145.425,
+            "mean_cpu_seconds": 222.99200000000002,
+            "mean_sampled_peak_tree_rss_bytes": 1229381632
+          }
+        },
+        "observed_percent_changes": {
+          "mean_wall_seconds": -52.028777785291446,
+          "mean_cpu_seconds": -39.91466498529472,
+          "mean_sampled_peak_tree_rss_bytes": -18.16704564663798
+        }
+      },
+      "unchanged_repeat": {
+        "variants": {
+          "baseline": {
+            "runs": [
+              {
+                "wall_seconds": 2.097,
+                "cpu_seconds": 0.8280000000000001,
+                "sampled_peak_tree_rss_bytes": 75137024,
+                "rss_samples": 3
+              },
+              {
+                "wall_seconds": 1.627,
+                "cpu_seconds": 0.8160000000000001,
+                "sampled_peak_tree_rss_bytes": 18808832,
+                "rss_samples": 2
+              }
+            ],
+            "mean_wall_seconds": 1.862,
+            "mean_cpu_seconds": 0.8220000000000001
+          },
+          "candidate": {
+            "runs": [
+              {
+                "wall_seconds": 0.994,
+                "cpu_seconds": 0.749,
+                "sampled_peak_tree_rss_bytes": 1622016,
+                "rss_samples": 1
+              },
+              {
+                "wall_seconds": 0.817,
+                "cpu_seconds": 0.7070000000000001,
+                "sampled_peak_tree_rss_bytes": 32768,
+                "rss_samples": 1
+              }
+            ],
+            "mean_wall_seconds": 0.9055,
+            "mean_cpu_seconds": 0.728
+          }
+        },
+        "observed_percent_changes": {
+          "mean_wall_seconds": -51.36949516648765,
+          "mean_cpu_seconds": -11.43552311435524
+        }
+      }
+    },
+    "limits": [
+      "Two cold runs per variant on an uncontrolled shared host; baseline wall times vary widely. Both candidate cold runs use less CPU/wall than both baselines.",
+      "These compiler timings exclude test execution, Clippy, Swift and cache transfers; no whole-CI saving is established.",
+      "Cold sampled tree RSS may double-count shared pages and miss peaks. Warm runs are too short for meaningful RSS comparisons with the one-second sampler.",
+      "Earlier original CPU cohort remains invalid and retained separately; the earlier full-pipeline storage completion timeout is unexplained. This complete validation does not explain or erase it."
+    ]
   }
 }

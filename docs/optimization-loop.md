@@ -47,9 +47,22 @@ An independent probe reproduces this with and without the sampler: two children
 reporting 0.3 CPU seconds each produce roughly 0.33s after `exec`, versus 0.66s
 with explicit waits. The cohort and wall/RSS observations remain retained;
 cold timings have wide spread, and unchanged candidate repeats are slower.
-A corrected comparison is running using matched explicit waits in both retained
-benchmark scripts, disabled compiler wrappers and recorded toolchain identities. Production orchestration is unchanged. This remains a local
-compiler comparison, excluding execution, Clippy, Swift and cache transfers.
+The corrected ABBA comparison is complete using matched explicit waits in both
+retained benchmark scripts, disabled compiler wrappers, fixed sources/support
+hashes, full debug info and two jobs. Cold means are wall **303.151 → 145.425s
+(-52.0%)**, CPU **371.126 → 222.992s (-39.9%)**, and sampled peak tree RSS
+**1432.71 → 1172.43 MiB (-18.2%)**. Unchanged-repeat means are wall
+**1.862 → 0.906s** and CPU **0.822 → 0.728s**. The one-second sampler misses
+short warm processes, so warm RSS is not interpretable. Every phase preserves
+25 test targets; separate candidate execution passes **515 cases, eight ignored**,
+matching the original case/status counts plus four passing history oracle tests
+and one ignored fixture. Both candidate cold runs are below both baselines for
+CPU/wall, but only two cold samples per variant and a wide baseline spread limit
+generalization. These are local compiler-stage results, excluding test execution,
+Clippy, Swift and cache transfers; no whole-CI saving is established. The earlier
+storage completion timeout remains unexplained. The production wrapper now keeps
+the waiting shell too; all 13 orchestration tests pass, and the real-wrapper CPU
+regression fails specifically for missing child CPU against the old wrapper.
 Detailed evidence is in [`performance-loop13.json`](performance-loop13.json).
 
 ## Pass 12: compare borrowed host trends and metric cards
