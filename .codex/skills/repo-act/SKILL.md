@@ -45,6 +45,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   and failure-path saves. Verify that an early rejection reports the same policy
   findings and skips expensive transfers; faster failure is not a passing gate.
   Confirm cold population and warm reuse separately before claiming cache gains.
+  Inspect subprocesses of scripting test suites before placing them ahead of a
+  rejecting preflight: Python checks can compile native harnesses. Verify that
+  reordered gates keep the same findings, exit status and explicit selectors,
+  and label a selected local failure path separately from a whole hosted job.
 - Before combining build and test commands, verify that the test invocation
   creates every required product (including an absent app executable), not just
   its library dependencies. Preserve explicit include/skip gate selections.
