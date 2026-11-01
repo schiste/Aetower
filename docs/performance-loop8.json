@@ -1,6 +1,6 @@
 {
   "runtime_source_commit": "e3440f725848",
-  "status": "1 of four app windows verified; comparison incomplete",
+  "status": "complete; fixture and app observations retained",
   "decoder_benchmark": {
     "scope": "actual generated full entity sequence decoding plus equality checks; identical serialized payload; no app state or collection; no app-wide claim",
     "rss_scope": "macOS wait4 maximum resident set size for each benchmark child, in bytes; not tree RSS or app footprint",
@@ -285,7 +285,7 @@
     "git diff --check"
   ],
   "generated_bindings_sha256": "a1a95eab9c4c4b8e18b675a5445aeac04753ae48af6db459755e8d4c1e940f26",
-  "scope": "fixture savings only; all decoded values and reserialized bytes match; slightly higher mean maximum fixture RSS; no app-wide performance claim",
+  "scope": "93.9% less CPU in a fixed full-entity decoder fixture; observed 13.7% lower app CPU in four shared-host windows; no physical-footprint or interrupt-wakeup saving established; no general controlled causal claim",
   "production_package_builds": {
     "first_after_release_tests": {
       "command": [
@@ -408,7 +408,7 @@
     "identical nonsignature bundle files except Swift executable"
   ],
   "matched_app_comparison": {
-    "status": "running",
+    "status": "complete",
     "controller_pid": 57629,
     "apps": [
       {
@@ -473,9 +473,128 @@
       {
         "label": "B1",
         "variant": "candidate",
-        "status": "starting",
-        "pid": 87921
+        "status": "complete",
+        "pid": 87921,
+        "host_processes_start": 764,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          25.904296875,
+          27.0458984375,
+          25.27001953125
+        ],
+        "host_load_end": [
+          28.75927734375,
+          27.7900390625,
+          25.73681640625
+        ],
+        "wall_seconds": 90.00798462500097,
+        "samples": 46,
+        "user_time_seconds": 2.778078292,
+        "system_time_seconds": 1.456640125,
+        "average_cpu_percent": 4.704825282604703,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 435,
+        "interrupt_wakeups_per_second": 4.832904567437373,
+        "average_resident_size_bytes": 98837548.52173913,
+        "peak_resident_size_bytes": 149241856,
+        "average_phys_footprint_bytes": 120275643.30434783,
+        "peak_phys_footprint_bytes": 155223120,
+        "host_processes_end": 707,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "status": "complete",
+        "pid": 12144,
+        "host_processes_start": 752,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          53.2529296875,
+          36.06005859375,
+          29.05224609375
+        ],
+        "host_load_end": [
+          34.09228515625,
+          34.080078125,
+          28.9775390625
+        ],
+        "wall_seconds": 90.00276129200938,
+        "samples": 46,
+        "user_time_seconds": 2.780498625,
+        "system_time_seconds": 1.476372667,
+        "average_cpu_percent": 4.729711878715362,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 443,
+        "interrupt_wakeups_per_second": 4.922071208045596,
+        "average_resident_size_bytes": 103736720.69565217,
+        "peak_resident_size_bytes": 152748032,
+        "average_phys_footprint_bytes": 119934436.52173913,
+        "peak_phys_footprint_bytes": 166118504,
+        "host_processes_end": 776,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "status": "complete",
+        "pid": 33327,
+        "host_processes_start": 786,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          19.77099609375,
+          29.91650390625,
+          27.76318359375
+        ],
+        "host_load_end": [
+          22.46630859375,
+          28.4326171875,
+          27.4150390625
+        ],
+        "wall_seconds": 90.00254762498662,
+        "samples": 46,
+        "user_time_seconds": 3.430253541,
+        "system_time_seconds": 1.455458041,
+        "average_cpu_percent": 5.428414762610145,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 417,
+        "interrupt_wakeups_per_second": 4.6332021815372695,
+        "average_resident_size_bytes": 113816798.60869566,
+        "peak_resident_size_bytes": 193822720,
+        "average_phys_footprint_bytes": 121188897.2173913,
+        "peak_phys_footprint_bytes": 164201576,
+        "host_processes_end": 800,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
       }
-    ]
+    ],
+    "means": {
+      "baseline": {
+        "average_cpu_percent": 5.4689788754191255,
+        "average_phys_footprint_bytes": 119473734.69565217,
+        "interrupt_wakeups_per_second": 4.855260969039577
+      },
+      "candidate": {
+        "average_cpu_percent": 4.717268580660033,
+        "average_phys_footprint_bytes": 120105039.91304347,
+        "interrupt_wakeups_per_second": 4.877487887741484
+      }
+    },
+    "candidate_change_percent": {
+      "average_cpu_percent": -13.74498442730745,
+      "average_phys_footprint_bytes": 0.5284050247525096,
+      "interrupt_wakeups_per_second": 0.457790401868019
+    },
+    "limits": "four fresh app-process windows with existing settings and no driven interaction on a shared host; no builds during sampling; population/load vary; these are observed means, not general or controlled causal savings"
+  },
+  "retained_candidate_symbols": {
+    "path": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-candidate/AetowerApp.dSYM",
+    "uuid": "3581EE7C-7D5F-393B-9FE8-B883A47E8142",
+    "dwarf_sha256": "6e2fabef36da0e5caa7198423198a4c8a6b7105b0d946d94f109414a78bc0312"
   }
 }

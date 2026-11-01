@@ -20,8 +20,8 @@ Two retained release executables decode the same 500-entity fixture with
 The 1,266,039-byte output has the same SHA-256 in every run. Total child CPU
 is **7.229020 → 0.444574 seconds**, **93.9% less fixture CPU**. Mean maximum
 process RSS is **17.07 → 17.56 MiB**, slightly higher; no memory saving is
-claimed. Median operation times are 2.342s versus 0.088s. App-wide effects
-remain unverified pending matched app windows.
+claimed. Median operation times are 2.342s versus 0.088s. The completed app comparison below observes lower CPU, with no physical-
+footprint or wakeup saving.
 
 The release suite rebuild and execution cost **336.824s wall / 263.161
 CPU-seconds / 1,635 MiB sampled peak tree RSS**. This is an absolute cost,
@@ -41,9 +41,18 @@ The frontend also uses ten internal threads beneath the two-job package
 budget. That is retained evidence for the next pressure investigation.
 
 The app pair differs only in its Swift executable and resulting signature;
-all other nonsignature bundle files, Rust library and metadata match. Four
-fresh A/B/B/A windows are running with 60s settling, 90s sampling and a 2s
-interval. No builds run during sampling. No app-wide result is claimed yet.
+all other nonsignature bundle files, Rust library and metadata match. All four
+fresh A/B/B/A windows complete with 60s settling, 90s sampling and a 2s
+interval. Every window verifies its expected loaded Swift UUID and main
+executable mapping, plus the bundled Rust UUID and mapping. No builds run
+during sampling. Mean app CPU is **5.469% → 4.717% (13.7% lower)**; both
+candidate windows (4.705%, 4.730%) are below both baseline windows (5.510%,
+5.428%). Mean physical footprint is **113.94 → 114.54 MiB (+0.5%)** and
+interrupt wakeups **4.855 → 4.877/s (+0.5%)**, essentially flat in this
+comparison. No app memory or wakeup gain is established. These are observed
+means for existing settings with no driven interaction on a shared host;
+process population and load vary, so they do not establish general controlled
+causal savings. Every raw window is retained and every bounded result published.
 
 ### Diagnostic evidence
 
