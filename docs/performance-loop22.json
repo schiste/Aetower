@@ -1,0 +1,384 @@
+{
+  "status": "notification_wait_adopted_release_and_retained_app_validated",
+  "baseline_commit": "7ca394e6fd67674c420e0d4fde4d22172c112ec2",
+  "change": "On macOS, wait for stdin/socket readability and parent exit with one owned close-on-exec kqueue, using the existing remaining idle deadline. Remove stdin interest after EOF and preserve socket response delivery. Unsupported setup and other Unix platforms retain the original 250ms poll. No additional thread, dependency or timer; one queue descriptor and initially three kernel filters per optimized helper.",
+  "source_sha256": {
+    "rust/crates/aetower-core/src/engine.rs": "dfe636b2d1a906403dd71e372ff02221eb5d8badad6364957a06ff3d96685940",
+    "rust/crates/aetower-mcp/src/transport.rs": "ab51f1a43ebddc0426c909bc4325ea86fa4781c51d4da2b212216849b81bd59e",
+    "rust/crates/aetower-mcp/src/transport/proxy_events.rs": "297358bdacc258a5b70ae7e3ee59722a8a3e739485ddd656d399c497fead8d84",
+    "rust/Cargo.toml": "8a8b3ebfaedc46e10992e6549d644be1a13d175c3f3f6aaf7145b550b6e731cd",
+    "rust/Cargo.lock": "356fc5a42b94595639024e2e88f7186323be511a7e237a28bf51a63e423a9a6b"
+  },
+  "api_reference": "https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kevent.2.html",
+  "baseline_reproduction": {
+    "scope": "Native retained helper, stdin closed after payload; idle peer keeps socket open for two seconds before returning response. Diagnostic reproduction only, no production/app-wide performance claim.",
+    "idle_peer_usage": {
+      "wall_seconds": 2.0847415419999997,
+      "samples": 2,
+      "user_time_seconds": 1.8166e-05,
+      "system_time_seconds": 7.925e-05,
+      "average_cpu_percent": 0.004672809460425671,
+      "pkg_idle_wakeups": 0,
+      "pkg_idle_wakeups_per_second": 0.0,
+      "interrupt_wakeups": 8,
+      "interrupt_wakeups_per_second": 3.8374061430776636,
+      "average_resident_size_bytes": 5865472,
+      "peak_resident_size_bytes": 5865472,
+      "average_phys_footprint_bytes": 1720728,
+      "peak_phys_footprint_bytes": 1720728
+    },
+    "response_after_stdin_eof_preserved": true,
+    "conclusion": "The native baseline does not reproduce a closed-stdin CPU spin. The adopted change targets the measured periodic idle wakeups, without changing poll hangup handling."
+  },
+  "native_comparison": {
+    "scope": "Eight serial retained native shipping MCP helper processes in ABBA/BAAB order. Each window has six seconds idle with stdin open, then six seconds idle after stdin EOF; same isolated Unix peer and exact request/4096-byte delayed response. Target native libproc deltas with verified process-start identity. No app-wide/children/interactive workload claim; startup excluded and no compilers/other benchmarks during capture. Existing release profile8 for both binaries.",
+    "binary_sha256": {
+      "baseline": "1123a78eb1b44b8c289d73b41231638d44ba5276f159bf12b9cab578bf889774",
+      "candidate": "c9dcdffe28348c090d5bcda1a96b121e9582c5a556fe9d57e8472345f8c9b590"
+    },
+    "sequence": [
+      "baseline",
+      "candidate",
+      "candidate",
+      "baseline",
+      "candidate",
+      "baseline",
+      "baseline",
+      "candidate"
+    ],
+    "processes": 8,
+    "seconds_per_idle_phase": 6,
+    "means": {
+      "stdin_open": {
+        "baseline": {
+          "average_cpu_percent": 0.006312274336828966,
+          "interrupt_wakeups_per_second": 3.96474502385072,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "average_resident_size_bytes": 5539840,
+          "average_phys_footprint_bytes": 1737112
+        },
+        "candidate": {
+          "average_cpu_percent": 0.0,
+          "interrupt_wakeups_per_second": 0.0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "average_resident_size_bytes": 5535744,
+          "average_phys_footprint_bytes": 1749400
+        }
+      },
+      "stdin_closed_waiting_response": {
+        "baseline": {
+          "average_cpu_percent": 0.005775065352805496,
+          "interrupt_wakeups_per_second": 3.892945573054103,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "average_resident_size_bytes": 5230592,
+          "average_phys_footprint_bytes": 1737112
+        },
+        "candidate": {
+          "average_cpu_percent": 0.0,
+          "interrupt_wakeups_per_second": 0.0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "average_resident_size_bytes": 5228544,
+          "average_phys_footprint_bytes": 1749400
+        }
+      }
+    },
+    "all_payloads_equal": true,
+    "response_bytes_per_process": 4096,
+    "all_owned_children_stopped": true,
+    "inputs_unchanged": true,
+    "binaries_unchanged": true
+  },
+  "normal_validation": {
+    "scope": "All normal affected runtime root packages (core/MCP/CLI/FFI) release unit/integration/doc tests after pressure-context and macOS notification changes. Production release profile unchanged (MCP8, other crates1). Batched package selection shares the runtime dependency feature graph and validates callers; exact native and ignored coverage is verified. Exact emitted native cases and normal ignored cases verified; strict all-target Clippy and formatting. One Cargo job; absolute validation cost, not performance comparison.",
+    "normal_tests": {
+      "passed": 373,
+      "ignored": 4,
+      "expected_native_cases": 377,
+      "exact_native_case_coverage": true,
+      "ignored_cases": {
+        "ui_snapshot_tests::ui_row_delta_benchmark": 1,
+        "ui_snapshot_tests::ui_snapshot_cache_benchmark": 1,
+        "ui_snapshot_tests::ui_trend_and_card_delta_benchmark": 1,
+        "live_db_indexed_and_overview_timing": 1
+      }
+    },
+    "steps": [
+      {
+        "name": "tests",
+        "status": "complete",
+        "cost": {
+          "command": [
+            "/Users/christophehenner/.cargo/bin/cargo",
+            "test",
+            "--locked",
+            "--release",
+            "--message-format=json",
+            "--manifest-path",
+            "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/rust/Cargo.toml",
+            "-p",
+            "aetower-core",
+            "-p",
+            "aetower-mcp",
+            "-p",
+            "aetower-cli",
+            "-p",
+            "aetower-ffi",
+            "--",
+            "--test-threads=1"
+          ],
+          "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+          "exit_status": 0,
+          "wall_seconds": 1323.724,
+          "user_cpu_seconds": 641.514,
+          "system_cpu_seconds": 60.056,
+          "average_cpu_percent": 53.0,
+          "sampled_peak_tree_rss_bytes": 1052114944,
+          "rss_samples": 1190,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        }
+      },
+      {
+        "name": "clippy",
+        "status": "complete"
+      },
+      {
+        "name": "format",
+        "status": "complete"
+      }
+    ],
+    "canonical_inputs_unchanged": true
+  },
+  "canonical_validation": {
+    "scope": "Canonical normal batched Rust runtime roots and debug host bindgen/bindings after the normal release runtime-package suites. Same unmodified release manifest, no profile override. Verify emitted flags for rebuilt units, exact normal-suite binary reuse for any fresh roots, binding inputs and 370 exports. Warm dependencies; absolute cost, not A/B. One batched app pipeline for passes21/22 instead of two redundant rebuilds.",
+    "steps": [
+      {
+        "name": "build",
+        "status": "complete",
+        "cost": {
+          "command": [
+            "/bin/sh",
+            "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/scripts/build-rust.sh",
+            "--profile",
+            "release"
+          ],
+          "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+          "exit_status": 0,
+          "wall_seconds": 125.706,
+          "user_cpu_seconds": 176.898,
+          "system_cpu_seconds": 5.598,
+          "average_cpu_percent": 145.2,
+          "sampled_peak_tree_rss_bytes": 784695296,
+          "rss_samples": 118,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        }
+      }
+    ],
+    "products": {
+      "libaetower_ffi.dylib": {
+        "sha256": "f3480a46ccde61d68db28c1ed41b04133f49f164ba39e0dbdc823f72250fb236",
+        "bytes": 11808104
+      },
+      "aetower": {
+        "sha256": "622095baa93c0eec3a8257d587d4467e93e5e664acff89f90f7645b0b40d244c",
+        "bytes": 1194128
+      },
+      "aetower-mcp": {
+        "sha256": "c9dcdffe28348c090d5bcda1a96b121e9582c5a556fe9d57e8472345f8c9b590",
+        "bytes": 444080
+      }
+    },
+    "effective_emitted_flags": [
+      {
+        "crate": "aetower_ffi",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower",
+        "effective_codegen_units": 1
+      }
+    ],
+    "mcp_rebuilt": false,
+    "normal_mcp_primary_binary_equal": true,
+    "exported_symbol_count": 370,
+    "exports_equal": true,
+    "canonical_inputs_unchanged": true
+  },
+  "retained_app_validation": {
+    "scope": "One retained candidate app smoke: 30 seconds hidden settle then 30 seconds counters. Common compiled Swift and resources; new canonical Rust library. Existing local app settings/live input; startup only, no interaction, no A/B or whole-app saving claim. No builds during capture; no install/release.",
+    "usage": {
+      "wall_seconds": 30.065596292000002,
+      "samples": 16,
+      "user_time_seconds": 0.511436584,
+      "system_time_seconds": 0.66292325,
+      "average_cpu_percent": 3.9059921599242635,
+      "pkg_idle_wakeups": 0,
+      "pkg_idle_wakeups_per_second": 0.0,
+      "interrupt_wakeups": 54,
+      "interrupt_wakeups_per_second": 1.7960728094512657,
+      "average_resident_size_bytes": 115420160,
+      "peak_resident_size_bytes": 133087232,
+      "average_phys_footprint_bytes": 126964744,
+      "peak_phys_footprint_bytes": 131630088
+    },
+    "app_owned_lag": {
+      "status": "complete",
+      "sample_count": 6,
+      "averages": {
+        "collect_millis": 86.40798950195312,
+        "engine_tick_millis": 370.3333435058594,
+        "history_millis": 4.413187503814697,
+        "mcp_requests_per_second": 4.854369640350342,
+        "persist_millis": 1.2932640314102173,
+        "self_cpu_percent": 3.262990713119507,
+        "self_wakeups_per_second": 1.9155158996582031
+      },
+      "samples": [
+        {
+          "bridge_fetch_millis": 0.0,
+          "collect_millis": 38.939998626708984,
+          "engine_tick_millis": 277.0,
+          "history_millis": 3.8238749504089355,
+          "mcp_active_client_count": 1,
+          "mcp_helper_count": 0,
+          "mcp_requests_per_second": 4.854369163513184,
+          "observed_at_millis": 1793557844889,
+          "persist_millis": 0.00045900000259280205,
+          "render_commit_millis": 0.0,
+          "self_cpu_percent": 2.0600483417510986,
+          "self_memory_bytes": 117161984,
+          "self_memory_physical_footprint_bytes": 128091144,
+          "self_wakeups_per_second": 1.8513879776000977,
+          "snapshot_to_render_millis": 0.0,
+          "stale_mcp_helper_count": 0,
+          "target_tick_millis": 5000.0,
+          "ui_refresh_millis": 0.0
+        },
+        {
+          "bridge_fetch_millis": 0.0,
+          "collect_millis": 38.939998626708984,
+          "engine_tick_millis": 277.0,
+          "history_millis": 3.8238749504089355,
+          "mcp_active_client_count": 1,
+          "mcp_helper_count": 0,
+          "mcp_requests_per_second": 4.854369163513184,
+          "observed_at_millis": 1793557846947,
+          "persist_millis": 0.00045900000259280205,
+          "render_commit_millis": 0.0,
+          "self_cpu_percent": 2.0600483417510986,
+          "self_memory_bytes": 117161984,
+          "self_memory_physical_footprint_bytes": 128091144,
+          "self_wakeups_per_second": 1.8513879776000977,
+          "snapshot_to_render_millis": 0.0,
+          "stale_mcp_helper_count": 0,
+          "target_tick_millis": 5000.0,
+          "ui_refresh_millis": 0.0
+        },
+        {
+          "bridge_fetch_millis": 0.0,
+          "collect_millis": 17.741666793823242,
+          "engine_tick_millis": 194.0,
+          "history_millis": 5.654624938964844,
+          "mcp_active_client_count": 1,
+          "mcp_helper_count": 0,
+          "mcp_requests_per_second": 4.854369163513184,
+          "observed_at_millis": 1793557848991,
+          "persist_millis": 2.5859999656677246,
+          "render_commit_millis": 0.0,
+          "self_cpu_percent": 4.281425952911377,
+          "self_memory_bytes": 117161984,
+          "self_memory_physical_footprint_bytes": 128091144,
+          "self_wakeups_per_second": 1.8513879776000977,
+          "snapshot_to_render_millis": 0.0,
+          "stale_mcp_helper_count": 0,
+          "target_tick_millis": 5000.0,
+          "ui_refresh_millis": 0.0
+        },
+        {
+          "bridge_fetch_millis": 0.0,
+          "collect_millis": 17.741666793823242,
+          "engine_tick_millis": 194.0,
+          "history_millis": 5.654624938964844,
+          "mcp_active_client_count": 1,
+          "mcp_helper_count": 0,
+          "mcp_requests_per_second": 4.854369163513184,
+          "observed_at_millis": 1793557851001,
+          "persist_millis": 2.5859999656677246,
+          "render_commit_millis": 0.0,
+          "self_cpu_percent": 4.281425952911377,
+          "self_memory_bytes": 117161984,
+          "self_memory_physical_footprint_bytes": 128091144,
+          "self_wakeups_per_second": 1.8513879776000977,
+          "snapshot_to_render_millis": 0.0,
+          "stale_mcp_helper_count": 0,
+          "target_tick_millis": 5000.0,
+          "ui_refresh_millis": 0.0
+        },
+        {
+          "bridge_fetch_millis": 0.0,
+          "collect_millis": 17.741666793823242,
+          "engine_tick_millis": 194.0,
+          "history_millis": 5.654624938964844,
+          "mcp_active_client_count": 1,
+          "mcp_helper_count": 0,
+          "mcp_requests_per_second": 4.854369163513184,
+          "observed_at_millis": 1793557853005,
+          "persist_millis": 2.5859999656677246,
+          "render_commit_millis": 0.0,
+          "self_cpu_percent": 4.281425952911377,
+          "self_memory_bytes": 117161984,
+          "self_memory_physical_footprint_bytes": 128091144,
+          "self_wakeups_per_second": 1.8513879776000977,
+          "snapshot_to_render_millis": 0.0,
+          "stale_mcp_helper_count": 0,
+          "target_tick_millis": 5000.0,
+          "ui_refresh_millis": 0.0
+        },
+        {
+          "bridge_fetch_millis": 0.0,
+          "collect_millis": 387.34295654296875,
+          "engine_tick_millis": 1086.0,
+          "history_millis": 1.8674999475479126,
+          "mcp_active_client_count": 1,
+          "mcp_helper_count": 0,
+          "mcp_requests_per_second": 4.854369163513184,
+          "observed_at_millis": 1793557854940,
+          "persist_millis": 0.000666000007186085,
+          "render_commit_millis": 0.0,
+          "self_cpu_percent": 2.613569974899292,
+          "self_memory_bytes": 142344192,
+          "self_memory_physical_footprint_bytes": 132727816,
+          "self_wakeups_per_second": 2.2361552715301514,
+          "snapshot_to_render_millis": 0.0,
+          "stale_mcp_helper_count": 0,
+          "target_tick_millis": 2000.0,
+          "ui_refresh_millis": 0.0
+        }
+      ]
+    },
+    "swift_uuid": "7C2620A6-4F95-3D3B-A482-96A3B3CA6127",
+    "exports": 370,
+    "unsigned_swift_equal": true,
+    "loaded_rust_verified": true,
+    "loaded_swift_verified": true,
+    "app_stopped": true,
+    "monitor_stopped": true,
+    "canonical_inputs_unchanged": true
+  },
+  "limitations": [
+    "Native measurements cover isolated idle helper processes, not total app CPU or energy. Baseline CPU is already only about 0.006% of one CPU; zero candidate CPU/wakeups is the observation in these bounded windows, not a universal zero-use guarantee.",
+    "No meaningful memory improvement is established: candidate mean physical footprint is 12288 bytes higher per helper in these windows; kernel queue resources and one extra descriptor are a tradeoff. RSS and physical footprint differ.",
+    "The retained app check is one startup-only candidate run with common compiled Swift/resources and new canonical Rust. It is a launch/identity check and prioritization sample, not a matched app-wide performance comparison.",
+    "The six app-owned diagnostic samples repeat latest tick values between refreshes and measure elapsed phases, not phase CPU. Existing adaptive target cadence varies; the app observations do not identify the unmeasured tick time or establish its cause.",
+    "No new compiler speed claim is made. The warm canonical pipeline reuses the tested shipping helper and validates both passes21/22 together; normal release tests, strict all-target Clippy and formatting pass.",
+    "Hosted CI at the baseline commit fails dependency-policy preflight before compilation. Local validation does not replace the hosted gate; the policy is unchanged."
+  ],
+  "retained_receipt_sha256": {
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-events-focused-validation-v1/results.json": "447349fe731505e0fb44849220929f7f9526f6123194eeaaaf256bf96bf81bf3",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-events-focused-validation-v2/results.json": "523ae76098c38c363a5f002acb7479a9b4445aab11edb9e10c081170ae23db2e",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-runtime-normal-validation-v1/results.json": "8e68522931da75dec7b9821c6ac21ba2c23b8f225f3c3b2593226020d47f2e52",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-canonical-release-v1/results.json": "8970ae982cf288e6192f0ae30a947bf2e7d86f34b4ec47ffdc2b290d26a22662",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-native-helper-comparison-v1/results.json": "312d8d3c0bc0fce378228569b4d989ccc798ed12818c98957a50c3fd9cc567ab",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-app-smoke-v1/results.json": "ace58d079075d8a2254d3891a8b5476318921082578c31231b75b07baae1850c",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-halfclosed-proxy-plan-v1/probe.json": "08fafa813cde1de71949ff34fa5c21b00c959d54f7a21ba99a7369f19f51f7cb"
+  }
+}

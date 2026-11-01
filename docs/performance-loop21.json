@@ -1,5 +1,5 @@
 {
-  "status": "context_clone_removed_normal_release_validation_complete",
+  "status": "context_clone_removed_full_runtime_and_retained_app_validated",
   "baseline_commit": "e7d6d5d420b90b0d2a5dc0f4c742b45a18e59928",
   "source_sha256": {
     "rust/crates/aetower-core/src/engine.rs": "dfe636b2d1a906403dd71e372ff02221eb5d8badad6364957a06ff3d96685940"
@@ -165,12 +165,26 @@
     "A source-extracted helper diagnostic with real model/mutex types is not the complete engine/app binary or a production-profile performance comparison.",
     "Allocation counts and requested bytes are not RSS or physical footprint. No measured app-wide CPU, memory or wakeup improvement is inferred.",
     "Only a few microseconds per synthetic check are removed. Whole-app profiling is needed to prioritize larger costs.",
-    "The pressure predicate now runs inside the existing lock; it reads only scalar fields and performs constant-time arithmetic, replacing the larger clone formerly performed while locked.",
-    "The complete app/runtime pipeline will be verified after the next scoped MCP transport fix rather than recompiling it twice."
+    "The pressure predicate now runs inside the existing lock; it reads only scalar fields and performs constant-time arithmetic, replacing the larger clone formerly performed while locked."
   ],
   "retained_receipt_sha256": {
     "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop21-pressure-context-validation-v1/results.json": "78d22ebe8cd2dd42a257f1f42e702ebed1335367a28d18e69af0706d11bcacaf",
     "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop21-pressure-context-validation-v2/results.json": "d0ca64aa1f9c2784fec9eb412aaff41d71bc9473af5580687e0e493d9f3fd0f4",
-    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop21-core-normal-validation-v1/results.json": "0377aaaefa9dc7da93620b11848a52376573ddf49e2600377642f4b412cac7bd"
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop21-core-normal-validation-v1/results.json": "0377aaaefa9dc7da93620b11848a52376573ddf49e2600377642f4b412cac7bd",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-runtime-normal-validation-v1/results.json": "8e68522931da75dec7b9821c6ac21ba2c23b8f225f3c3b2593226020d47f2e52",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-canonical-release-v1/results.json": "8970ae982cf288e6192f0ae30a947bf2e7d86f34b4ec47ffdc2b290d26a22662",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-app-smoke-v1/results.json": "ace58d079075d8a2254d3891a8b5476318921082578c31231b75b07baae1850c"
+  },
+  "batched_full_runtime_validation": {
+    "evidence": "performance-loop22.json",
+    "active_release_cases": 373,
+    "normal_ignored_cases": 4,
+    "strict_all_target_clippy": true,
+    "formatting": true,
+    "exports_equal": true,
+    "exported_symbol_count": 370,
+    "retained_app_loaded_rust_and_swift_verified": true,
+    "canonical_inputs_unchanged": true,
+    "scope": "Passes21/22 share one normal release/runtime/binding pipeline and retained app launch check; this establishes correctness/identity, not whole-app performance improvement."
   }
 }

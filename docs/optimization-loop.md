@@ -5,6 +5,51 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 22: replace helper idle polling with macOS kernel notifications
+
+The macOS stdio helper now waits for stdin/socket readiness and parent exit
+through one owned close-on-exec kernel queue. It uses the same remaining idle
+deadline and disables stdin interest after EOF, preserving delayed socket
+responses. Unsupported setup and other Unix platforms retain the existing
+250ms poll. No thread, dependency or timer is added; each optimized helper
+uses one extra descriptor and initially three kernel filters. API semantics:
+[Apple kevent manual](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kevent.2.html).
+
+Eight serial shipping-binary processes in **ABBA/BAAB** order each measure six
+seconds idle with stdin open and six after stdin EOF, then verify the same
+4096-byte delayed response. Mean interrupt wakeups fall **3.96 → 0/s** with
+stdin open and **3.89 → 0/s** after EOF. All requests/responses match, input and
+binary hashes remain unchanged, and all owned helpers stop. Baseline CPU is
+already about **0.006%** of one CPU; no app-wide CPU/energy percentage is
+inferred from the zero candidate counters in these bounded idle windows.
+There is no meaningful memory saving: observed mean physical footprint is
+**12 KiB higher** per candidate helper. The initial native reproduction shows
+no closed-stdin CPU spin; the adopted change addresses periodic wakeups.
+
+All **373 active normal release cases** across core/MCP/CLI/FFI pass with exact
+native coverage; four existing manual benchmarks remain ignored. Four new
+kernel tests cover deadline/stale readiness, EOF/delayed response, parent exit
+and fallback. Strict all-target Clippy and formatting pass. The normal suite's
+absolute cost is **1323.724s wall / 701.570 CPU-seconds / 1003.38 MiB sampled
+peak tree RSS**. The canonical runtime/binding pipeline costs **125.706s wall /
+182.496 CPU-seconds / 748.34 MiB sampled peak tree RSS**, reuses the exact tested
+shipping helper, and preserves binding inputs and all **370 exports**. These
+are validation costs, not matched compiler gains; passes21/22 share this
+pipeline to avoid rebuilding the app twice.
+
+The retained signed candidate app verifies the loaded Rust and common compiled
+Swift identities, stays hidden through settling and sampling, and exits with
+its observer. Its single startup-only sample is **3.91% CPU / 121.08 MiB mean
+physical footprint / 1.80 interrupt wakeups/s**. This is not an app A/B result.
+Six subsequent numeric app-owned samples show elapsed engine ticks of
+**194–1086ms**, collection **17.74–387.34ms**, history **1.87–5.65ms**, and
+persistence **0.00046–2.586ms**. Repeated latest-tick samples and elapsed rather
+than CPU timing make these prioritization clues, not attribution. Further
+profiling should resolve the remaining engine work before another change.
+Hosted CI on the preceding pushed revision stops at dependency-policy
+preflight; local success does not make that gate green. Evidence and limits:
+[performance-loop22.json](performance-loop22.json).
+
 ## Pass 21: borrow the previous host for the per-tick pressure check
 
 Each engine tick previously cloned the full previous host, including device
@@ -26,8 +71,9 @@ The first standalone LTO link fails because retained archives have no embedded
 bitcode. That failure is retained; both private executables reuse the same
 archives with LTO off. The production profile is unchanged, and all **70 normal
 core release cases** pass with exact native coverage, strict all-target Clippy
-and formatting. The full runtime/bundle check is batched with the next small
-transport fix to avoid another redundant app rebuild. Evidence and limitations:
+and formatting. The batched pass22 runtime/binding pipeline also verifies
+373 active cases, 370 exports, unchanged binding inputs and the loaded Rust/Swift
+identities in a retained signed app. Evidence and limitations:
 [performance-loop21.json](performance-loop21.json).
 
 ## Pass 20: stream regression-history selection to reduce working memory
