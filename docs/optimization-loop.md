@@ -5,6 +5,80 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 24: avoid ordinary version-lookup subprocesses and unchanged binding generation
+
+On macOS, ordinary string versions now come directly from a bounded Info.plist
+read through the already locked Core Foundation binding. The unchanged
+PlistBuddy resolver handles unsupported, empty, malformed, non-string and
+oversized inputs. Existing caches, signing implementation, output fields and
+collection cadence remain unchanged. The native signing experiment from
+pass23 remains withdrawn.
+
+All **25 complete lookup outputs** match. Eight serial ABBA/BAAB diagnostic
+processes each perform 32 uncached lookups: parent-plus-reaped-child CPU falls
+**0.081370 → 0.020816s (74.4% less)** and elapsed time
+**0.091050 → 0.023156s**. CLI launches fall **32 → 8**.
+Peak parent RSS increases **584 KiB**; largest-child peak RSS is reported
+separately. These opt3/codegen1/LTO-off operation results apply to cache misses,
+not all app CPU or aggregate app memory.
+
+The binding pipeline now verifies content before skipping generation. It
+fingerprints the generator, dylib, transformation, Cargo metadata and UniFFI
+configuration, then checks all three published outputs. Missing or damaged
+outputs regenerate. A per-checkout lock serializes publication; private
+staging, input rechecks and an atomic cache stamp preserve failure behavior.
+No persistent process is added.
+
+A separate cold population costs **0.890s wall / 0.607 CPU-seconds**. Eight
+balanced warm binding-segment runs average **0.349 → 0.038s wall** and
+**0.402 → 0.109 CPU-seconds**. More usefully, eight full unchanged Rust/binding
+pipeline repeats average **2.006 → 1.047s wall (47.8% less)** and
+**1.194 → 0.814 CPU-seconds (31.8% less)**. Every Cargo artifact is fresh;
+product hashes and generated-binding contents/timestamps remain identical.
+Cargo republishes the fresh bridge before existing install-name normalization,
+legitimately retouching its root timestamp; this is recorded separately from
+compilation. One-second RSS sampling can miss short generator peaks, so no
+peak-memory percentage is inferred. These are local warm repeats, not clean
+build or hosted-CI gains.
+
+All **72 final-Rust core release cases** pass with zero ignored and exact
+native coverage, plus strict all-target core Clippy and formatting. Subsequent
+shell/Python-only changes pass **35 orchestration tests**, `sh -n` and
+`shellcheck -x`, including invalid outputs, input drift, exact failure status
+and concurrent cold requests. The canonical normal release pipeline preserves
+**370 exports**, unchanged binding inputs and the exact previously tested
+shipping helper. Absolute validation cost is **355.309s wall / 195.366
+CPU-seconds / 525.28 MiB sampled peak tree RSS**, not a matched compiler gain.
+Prior pass22's 373 active four-root cases remain prior-source coverage.
+
+Four hidden app-process windows in ABBA order use the same compiled Swift and
+resources, each with 30 seconds settling and 30 seconds counters. Source hashes,
+loaded Rust/Swift identities and shutdown are verified. Means are
+**3.711% → 3.140% CPU**,
+**114.87 → 109.82 MiB physical footprint**,
+and **1.781 → 1.780 interrupt wakeups/s**.
+Mean resident size instead rises **133.69 → 192.18 MiB**;
+these memory measures differ and the unfavorable RSS result remains visible.
+Two windows per variant on changing live host inputs are exploratory evidence,
+not a causal or universal app-memory/CPU saving. App counters exclude external
+children. Version lookup is cached before settled windows, so they do not isolate
+its startup work. Numeric phase queries and image checks occur after counters.
+
+A separate two-launch VM diagnostic reverses the RSS and physical-footprint
+ordering. Allocated malloc totals are nearly equal (**56.9 → 56.8 MiB**);
+residency and swapping differ substantially. Both outcomes remain retained.
+This is categorical live-input diagnosis, not a new controlled A/B result.
+Retain the lookup change for its measured cache-miss CPU benefit, acknowledging
+the small operation-level RSS increase; app-memory savings are unestablished.
+
+Failed private harness, working-directory and timestamp-guard attempts remain
+retained alongside their corrected fresh cohorts. No app is installed or
+released. Hosted dependency-policy checks remain independent of local success.
+Canonical measurement lessons are published separately in draft
+[PR22](https://github.com/schiste/Aetower/pull/22); the main-checkout skill
+consumer is unchanged. Receipts, individual windows and scope limits:
+[performance-loop24.json](performance-loop24.json).
+
 ## Pass 23: evaluate native signing and fix release-library loading
 
 Full numeric runtime metrics locate enrichment at about 80% of elapsed engine
