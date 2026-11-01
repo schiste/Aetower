@@ -108,6 +108,11 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   and failure-path saves. Verify that an early rejection reports the same policy
   findings and skips expensive transfers; faster failure is not a passing gate.
   Confirm cold population and warm reuse separately before claiming cache gains.
+  For generated-code caches, fingerprint the tool, payload, transformation and
+  metadata/config context, and validate every published output's contents.
+  Preserve the generator's working directory during replays. Exercise missing
+  or damaged outputs, failed/incomplete generation, input drift and concurrent
+  cold requests; publish the cache stamp only after stable complete generation.
   Inspect subprocesses of scripting test suites before placing them ahead of a
   rejecting preflight: Python checks can compile native harnesses. Verify that
   reordered gates keep the same findings, exit status and explicit selectors,
