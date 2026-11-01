@@ -110,13 +110,34 @@ emission available through `cargo rustc --crate-type cdylib,staticlib`. The app
 build removes exact obsolete root/deps archive paths after a successful selected
 profile build, preventing older cache contents from leaving a stale bridge.
 The measured artifact-selection comparison precedes this cleanup addition;
-production package validation is pending. No whole-CI or app gain is established.
+production package validation is complete below. No whole-CI or app gain is established.
 
 **15 build-pipeline regressions** pass, including selected-profile stale-archive
 cleanup and failure preservation. The quality guard passes. Both complete test
 graphs compile with the new default and preserve all **25 logical executable
 targets**; the FFI cases rerun with identical statuses. The source implementation
 already passed all 517 workspace cases before the artifact-default change.
+
+Production packaging passes smoke and strict signature checks in **180.973s wall /
+195.773 CPU-seconds / 2.45 GiB sampled peak tree RSS**, including a Swift UI
+recompilation. The unchanged repeat passes in **11.017s / 7.868 CPU-seconds /
+513.66 MiB**, with no source compilation. These are absolute cache-state costs,
+not a matched first-versus-repeat speedup. Both obsolete release archive paths
+are absent. The packaged candidate's loadable section hashes match the measured
+dynamic-only candidate, despite container/signature file-hash differences.
+
+The retained app pair has identical current unsigned Swift, metadata and **110
+other payload files**; only Rust differs. Rust identities are baseline
+`5CC71201-CD6B-3411-B19B-E4900678853E` and candidate
+`A4F449FA-44FB-3046-B237-17B272220A8D`. Common Swift is now
+`711A34AD-B337-3212-B538-34351941CE01`, rebuilt from unchanged sources; it differs
+from earlier cohorts, so do not pool old-cohort observations with this pair.
+ABBA and reversed BAAB app cohorts are running with 60-second settles, 90-second
+counter windows and observed hidden-state checks. Home-volume free space is
+also checked against the history write reserve. Builds and other benchmarks
+remain stopped until **both** current cohorts finish. Results and independent
+raw-counter/image/visibility verification are pending; no app CPU, physical
+footprint or wakeup gain is claimed yet.
 
 ## Pass 15: reverted active-set cache; Swift optimizer diagnostics
 
