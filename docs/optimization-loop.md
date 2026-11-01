@@ -26,7 +26,15 @@ savings. Signed production packaging and smoke pass: **122.793s wall /
 broker guard. Swift sources are unchanged and only app-product link tasks run.
 The retained pair has identical unsigned Swift executables and common metadata
 and payload files; only the Rust library and signatures differ. Its four-window
-app comparison is running.
+app comparison completes with all four Swift/Rust identities and mappings
+verified and no builds during sampling. Mean CPU is **4.297% → 4.442%
+(+3.4%)**, physical footprint **130.34 → 111.90 MiB (-14.1%)**, and interrupt
+wakeups **4.605 → 5.478/s (+18.9%)**. Both candidate wakeup readings exceed
+both baselines, so this is a possible runtime regression requiring a hold.
+Baseline footprint itself drifts 113.28 → 147.41 MiB, preventing a causal
+memory-saving claim. A reverse-order BAAB retest of the same retained apps is
+running without recompilation before deciding whether to retain the runtime
+change. The faster grouping fixture does not establish an app-wide improvement.
 
 The local full gate now runs its selected mandatory dependency audit before
 the build-pipeline tests, which include real Swift compiler harnesses. Twelve

@@ -1,5 +1,5 @@
 {
-  "status": "0 of four app windows verified; comparison incomplete",
+  "status": "reverse-order retest: 0 of four windows verified; possible wakeup regression unresolved",
   "runtime_source_commit": "4449be5bdd9434a6fadfb8ff19cf144dbb6fc9e9",
   "history_grouping_fixture": {
     "status": "complete",
@@ -643,7 +643,7 @@
   },
   "package_cache_note": "Swift sources unchanged; package log reports only AetowerApp product link tasks, no UI or binding compilation; packaging measurements include broker guard overhead and are absolute costs",
   "matched_app_comparison": {
-    "status": "running",
+    "status": "complete",
     "controller_pid": 98043,
     "apps": [
       {
@@ -674,8 +674,195 @@
       {
         "label": "A1",
         "variant": "baseline",
+        "status": "complete",
+        "pid": 98127,
+        "host_processes_start": 776,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          32.46728515625,
+          24.171875,
+          21.98583984375
+        ],
+        "host_load_end": [
+          18.068359375,
+          21.45703125,
+          21.1533203125
+        ],
+        "wall_seconds": 90.00994641700527,
+        "samples": 46,
+        "user_time_seconds": 2.373533542,
+        "system_time_seconds": 1.202201,
+        "average_cpu_percent": 3.9725993452257504,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 416,
+        "interrupt_wakeups_per_second": 4.62171145034041,
+        "average_resident_size_bytes": 111711454.60869566,
+        "peak_resident_size_bytes": 266584064,
+        "average_phys_footprint_bytes": 118778660,
+        "peak_phys_footprint_bytes": 198001792,
+        "host_processes_end": 786,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "B1",
+        "variant": "candidate",
+        "status": "complete",
+        "pid": 35645,
+        "host_processes_start": 777,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          13.0673828125,
+          19.49609375,
+          20.4482421875
+        ],
+        "host_load_end": [
+          14.1953125,
+          18.17919921875,
+          19.8349609375
+        ],
+        "wall_seconds": 90.00275191600667,
+        "samples": 46,
+        "user_time_seconds": 2.199226458,
+        "system_time_seconds": 1.219580709,
+        "average_cpu_percent": 3.798558482067899,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 489,
+        "interrupt_wakeups_per_second": 5.433167204224486,
+        "average_resident_size_bytes": 101902068.86956522,
+        "peak_resident_size_bytes": 237371392,
+        "average_phys_footprint_bytes": 115939597.73913044,
+        "peak_phys_footprint_bytes": 200262784,
+        "host_processes_end": 787,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "status": "complete",
+        "pid": 64415,
+        "host_processes_start": 807,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          16.3525390625,
+          17.876953125,
+          19.5947265625
+        ],
+        "host_load_end": [
+          23.732421875,
+          19.107421875,
+          19.84619140625
+        ],
+        "wall_seconds": 90.00142695801333,
+        "samples": 46,
+        "user_time_seconds": 2.798985334,
+        "system_time_seconds": 1.778678917,
+        "average_cpu_percent": 5.086212969862724,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 497,
+        "interrupt_wakeups_per_second": 5.522134668285383,
+        "average_resident_size_bytes": 90542614.26086956,
+        "peak_resident_size_bytes": 138166272,
+        "average_phys_footprint_bytes": 118739480.86956522,
+        "peak_phys_footprint_bytes": 206472320,
+        "host_processes_end": 830,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "status": "complete",
+        "pid": 98044,
+        "host_processes_start": 796,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          23.9599609375,
+          20.31689453125,
+          20.2509765625
+        ],
+        "host_load_end": [
+          16.82421875,
+          19.0107421875,
+          19.75634765625
+        ],
+        "wall_seconds": 90.00268804101506,
+        "samples": 46,
+        "user_time_seconds": 2.88795825,
+        "system_time_seconds": 1.271681916,
+        "average_cpu_percent": 4.621684370253934,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 413,
+        "interrupt_wakeups_per_second": 4.588751836076185,
+        "average_resident_size_bytes": 175558834.08695653,
+        "peak_resident_size_bytes": 291012608,
+        "average_phys_footprint_bytes": 154573782.08695653,
+        "peak_phys_footprint_bytes": 214123648,
+        "host_processes_end": 834,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      }
+    ],
+    "means": {
+      "baseline": {
+        "average_cpu_percent": 4.297141857739843,
+        "average_phys_footprint_bytes": 136676221.04347825,
+        "interrupt_wakeups_per_second": 4.605231643208297
+      },
+      "candidate": {
+        "average_cpu_percent": 4.442385725965312,
+        "average_phys_footprint_bytes": 117339539.30434783,
+        "interrupt_wakeups_per_second": 5.477650936254935
+      }
+    },
+    "candidate_change_percent": {
+      "average_cpu_percent": 3.3800110174129205,
+      "average_phys_footprint_bytes": -14.147802442517932,
+      "interrupt_wakeups_per_second": 18.94409142986897
+    },
+    "limits": "four fresh app-process windows with existing settings and no driven interaction on a shared host; no builds during sampling; population/load vary; these are observed means, not general or controlled causal savings"
+  },
+  "app_result": "Possible wakeup regression: CPU mean +3.38%, wakeups +18.94% with both candidate wake readings above both baselines. Footprint mean -14.15% is not a causal saving because the baseline drifts substantially. Runtime change remains on hold pending reverse-order retest.",
+  "matched_app_retest": {
+    "status": "running",
+    "controller_pid": 60561,
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop10-baseline/Aetower.app",
+        "source": "f41e21c11211 production Rust; owned grouping keys; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "dd3a459fc4efdc2a8545cd69e82f636d9690fbc071e50a7be5b5039bf043e206",
+        "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+        "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+        "variant": "baseline"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop10-candidate/Aetower.app",
+        "source": "4449be5bdd94 production Rust; borrowed grouping keys; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "7feff6c7eacbe7855ddc1ff5cf4af0693cc2da73d451abbbba487dca0608f015",
+        "rust_sha256": "8271ecc2ddbb2fcd5b74728c718b3ddb9bd6ca77faaa306a5e1f0ae69c8aaaee",
+        "rust_uuid": "2D8CEF43-B080-38FB-A04D-27A115C64395",
+        "variant": "candidate"
+      }
+    ],
+    "configuration": {
+      "sequence": "BAAB",
+      "settle_seconds": 60,
+      "duration_seconds": 90,
+      "interval_seconds": 2
+    },
+    "scope": "reverse-order retest of the same retained history app pair; app-process counters; existing settings and no driven interaction; no builds or benchmark workloads during capture",
+    "controller_sha256": "a65f7ad3ebb155f9ae61df329dec917def07fb6792eb8c2c0e1a52c78e2c1cde",
+    "windows": [
+      {
+        "label": "B1",
+        "variant": "candidate",
         "status": "starting",
-        "pid": 98127
+        "pid": 60663
       }
     ]
   }
