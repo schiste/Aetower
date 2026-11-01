@@ -5,6 +5,453 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 24: avoid ordinary version-lookup subprocesses and unchanged binding generation
+
+On macOS, ordinary string versions now come directly from a bounded Info.plist
+read through the already locked Core Foundation binding. The unchanged
+PlistBuddy resolver handles unsupported, empty, malformed, non-string and
+oversized inputs. Existing caches, signing implementation, output fields and
+collection cadence remain unchanged. The native signing experiment from
+pass23 remains withdrawn.
+
+All **25 complete lookup outputs** match. Eight serial ABBA/BAAB diagnostic
+processes each perform 32 uncached lookups: parent-plus-reaped-child CPU falls
+**0.081370 → 0.020816s (74.4% less)** and elapsed time
+**0.091050 → 0.023156s**. CLI launches fall **32 → 8**.
+Peak parent RSS increases **584 KiB**; largest-child peak RSS is reported
+separately. These opt3/codegen1/LTO-off operation results apply to cache misses,
+not all app CPU or aggregate app memory.
+
+The binding pipeline now verifies content before skipping generation. It
+fingerprints the generator, dylib, transformation, Cargo metadata and UniFFI
+configuration, then checks all three published outputs. Missing or damaged
+outputs regenerate. A per-checkout lock serializes publication; private
+staging, input rechecks and an atomic cache stamp preserve failure behavior.
+No persistent process is added.
+
+A separate cold population costs **0.890s wall / 0.607 CPU-seconds**. Eight
+balanced warm binding-segment runs average **0.349 → 0.038s wall** and
+**0.402 → 0.109 CPU-seconds**. More usefully, eight full unchanged Rust/binding
+pipeline repeats average **2.006 → 1.047s wall (47.8% less)** and
+**1.194 → 0.814 CPU-seconds (31.8% less)**. Every Cargo artifact is fresh;
+product hashes and generated-binding contents/timestamps remain identical.
+Cargo republishes the fresh bridge before existing install-name normalization,
+legitimately retouching its root timestamp; this is recorded separately from
+compilation. One-second RSS sampling can miss short generator peaks, so no
+peak-memory percentage is inferred. These are local warm repeats, not clean
+build or hosted-CI gains.
+
+All **72 final-Rust core release cases** pass with zero ignored and exact
+native coverage, plus strict all-target core Clippy and formatting. Subsequent
+shell/Python-only changes pass **35 orchestration tests**, `sh -n` and
+`shellcheck -x`, including invalid outputs, input drift, exact failure status
+and concurrent cold requests. The canonical normal release pipeline preserves
+**370 exports**, unchanged binding inputs and the exact previously tested
+shipping helper. Absolute validation cost is **355.309s wall / 195.366
+CPU-seconds / 525.28 MiB sampled peak tree RSS**, not a matched compiler gain.
+Prior pass22's 373 active four-root cases remain prior-source coverage.
+
+Four hidden app-process windows in ABBA order use the same compiled Swift and
+resources, each with 30 seconds settling and 30 seconds counters. Source hashes,
+loaded Rust/Swift identities and shutdown are verified. Means are
+**3.711% → 3.140% CPU**,
+**114.87 → 109.82 MiB physical footprint**,
+and **1.781 → 1.780 interrupt wakeups/s**.
+Mean resident size instead rises **133.69 → 192.18 MiB**;
+these memory measures differ and the unfavorable RSS result remains visible.
+Two windows per variant on changing live host inputs are exploratory evidence,
+not a causal or universal app-memory/CPU saving. App counters exclude external
+children. Version lookup is cached before settled windows, so they do not isolate
+its startup work. Numeric phase queries and image checks occur after counters.
+
+A separate two-launch VM diagnostic reverses the RSS and physical-footprint
+ordering. Allocated malloc totals are nearly equal (**56.9 → 56.8 MiB**);
+residency and swapping differ substantially. Both outcomes remain retained.
+This is categorical live-input diagnosis, not a new controlled A/B result.
+Retain the lookup change for its measured cache-miss CPU benefit, acknowledging
+the small operation-level RSS increase; app-memory savings are unestablished.
+
+Failed private harness, working-directory and timestamp-guard attempts remain
+retained alongside their corrected fresh cohorts. No app is installed or
+released. Hosted dependency-policy checks remain independent of local success.
+Canonical measurement lessons are published separately in draft
+[PR22](https://github.com/schiste/Aetower/pull/22); the main-checkout skill
+consumer is unchanged. Receipts, individual windows and scope limits:
+[performance-loop24.json](performance-loop24.json).
+
+## Pass 23: evaluate native signing and fix release-library loading
+
+Full numeric runtime metrics locate enrichment at about 80% of elapsed engine
+tick time in the initial retained shipping capture. A second capture uses a
+matching diagnostic Rust link map, verifies all 370 exported addresses and the
+loaded UUID, and observes at least ten `codesign` children. The 83 inclusive
+`Command::output` samples identify waiting/capture work; neither inclusive
+samples nor elapsed phase durations establish exclusive CPU consumption.
+The first observer misread a PID count as a byte count; its empty child-count
+result is invalid and retained with an owned-child calibration and correction.
+
+The experimental macOS signing resolver reads public Security.framework metadata,
+using the unchanged shared signature classifier and the already locked
+Core Foundation binding. Unsupported, failed or incomplete reads retain the
+existing CLI fallback. Cache policy, four-background-resolution budget, eager
+connected priority, output fields and collection cadence are unchanged.
+Create/Copy owners reject null before construction and release their objects.
+This reads displayed metadata; it does not validate certificate trust.
+See [Apple signing information](https://developer.apple.com/documentation/security/seccodecopysigninginformation(_:_:_:))
+and [certificate metadata](https://developer.apple.com/documentation/security/kseccodeinfocertificates).
+
+An oracle compiled from the exact integrated source matches all **30 complete
+verdicts**, spanning Apple, Developer ID, Mac App Store, ad-hoc, unsigned,
+symlink and invalid inputs; one case uses the CLI fallback. Eight serial
+ABBA/BAAB diagnostic processes each resolve 32 uncached paths. Mean elapsed
+time falls **1.796 → 0.105s**,
+and parent-plus-reaped-child CPU **1.427 →
+0.072s (95.0% less)**.
+The CLI runs **32 → 4 times**. Parent CPU itself rises; peak self RSS rises
+**5.90 → 12.22 MiB**,
+while largest-child peak RSS falls **36.85 →
+2.13 MiB**. These separate kernel maxima
+are not aggregate app memory. The opt3/codegen1/LTO-off resolver probe is a
+diagnostic, not a production-profile or whole-app comparison. Existing cache
+hits do not perform this work; no 95% overall app CPU saving is claimed.
+
+All **72 final-source core release cases** pass with exact native coverage,
+including null/error/unsigned/owned-ad-hoc paths, plus strict all-target core
+Clippy and formatting; strict release Clippy also passes for the changed FFI
+packaging. The signed candidate native load check passes before the app
+cohort. The canonical shipping pipeline preserves bindings
+and **370 exports**, using one Cargo job and normal release profiles (MCP8,
+other roots1). Its absolute cost is **374.397s wall /
+171.861 CPU-seconds /
+456.89 MiB sampled peak tree RSS**;
+this is not a matched compiler gain. The previous pass's 373 active tests
+remain prior-source coverage, not a new final-source suite result.
+
+Four hidden app windows in ABBA order use the same compiled Swift/resources,
+30 seconds settling and 30 seconds counters per window. Loaded Rust/Swift
+identities, source hashes and app shutdown are verified. App-process means
+are **4.002% → 4.442% CPU**,
+**114.54 → 124.25 MiB physical footprint**,
+and **2.113 → 2.165 interrupt wakeups/s**.
+These are two windows per variant on changing live host inputs; counters
+exclude codesign children and Security system services. Keep the individual
+windows and memory tradeoff visible; no universal app/host/energy saving is
+inferred. Full numeric phase queries run after each measured interval.
+
+The first canonical library passed build, exports and signature checks, but
+dyld rejected a misaligned string pool before app startup. An owned minimal
+fixture reproduces the [Rust/LLVM stripping defect](https://github.com/rust-lang/rust/issues/157750).
+The FFI release package now strips local/debug symbols at macOS link time,
+disabling the failing later rewrite. The fixed minimal fixture loads at the
+same file size. The original failed cohort remains retained; the complete
+ABBA comparison above starts again in a fresh directory. Core tests predate
+only this packaging fix; core code and effective optimization flags match.
+The FFI override leaves non-macOS FFI symbols unstripped; no non-macOS bridge
+shipping artifact has been validated. CLI/MCP strip policy is unchanged.
+
+The candidate means are higher for app CPU, physical footprint and interrupt
+wakeups. A further eight-process probe compares the same native resolver with
+and without per-call autorelease pools over 300 calls per process; every
+verdict matches, and mean final physical footprint is 5.95 → 5.99 MiB. Pooling
+does not recover memory. **Withdraw the native signing path as a precaution**
+under the hardware-footprint objective; this is not proof that the code caused
+the entire app-memory difference. Keep the independent release-link fix and
+all evidence. These are withdrawn-candidate measurements, not final shipping
+validation; the next pass records its own final-source results.
+
+All original failed prototypes and corrected observer/calibration evidence
+remain in retained artifacts. No app is installed or released. Canonical
+skill lessons are published separately in draft [PR22](https://github.com/schiste/Aetower/pull/22);
+they are not installed in the main checkout's skill consumer.
+Details, receipt hashes and scope limits: [performance-loop23.json](performance-loop23.json).
+
+## Pass 22: replace helper idle polling with macOS kernel notifications
+
+The macOS stdio helper now waits for stdin/socket readiness and parent exit
+through one owned close-on-exec kernel queue. It uses the same remaining idle
+deadline and disables stdin interest after EOF, preserving delayed socket
+responses. Unsupported setup and other Unix platforms retain the existing
+250ms poll. No thread, dependency or timer is added; each optimized helper
+uses one extra descriptor and initially three kernel filters. API semantics:
+[Apple kevent manual](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kevent.2.html).
+
+Eight serial shipping-binary processes in **ABBA/BAAB** order each measure six
+seconds idle with stdin open and six after stdin EOF, then verify the same
+4096-byte delayed response. Mean interrupt wakeups fall **3.96 → 0/s** with
+stdin open and **3.89 → 0/s** after EOF. All requests/responses match, input and
+binary hashes remain unchanged, and all owned helpers stop. Baseline CPU is
+already about **0.006%** of one CPU; no app-wide CPU/energy percentage is
+inferred from the zero candidate counters in these bounded idle windows.
+There is no meaningful memory saving: observed mean physical footprint is
+**12 KiB higher** per candidate helper. The initial native reproduction shows
+no closed-stdin CPU spin; the adopted change addresses periodic wakeups.
+
+All **373 active normal release cases** across core/MCP/CLI/FFI pass with exact
+native coverage; four existing manual benchmarks remain ignored. Four new
+kernel tests cover deadline/stale readiness, EOF/delayed response, parent exit
+and fallback. Strict all-target Clippy and formatting pass. The normal suite's
+absolute cost is **1323.724s wall / 701.570 CPU-seconds / 1003.38 MiB sampled
+peak tree RSS**. The canonical runtime/binding pipeline costs **125.706s wall /
+182.496 CPU-seconds / 748.34 MiB sampled peak tree RSS**, reuses the exact tested
+shipping helper, and preserves binding inputs and all **370 exports**. These
+are validation costs, not matched compiler gains; passes21/22 share this
+pipeline to avoid rebuilding the app twice.
+
+The retained signed candidate app verifies the loaded Rust and common compiled
+Swift identities, stays hidden through settling and sampling, and exits with
+its observer. Its single startup-only sample is **3.91% CPU / 121.08 MiB mean
+physical footprint / 1.80 interrupt wakeups/s**. This is not an app A/B result.
+Six subsequent numeric app-owned samples show elapsed engine ticks of
+**194–1086ms**, collection **17.74–387.34ms**, history **1.87–5.65ms**, and
+persistence **0.00046–2.586ms**. Repeated latest-tick samples and elapsed rather
+than CPU timing make these prioritization clues, not attribution. Further
+profiling should resolve the remaining engine work before another change.
+Hosted CI on the preceding pushed revision stops at dependency-policy
+preflight; local success does not make that gate green. Evidence and limits:
+[performance-loop22.json](performance-loop22.json).
+
+## Pass 21: borrow the previous host for the per-tick pressure check
+
+Each engine tick previously cloned the full previous host, including device
+vectors and strings, only to read scalar pressure fields. The unchanged
+predicate now borrows the current snapshot under the existing state lock;
+collection starts after that lock is released. Config/metric copies, reason
+precedence, adaptive gating, diagnostic values and cadence remain unchanged.
+
+A source-extracted diagnostic with real model/mutex types matches all **264**
+complete config/metric/reason outputs and unchanged snapshot bytes. Synthetic
+2/16/64-device checks remove **19/89/329 allocations** and
+**781/6195/24867 requested bytes** each. These are requested allocations, not
+app physical footprint. Eight native windows, separate from allocation
+instrumentation, measure **2.696 → 0.027 microseconds CPU per call** over two
+million calls each. This isolates a very small operation; it is not a 99%
+app-wide CPU saving and establishes no new wakeup or app-memory percentage.
+
+The first standalone LTO link fails because retained archives have no embedded
+bitcode. That failure is retained; both private executables reuse the same
+archives with LTO off. The production profile is unchanged, and all **70 normal
+core release cases** pass with exact native coverage, strict all-target Clippy
+and formatting. The batched pass22 runtime/binding pipeline also verifies
+373 active cases, 370 exports, unchanged binding inputs and the loaded Rust/Swift
+identities in a retained signed app. Evidence and limitations:
+[performance-loop21.json](performance-loop21.json).
+
+## Pass 20: stream regression-history selection to reduce working memory
+
+The regression worker previously retained up to 500 full decoded snapshots
+before choosing its hourly representatives. It now uses the same latest-500 SQL
+query and decoding loop, retaining only the winning snapshot per payload-hour.
+All rows still pass through decoding and corruption quarantine. Normal page
+reads reuse that visitor and keep their original full output. Hourly order,
+cap behavior, valid-row diagnostics, the 120-second startup delay and six-hour
+worker interval are unchanged. No dependency, persistent cache or timer is added.
+
+Eight serial native processes in **ABBA/BAAB** order each seed the same isolated
+610-row database with 64 entities per snapshot, then perform eight reads. Every
+phase returns the same two complete snapshots; all **64 serialized outputs**
+and all eight logical database states, including payload bytes, match exactly.
+Mean native kernel peak RSS falls **146.92 → 9.16 MiB (-93.76%)**; total CPU
+for eight read/downsample calls falls **0.434832 → 0.333921s (-23.21%)**.
+These are bounded real-reader fixture measurements, not app-wide memory or CPU
+percentages. Kernel largest-process peak RSS captures short peaks and differs
+from sampled process-tree RSS. Actual benefit depends on payload/hour density.
+
+Two permanent contract tests compare complete output against the old algorithm
+across ranges/caps, metadata ties, unordered payload times, the latest-500 cutoff,
+all three persistence formats, corrupt/missing rows and quarantine effects.
+All **99 normal core/persistence release cases** pass with exact native coverage;
+strict all-target Clippy and formatting pass. Absolute normal validation costs
+**262.460s wall / 174.404 CPU-seconds / 545.98 MiB sampled peak tree RSS**.
+The first diagnostic audit failed to open the completed SQLite fixture in
+read-only mode. Its native run and failure are retained; immutable mode is used
+only after all writer processes exit and no uncheckpointed WAL remains, with
+primary-file hashes checked before/after. A fresh full balanced comparison
+reuses the same compiled executable; the partial first run is excluded.
+
+Build research compares release MCP **4–8–8–4** codegen units with identical
+normal runtime roots, retained dependencies and two Cargo jobs. Means are
+**176.485 → 131.296s wall**, **263.503 → 234.234 CPU-seconds**, and
+**1380.70 → 1342.35 MiB sampled peak tree RSS**. Unit graphs, actual codegen
+options except partition count/identity, binding inputs and 370 exports match;
+products repeat within each variant. Eight adds **149968 library bytes**
+(about **146 KiB / 1.29%**). The roughly 3% RSS difference varies substantially;
+no robust further memory reduction is established. Eight is adopted after all
+**277 active MCP release tests** pass with exact native coverage; the one normal
+ignored live-database test remains ignored. Total compiler CPU falls **11.11%**
+and elapsed time **25.60%** in this partial-root comparison; instantaneous CPU
+can be higher during the shorter build. Other release settings and job budgets
+are unchanged. Swift, cold dependencies and whole CI are outside this comparison.
+
+The canonical runtime/binding pipeline verifies the manifest's eight-unit MCP
+flags, the other crates' one-unit flags, unchanged binding inputs and all
+**370 exports**. Strict all-target MCP Clippy and workspace formatting pass.
+Its absolute warm-cache cost is **139.620s wall / 253.317
+CPU-seconds / 1333.56 MiB sampled peak
+tree RSS**; this cost includes the new reader and is not another matched gain.
+
+A retained signed app combines that Rust library with the verified common
+compiled Swift/resources. It stays alive through 30 seconds of observed hidden
+settling and a 30-second startup-only counter sample; mapped Swift and Rust
+image identities match, and the owned app/observer exit afterward. Absolute
+sample: **4.41% CPU, 105.48 MiB
+mean physical footprint, 2.02 interrupt
+wakeups/s**. Existing live inputs/settings and the short startup window make
+this a smoke observation, not an app-wide gain or equal-work A/B comparison.
+
+No whole-app percentage or causal explanation of pass19's activity changes is
+claimed. No install, release or merge changes. Evidence and limitations:
+[performance-loop20.json](performance-loop20.json).
+
+## Pass 19: reduce compiler pressure and per-tick network work
+
+Release MCP now uses four codegen units; other release crates keep one. The
+normal runtime pipeline with equally cleaned MCP/core/CLI/FFI roots and retained
+dependencies is measured in order **1–4–4–1**, with two Cargo jobs throughout.
+Means improve **199.921 → 158.012s wall (-20.96%)**, **281.745 → 260.308
+CPU-seconds (-7.61%)**, and **1882.33 → 1449.81 MiB sampled peak process-tree
+RSS (-22.98%)**. Ordered compiler options differ only in MCP partition count
+and artifact identity. Unit graphs/features, binding bytes and 370 exports
+match; products repeat exactly within each variant. This partial-root rebuild
+comparison excludes cold dependencies, Swift and whole CI. It establishes no
+hard CPU/thread/memory cap.
+
+The tradeoff is **366144 extra library bytes (+3.24%, about 358 KiB)**. Eight
+serial shipping storage tests in order **1–4–4–1–4–1–1–4** all pass: each checks
+100000 staged rows and unchanged five-second report-query budgets. Mean CPU is
+**29.848 → 29.586s**; sampled runtime peak RSS is **16.04 → 16.86 MiB**.
+Elapsed time varies with shared host/I/O. No runtime-memory saving is established.
+All **277 active MCP release tests** pass; one live-database benchmark stays
+ignored. The canonical manifest pipeline builds all normal runtime roots and
+bindings, verifies effective flags and exports, and passes strict all-target MCP
+Clippy and formatting. Its absolute cost is retained in the JSON.
+
+Network snapshots now borrow sysinfo's map instead of constructing a throughput
+map each tick. Interface order, duplicates, missing/first-tick zeros, arithmetic,
+output fields, cadence and wake sources are preserved; no persistent state is
+added. Twelve private cases repeated three times produce identical complete
+output bytes and vector capacities, including maximum counters and unusual
+elapsed intervals. Populated steady-state snapshots remove one allocation:
+**330 → 190 bytes** for two interfaces, **5160 → 3040** for 32,
+**4707 → 475** for sparse/duplicate cache entries, and **82440 → 48640** for
+512. Empty/first-tick cases are unchanged.
+
+Eight alternating constructor workloads in a separate executable without an
+allocation counter preserve row counts/checksums. Mean CPU falls
+**0.57775 → 0.39675s (-31.33%)**. This diagnostic uses immutable fake counters,
+exact function bodies and the real output model; it is not a whole-collector/app
+measurement. Allocation traffic is not retained memory, and subsecond RSS
+samples are unreliable. All **24 collector unit tests and one doctest** pass;
+two manual benchmarks remain ignored. Strict collector Clippy and formatting
+pass. The first audit incorrectly rejected those ignored tests; its failure is
+retained and corrected against native executed/ignored listings without rerunning
+successful tests or performance windows. Temporary fixtures are removed and
+canonical input hashes verify.
+
+Both **ABBA and BAAB** app cohorts now complete: 60-second settles, 90-second
+samples, verified hidden observations, loaded bundled images, PID identities and
+512 MiB disk reserves in every window. Both Rust variants were rebuilt in the
+same persistent checkout; common unsigned Swift and 112 other payloads match.
+ABBA observes CPU **-0.71%**, physical footprint
+**+0.47%**, interrupt wakeups **+9.45%**.
+BAAB observes CPU **-21.51%**, physical footprint
+**-6.85%**, interrupt wakeups **-30.33%**.
+Combined descriptive means: CPU **10.963 → 8.978%**,
+physical footprint **160.59 → 155.03 MiB**,
+RSS **240.58 → 203.20 MiB**,
+interrupt wakeups **14.965 → 10.777/s**.
+The activity level differs sharply between cohorts: mean CPU is about 3.6%
+in the first, versus 18.3% baseline / 14.4% candidate in the second; interrupt
+wakeups rise from about 2/s to 20–28/s. Visibility alone does not establish
+an equal background workload, so the combined percentages are descriptive.
+Four windows per variant on a shared live host with existing settings do not
+establish a general app-wide CPU, physical-footprint or wakeup saving. These
+are app-process counters, excluding children and interactive work; do not pool
+other Swift images or infer whole-app memory from constructor allocations.
+Retain the measured build/constructor changes without claiming general app gains.
+Pass 18's ownership candidate stays withdrawn. The inspected hosted check at
+head `f03d765` fails dependency-policy preflight before compilation; no passing
+whole-CI or hosted saving is claimed. Detailed scopes, receipt hashes, costs
+and limitations: [performance-loop19.json](performance-loop19.json).
+
+## Pass 18: reduce snapshot allocation traffic and hardware pressure
+
+A candidate transferred six owned host fields from the collector into its
+published snapshot; it is now withdrawn as a precaution after the app captures. Remaining process/self/timing data stays available; refresh
+cadence and wake sources are unchanged. No cache or persistent state is added.
+The collector supplies exact-size arrays or clones of cached arrays, so the
+transfer retains the prior published capacities.
+
+A private native constructor oracle uses real model types and exact initializer
+bodies. All four shapes preserve complete host/process/self/timing JSON bytes
+and vector capacities across three repetitions. The small shape observes
+**20 → 2 allocation requests / 724 → 25 requested bytes**. Interface-heavy and
+dense shapes observe **139 → 2 / 6858 → 25 bytes** and **218 → 2 / 10937 → 25
+bytes**; the empty shape remains **2 / 25 bytes**. Those remaining allocations
+copy the unchanged frontmost-app strings. This is diagnostic allocation traffic,
+not measured CPU savings, RSS, physical footprint or whole-app wakeups.
+The allocator is isolated to a temporary integration executable and removed
+before normal tests. All **70 normal core release cases** pass with exact native
+case coverage, followed by strict all-target core Clippy and formatting checks.
+Absolute validation cost is **133.359s wall / 98.041 CPU-seconds / 517.97 MiB
+sampled peak tree RSS**; no comparative build saving is inferred.
+
+Build work reuses the retained Rust target with one Cargo job, and retains the
+pass-17 app for later comparisons without recompiling unchanged Swift code.
+Package job counts do not bound compiler-internal threads. The normal batched
+Rust runtime rebuild passes with one Cargo job at **382.722s wall / 320.191
+CPU-seconds / 1504.28 MiB sampled peak tree RSS**. All tracked build/binding
+inputs remain unchanged. A post-build UUID command selected a conflicting
+Homebrew tool and failed; the absolute system tool verifies the retained
+identical library without repeating compilation. Original failure is retained.
+These are absolute retained-cache costs, not a cold or comparative saving.
+
+The controlled app pair preserves **370 exported symbols**, unsigned Swift
+bytes and **112 other payload files**; both signatures verify. Common Swift
+UUID is `7C2620A6-4F95-3D3B-A482-96A3B3CA6127`; Rust is baseline
+`C3C15E29-5980-3E31-BC1C-CA2702EB672D` and candidate
+`F041494B-6FBE-3E99-B5C4-EE203FD63304`. This reuses the retained normal package
+with only Rust and required signatures replaced, avoiding a Swift rebuild.
+
+Both ABBA and BAAB app cohorts complete with 60-second settles, 90-second
+samples and two-second observation intervals. All eight raw CPU/wakeup/RSS/
+footprint summaries, PID identities, hidden observations, loaded bundled images
+and disk reserves independently verify. ABBA observes CPU **-2.14%**, physical
+footprint **+11.38%**, interrupt wakeups **-38.75%**; BAAB observes **-5.83%**,
+**+5.30%**, **-8.22%**. Combined descriptive means are CPU **2.838 → 2.731%**,
+physical footprint **126.35 → 136.72 MiB (+8.21%)**, RSS **258.17 → 234.74 MiB
+(-9.07%)**, interrupt wakeups **2.381 → 1.735/s (-27.15%)**. Package-idle wakeups
+are near zero and have no meaningful percentage comparison. Four windows per
+variant, shared host load and live settings/inputs limit interpretation; these
+are app-process counters and exclude children. Do not pool earlier Swift images.
+Baseline Rust was built in the earlier temporary worktree; candidate Rust in
+the new persistent checkout. This changes Rust build location as well as source,
+even though common Swift bytes match. Rebuild both library variants in one
+persistent checkout before attempting source-only attribution.
+
+**Withdraw the ownership-transfer candidate as a precaution.** Physical
+footprint rose in both orders, so fewer allocations are not an app memory win.
+No causal regression or general CPU/wakeup saving is established. Exact prior
+engine source is restored and all **70 normal core release cases** pass with
+exact native coverage and unchanged inputs; formatting passes. All candidate source,
+binaries and unfavorable evidence remain retained. No installed app, release
+or merge is changed.
+
+The **two-one-one-two** normal-runtime root rebuild comparison completes with
+four identical unit graphs (**four rebuilt units each**) and byte-identical
+CLI/MCP/FFI products. One job observes means **286.107s wall / 240.724
+CPU-seconds / 1408.22 MiB sampled peak tree RSS**; two jobs **212.888s /
+256.848 CPU-seconds / 1353.25 MiB**. Relative to two jobs, one job is **34.39%
+slower**, uses **6.28% fewer CPU-seconds**, and has **4.06% higher sampled peak
+RSS**. Within-variant wall spread is substantial (one job **233.448–338.766s**;
+two jobs **166.996–258.780s**) on the changing shared host. Keep default
+concurrency unchanged: this does not support lower peak memory, and is a
+partial-root rebuild comparison, excluding cold dependencies, Swift and whole
+CI. An owned MCP compilation was observed at **1272.16 MiB RSS** in one spot
+check, motivating a separate per-package codegen-partition experiment; that
+sample is not a per-unit peak measurement. Hosted quality on exact `4f0c03e`
+rejects dependency policy before Rust/Swift artifact restores and the full build
+gate; no policy is waived.
+
 ## Pass 17: stream scan publication; measure SQLite test-profile costs
 
 Publishing a large scan used to retain every decoded file row before recording
@@ -52,7 +499,16 @@ validates the canonical manifest without a command-line profile override:
 information, debug assertions and overflow checks. Its absolute cache-reusing
 cost is **110.854s wall / 52.631 CPU-seconds / 204.58 MiB sampled peak tree RSS**;
 this is validation, not another matched timing comparison. Release settings are
-unchanged. See
+unchanged.
+
+The current pass-17 package at `aab2d15` and its unchanged repeat pass smoke and
+strict signatures: **271.684s / 357.039 CPU-seconds / 2260.59 MiB sampled peak
+tree RSS**, then **7.251s / 6.009 CPU-seconds / 355.67 MiB**. These are absolute
+costs with existing caches, not A/B or cold comparisons. The app is retained
+outside the temporary worktree, with 115 hashed payload files. The independent
+repeat-output timestamp audit could not complete before the temporary compiler
+outputs disappeared; no claim of independently verified zero compilation is
+made. No installation, notarization or release occurred. See
 [`performance-loop17.json`](performance-loop17.json).
 
 ## Pass 16: reject compiler/pruning candidates; validate network allocation reuse

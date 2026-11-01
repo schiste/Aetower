@@ -969,26 +969,23 @@ fn build_network_interface_snapshots(
     // Zero all rates on the first tick so the UI does not flash a
     // misleading initial burst; subsequent ticks divide by the real
     // elapsed interval (the cadence is adaptive, not a fixed 2 s).
-    let throughput_by_name: HashMap<&str, (u64, u64)> = if first_tick {
-        HashMap::new()
-    } else {
-        networks
-            .iter()
-            .map(|(name, data)| {
-                let receive_bps = (data.received() as f64 / elapsed_seconds) as u64;
-                let send_bps = (data.transmitted() as f64 / elapsed_seconds) as u64;
-                (name.as_str(), (receive_bps, send_bps))
-            })
-            .collect()
-    };
 
     cached_metadata
         .iter()
         .map(|metadata| {
-            let (receive_bps, send_bps) = throughput_by_name
-                .get(metadata.name.as_str())
-                .copied()
-                .unwrap_or((0, 0));
+            let (receive_bps, send_bps) = if first_tick {
+                (0, 0)
+            } else {
+                networks
+                    .get(metadata.name.as_str())
+                    .map(|data| {
+                        (
+                            (data.received() as f64 / elapsed_seconds) as u64,
+                            (data.transmitted() as f64 / elapsed_seconds) as u64,
+                        )
+                    })
+                    .unwrap_or((0, 0))
+            };
             NetworkInterfaceSnapshot {
                 name: metadata.name.clone(),
                 mac_address: metadata.mac_address.clone(),

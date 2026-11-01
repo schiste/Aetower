@@ -53,15 +53,9 @@ else
     BINDINGS_DYLIB="$ROOT/rust/target/debug/libaetower_ffi.dylib"
 fi
 
-# Generate off to the side, then preserve timestamps of unchanged inputs.
-# SwiftPM can reuse compiled Swift modules when the Rust ABI did not change.
-mkdir -p "$ROOT/tmp"
-GENERATED_DIR="$(mktemp -d "$ROOT/tmp/bindings.XXXXXX")"
-trap 'rm -rf "$GENERATED_DIR"' EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-"$UNIFFI_BINDGEN" --swift-sources --headers --modulemap \
-    --module-name aetower_ffiFFI --modulemap-filename module.modulemap \
-    "$BINDINGS_DYLIB" "$GENERATED_DIR"
-
-/usr/bin/python3 "$ROOT/scripts/prepare-swift-bindings.py" "$GENERATED_DIR" "$ROOT/macos/Sources"
+# Validate content before skipping generation; stale or damaged outputs regenerate.
+# Keep the shell alive to account for every waited compiler/generator child.
+status=0
+/usr/bin/python3 "$ROOT/scripts/prepare-swift-bindings.py" --generate \
+    "$UNIFFI_BINDGEN" "$BINDINGS_DYLIB" "$ROOT/macos/Sources" "$ROOT/tmp" || status=$?
+exit "$status"

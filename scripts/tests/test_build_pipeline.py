@@ -45,13 +45,25 @@ if "uniffi-bindgen-swift" in args:
 from pathlib import Path
 import sys
 args = sys.argv[1:]
+with open("generator-calls", "a") as log:
+    log.write("generated" + chr(10))
+import os
+if os.environ.get("FAIL_BINDGEN"):
+    sys.exit(9)
+import time
+time.sleep(float(os.environ.get("BINDGEN_DELAY", "0")))
+if os.environ.get("MUTATE_BINDGEN_INPUT"):
+    Path(args[-2]).write_text("changed bridge")
 for flag, name in (('--swift-sources', 'aetower_ffi.swift'), ('--headers', 'aetower_ffiFFI.h'), ('--modulemap', 'module.modulemap')):
     if flag in args:
+        if flag == "--headers" and os.environ.get("OMIT_BINDGEN_HEADER"):
+            continue
         text = 'binding data   ' + chr(10)
         if name.endswith('.swift'):
             text += Path('../reader-template').read_text() + chr(10)
         Path(args[-1], name).write_text(text)
 """)
+    path.write_text(path.read_text() + chr(10) + os.environ.get("FAKE_GENERATOR_SUFFIX", ""))
     path.chmod(0o755)
 else:
     path = Path("target", "release" if "--release" in args else "debug", "libaetower_ffi.dylib")
@@ -263,6 +275,93 @@ sys.exit(int(os.environ.get("FAKE_DENY_EXIT", "0")))
         binding.write_text("stale binding")
         self.run_build()
         self.assertEqual(binding.read_text(), "binding data\n" + BINDINGS["INTEGER_LOAD"] + "\n" + BINDINGS["STRING_DIRECT"] + "\n")
+
+    def generator_calls(self):
+        return (self.root / "rust/generator-calls").read_text().splitlines()
+
+    def test_binding_cache_validates_tools_inputs_outputs_and_manifest(self):
+        self.run_build()
+        self.run_build()
+        self.assertEqual(len(self.generator_calls()), 1)
+        binding = self.root / "macos/Sources/AetowerBindings/aetower_ffi.swift"
+        binding.unlink()
+        self.run_build()
+        self.assertEqual(len(self.generator_calls()), 2)
+        binding.write_text("corrupt")
+        self.run_build()
+        self.assertEqual(len(self.generator_calls()), 3)
+        self.env["FAKE_GENERATOR_SUFFIX"] = "# changed generator"
+        self.run_build()
+        self.assertEqual(len(self.generator_calls()), 4)
+        prepare = self.root / "scripts/prepare-swift-bindings.py"
+        prepare.write_text(prepare.read_text() + "\n# changed transform\n")
+        self.run_build()
+        self.assertEqual(len(self.generator_calls()), 5)
+        (self.root / "rust/Cargo.lock").write_text("changed metadata")
+        self.run_build()
+        self.assertEqual(len(self.generator_calls()), 6)
+        self.executable("otool", '#!/bin/sh\necho "$2"\nhead -n 1 "$2"\n')
+        bridge = self.root / "rust/target/debug/libaetower_ffi.dylib"
+        bridge.write_text(bridge.read_text() + "changed bridge\n")
+        self.run_build()
+        self.assertEqual(len(self.generator_calls()), 7)
+        stamp = self.root / "tmp/bindings.json"
+        stamp.write_text("corrupt cache")
+        self.run_build()
+        self.assertEqual(len(self.generator_calls()), 8)
+        self.run_build()
+        self.assertEqual(len(self.generator_calls()), 8)
+
+    def test_failed_binding_generation_keeps_cache_and_published_outputs(self):
+        self.run_build()
+        stamp = self.root / "tmp/bindings.json"
+        previous = stamp.read_bytes()
+        published = {p: p.read_bytes() for p in (self.root / "macos/Sources").rglob("*") if p.is_file()}
+        (self.root / "rust/Cargo.lock").write_text("force generation")
+        self.env["FAIL_BINDGEN"] = "1"
+        failed = self.run_build(check=False)
+        self.assertEqual(failed.returncode, 9)
+        self.assertEqual(stamp.read_bytes(), previous)
+        self.assertTrue(all(p.read_bytes() == value for p, value in published.items()))
+        self.assertFalse([p for p in (self.root / "tmp").glob("bindings.*") if p.is_dir()])
+        self.env.pop("FAIL_BINDGEN")
+        self.run_build()
+        self.assertEqual(len(self.generator_calls()), 3)
+
+    def test_binding_generation_rejects_missing_output_and_input_drift(self):
+        for fault in ("OMIT_BINDGEN_HEADER", "MUTATE_BINDGEN_INPUT"):
+            with self.subTest(fault=fault):
+                self.run_build()
+                stamp = self.root / "tmp/bindings.json"
+                previous = stamp.read_bytes()
+                published = {p: p.read_bytes() for p in (self.root / "macos/Sources").rglob("*") if p.is_file()}
+                (self.root / "rust/Cargo.lock").write_text(fault)
+                self.env[fault] = "1"
+                self.assertNotEqual(self.run_build(check=False).returncode, 0)
+                self.assertEqual(stamp.read_bytes(), previous)
+                self.assertTrue(all(p.read_bytes() == value for p, value in published.items()))
+                self.env.pop(fault)
+
+    def test_concurrent_binding_requests_generate_once(self):
+        self.run_build()
+        (self.root / "tmp/bindings.json").unlink()
+        self.env["BINDGEN_DELAY"] = "0.2"
+        command = ["/usr/bin/python3", str(self.root / "scripts/prepare-swift-bindings.py"),
+                   "--generate", str(self.root / "rust/target/debug/uniffi-bindgen-swift"),
+                   str(self.root / "rust/target/debug/libaetower_ffi.dylib"),
+                   str(self.root / "macos/Sources"), str(self.root / "tmp")]
+        processes = [subprocess.Popen(command, cwd=self.root / "rust", env=self.env,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(2)]
+        try:
+            for process in processes:
+                output, error = process.communicate(timeout=15)
+                self.assertEqual(process.returncode, 0, error.decode())
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+        self.assertEqual(len(self.generator_calls()), 2)
 
     def test_invalid_profile_or_budget_fails_before_compiling(self):
         self.assertEqual(self.run_build("--profile", "invalid", check=False).returncode, 2)

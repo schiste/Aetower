@@ -749,6 +749,58 @@ impl HistoryStore {
         before_millis_exclusive: Option<u64>,
         limit: u32,
     ) -> Result<Vec<SystemSnapshot>, String> {
+        let mut snapshots = Vec::new();
+        self.visit_range_page(
+            start_millis,
+            end_millis,
+            before_millis_exclusive,
+            limit,
+            &mut |snapshot| snapshots.push(snapshot),
+        )?;
+        snapshots.reverse();
+        Ok(snapshots)
+    }
+
+    /// Apply hourly selection to the same latest 500 rows as `load_range`.
+    /// Every row is still decoded, preserving quarantine and load diagnostics.
+    pub fn load_hourly_range(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+        cap: usize,
+    ) -> Result<Vec<SystemSnapshot>, String> {
+        const HOUR_MILLIS: u64 = 3_600_000;
+        let mut buckets = std::collections::HashMap::new();
+        let mut ordinal = 0_usize;
+        self.visit_range_page(start_millis, end_millis, None, 500, &mut |snapshot| {
+            if cap > 0 {
+                // Rows arrive newest first. Replacing keeps the representative
+                // that the previous chronological downsampling saw first.
+                let _ = buckets.insert(
+                    snapshot.captured_at_millis / HOUR_MILLIS,
+                    (ordinal, snapshot),
+                );
+            }
+            ordinal += 1;
+        })?;
+        let mut selected: Vec<_> = buckets.into_values().collect();
+        selected.sort_unstable_by_key(|(ordinal, _)| std::cmp::Reverse(*ordinal));
+        let excess = selected.len().saturating_sub(cap);
+        Ok(selected
+            .into_iter()
+            .skip(excess)
+            .map(|(_, snapshot)| snapshot)
+            .collect())
+    }
+
+    fn visit_range_page(
+        &self,
+        start_millis: u64,
+        end_millis: u64,
+        before_millis_exclusive: Option<u64>,
+        limit: u32,
+        sink: &mut dyn FnMut(SystemSnapshot),
+    ) -> Result<(), String> {
         self.flush_for_read("load-range")?;
         let mut stmt = match self
             .conn
@@ -803,7 +855,7 @@ impl HistoryStore {
             }
         };
 
-        let mut snapshots = Vec::new();
+        let mut loaded_rows = 0_u64;
         let mut quarantined_rows = 0u64;
         let mut quarantine_reason: Option<String> = None;
         for row in rows {
@@ -833,7 +885,7 @@ impl HistoryStore {
                             self.emit_load_event(
                                 start_millis,
                                 end_millis,
-                                snapshots.len() as u64,
+                                loaded_rows,
                                 quarantined_rows,
                                 None,
                                 Some(&quarantine_error),
@@ -863,7 +915,7 @@ impl HistoryStore {
                             self.emit_load_event(
                                 start_millis,
                                 end_millis,
-                                snapshots.len() as u64,
+                                loaded_rows,
                                 quarantined_rows,
                                 None,
                                 Some(&quarantine_error),
@@ -878,18 +930,18 @@ impl HistoryStore {
             } else {
                 continue;
             };
-            snapshots.push(snapshot);
+            loaded_rows += 1;
+            sink(snapshot);
         }
-        snapshots.reverse();
         self.emit_load_event(
             start_millis,
             end_millis,
-            snapshots.len() as u64,
+            loaded_rows,
             quarantined_rows,
             quarantine_reason.as_deref(),
             None,
         );
-        Ok(snapshots)
+        Ok(())
     }
 
     pub fn range_summary(
@@ -2850,6 +2902,116 @@ mod tests {
         assert_eq!(quarantine_count, 0);
 
         std::fs::remove_file(&path).ok();
+    }
+
+    fn legacy_hourly_projection(snapshots: Vec<SystemSnapshot>, cap: usize) -> Vec<SystemSnapshot> {
+        let mut seen = std::collections::HashSet::new();
+        let mut selected: Vec<_> = snapshots
+            .into_iter()
+            .filter(|snapshot| seen.insert(snapshot.captured_at_millis / 3_600_000))
+            .collect();
+        if selected.len() > cap {
+            selected.drain(0..selected.len() - cap);
+        }
+        selected
+    }
+
+    fn seed_hourly_projection_rows(store: &HistoryStore, corrupt: bool) {
+        let tx = store.conn.unchecked_transaction().unwrap();
+        for ordinal in 0..610_u64 {
+            // Query ordering deliberately differs from payload time, including ties.
+            let metadata_time = (ordinal / 2 + 1) * 1_000;
+            let payload_time = (ordinal * 37 % 97) * 3_600_000 + ordinal % 10 * 1_000;
+            let snapshot = material_snapshot(ordinal, payload_time);
+            let (format, binary, json) = if corrupt && ordinal % 17 == 0 {
+                (1, None, Some("{invalid-json".to_owned()))
+            } else if corrupt && ordinal % 19 == 0 {
+                (1, Some(vec![1_u8, 2, 3, 4]), None)
+            } else if corrupt && ordinal % 23 == 0 {
+                (1, None, None)
+            } else {
+                match ordinal % 3 {
+                    0 => (1, None, Some(serde_json::to_string(&snapshot).unwrap())),
+                    1 => (1, Some(bincode::serialize(&snapshot).unwrap()), None),
+                    _ => (
+                        SNAPSHOT_FORMAT_VERSION,
+                        Some(
+                            bincode::serialize(&PersistedSnapshotEnvelope {
+                                version: SNAPSHOT_FORMAT_VERSION as u16,
+                                snapshot,
+                            })
+                            .unwrap(),
+                        ),
+                        None,
+                    ),
+                }
+            };
+            tx.execute("INSERT INTO snapshots (captured_at_millis, sequence, format_version, bincode_blob, json_blob) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![metadata_time as i64, ordinal as i64, format, binary, json]).unwrap();
+        }
+        tx.commit().unwrap();
+    }
+
+    #[test]
+    fn load_hourly_range_matches_legacy_selection_and_limits() {
+        let path = temp_db();
+        let store = HistoryStore::open(&path, 1).unwrap();
+        seed_hourly_projection_rows(&store, false);
+        assert_eq!(store.load_range(0, 1_000_000).unwrap().len(), 500);
+        for (start, end) in [(0, 1_000_000), (30_000, 150_000), (400_000, 500_000)] {
+            for cap in [0, 1, 4, 400, usize::MAX] {
+                let expected = legacy_hourly_projection(store.load_range(start, end).unwrap(), cap);
+                let actual = store.load_hourly_range(start, end, cap).unwrap();
+                assert_eq!(
+                    serde_json::to_vec(&actual).unwrap(),
+                    serde_json::to_vec(&expected).unwrap(),
+                    "range {start}..{end}, cap {cap}"
+                );
+            }
+        }
+        drop(store);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn load_hourly_range_preserves_quarantine_and_missing_payload_behavior() {
+        for cap in [0, 4, 400] {
+            let old_path = temp_db();
+            let new_path = temp_db();
+            let old = HistoryStore::open(&old_path, 1).unwrap();
+            let new = HistoryStore::open(&new_path, 1).unwrap();
+            seed_hourly_projection_rows(&old, true);
+            seed_hourly_projection_rows(&new, true);
+            let expected = legacy_hourly_projection(old.load_range(0, 1_000_000).unwrap(), cap);
+            let actual = new.load_hourly_range(0, 1_000_000, cap).unwrap();
+            assert_eq!(
+                serde_json::to_vec(&actual).unwrap(),
+                serde_json::to_vec(&expected).unwrap()
+            );
+            // Only the actual quarantine wall-clock timestamp varies between stores.
+            for sql in [
+                "SELECT id, captured_at_millis, sequence, format_version, bincode_blob, json_blob FROM snapshots ORDER BY id",
+                "SELECT snapshot_id, captured_at_millis, sequence, format_version, bincode_blob, json_blob, reason FROM snapshot_quarantine ORDER BY snapshot_id",
+            ] {
+                let values = |store: &HistoryStore| {
+                    let mut stmt = store.conn.prepare(sql).unwrap();
+                    let columns = stmt.column_count();
+                    stmt.query_map([], |row| {
+                        (0..columns)
+                            .map(|i| row.get::<_, rusqlite::types::Value>(i))
+                            .collect::<rusqlite::Result<Vec<_>>>()
+                    })
+                    .unwrap()
+                    .map(Result::unwrap)
+                    .collect::<Vec<_>>()
+                };
+                assert_eq!(values(&new), values(&old));
+            }
+            drop(old);
+            drop(new);
+            std::fs::remove_file(old_path).unwrap();
+            std::fs::remove_file(new_path).unwrap();
+        }
     }
 
     #[test]
