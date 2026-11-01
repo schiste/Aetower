@@ -21,6 +21,8 @@ description: Use after repo-onboarding or Explore when moving from orientation i
 ## Validation Checklist
 
 - Run the fastest relevant test command first.
+- Exercise null/error returns in FFI ownership wrappers before app adoption;
+  reject null handles before constructing an owner.
 - Check likely entrypoints and impacted callers before finishing.
 - Re-run lint/build only after the focused validation passes.
 - Check free space on temporary and compiler-output volumes against application
@@ -109,7 +111,9 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   its library dependencies. Preserve explicit include/skip gate selections.
 - For app-runtime comparisons, prefer cumulative CPU/wakeup counter deltas over
   smoothed `ps` CPU samples. Verify counter units against an independent OS API
-  before trusting a new sampler: macOS libproc CPU counters use Mach ticks and
+  before trusting a new sampler. Calibrate new process observers against an
+  owned known child and distinguish item counts from byte counts.
+  macOS libproc CPU counters use Mach ticks and
   require `mach_timebase_info` conversion on Apple Silicon. Distinguish resident
   memory from physical footprint, and keep startup settling and workloads equal.
   Inspect visibility-dependent refresh cadence before idle comparisons. Record
