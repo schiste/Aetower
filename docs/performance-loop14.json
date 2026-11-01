@@ -79,9 +79,18 @@
     "clippy": "strict release all-targets -D warnings passed",
     "oracles": "Original algorithm plus immediately preceding helper; dense/sparse short/maximal indices, multiple pair orders, threshold edges, duplicate/missing names, Unicode/NUL, self-pairs and empty names.",
     "full_workspace": {
-      "status": "running",
+      "status": "complete",
       "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-current-workspace-validation/results.json",
-      "scope": "Current production wrapper, prior exact case/status counts plus the new historical-index oracle; outside all performance comparisons."
+      "output_sha256": "691bbcb4225acb65eb381cdd801c78beed0d521351560d5185c539c82af0f8fb",
+      "passed": 516,
+      "ignored": 8,
+      "total": 524,
+      "exact_prior_cases_plus_declared_addition": true,
+      "inputs_unchanged": true,
+      "source_commit": "358b37adddcdc0e4e1d7283b79c64af21f53b457",
+      "history_source_sha256": "76c2bb040cdced3bf1f3560b0051b6b27c63c59446230e0c690ed228707f9cb1",
+      "scope": "Current full serial workspace correctness execution through the production two-graph wrapper, including required compilation. Absolute validation cost, not an A/B measurement.",
+      "diagnostic": null
     }
   },
   "app_comparison": {
@@ -377,6 +386,11 @@
       "matched_output": "711520\n",
       "retained_output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-native-thread-probe/explicit-native/summary.json",
       "limits": "Small real Swift package only. Native backend is deprecated by installed SwiftPM. No default backend, app compiler cap or app build performance change retained; full app build/test/package compatibility requires validation."
+    },
+    "native_app_validation": {
+      "status": "running",
+      "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-native-app-validation-v1/results.json",
+      "scope": "Actual app build/test compatibility probe; deprecated native backend, two package jobs, explicit two frontend threads, release optimization. Not a comparative performance result; no default changed."
     }
   },
   "limits": [

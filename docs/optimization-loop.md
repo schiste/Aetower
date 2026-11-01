@@ -21,6 +21,10 @@ thresholds, displayed text and refresh cadence are unchanged. **25 history
 release tests** and strict release all-targets Clippy pass, with one ignored
 manual fixture. Oracles cover maximal indices, missing/duplicate names,
 Unicode/NUL, self-pairs, threshold edges and multiple pair orders.
+Current full workspace execution through the production wrapper passes
+**516 cases, eight ignored**, matching the prior exact case/status counts plus
+the new historical-index oracle. Inputs remain unchanged; no stalled-test sample
+is needed. This execution is outside all performance comparisons.
 
 Forty-eight retained release processes compare the immediately preceding helper
 and this candidate across four 500-entity graph shapes. All emit identical
@@ -50,7 +54,8 @@ A small real Swift probe finds **ten frontend threads** with both default and
 native backends at two package jobs. An explicit `-num-threads 2` is honored by
 the native backend and both executables emit `711520`. The installed SwiftPM
 marks that backend deprecated. No app default or compiler cap is changed;
-actual app build, tests, packaging and pressure measurements remain required.
+an actual app build/test compatibility probe is running, while packaging and
+comparative pressure measurements remain required.
 Detailed evidence is in [`performance-loop14.json`](performance-loop14.json).
 
 ## Pass 13: index dense history grouping; verify child CPU accounting
