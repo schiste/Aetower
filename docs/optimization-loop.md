@@ -51,24 +51,32 @@ event fields and canonical host membership through reorder, duplicates, endpoint
 edge cases, disappearance/reappearance and a 1024-to-one-host shrink; retained
 set capacity does not exceed the reference.
 
-The initial forty-eight retained release processes use equal opaque call boundaries, 256
-entities and 1000 samples. No-network process CPU is **0.056530 → 0.021219s
-(-62.5%)**; stable **4.843844 → 3.321499s (-31.4%)**; reordered
-**5.359293 → 2.877219s (-46.3%)**; one-host churn **5.914207 → 3.329463s
-(-43.7%)**. All variants preserve exact canonical output: **8 / 82,182 / 82,182 /
-112,088 bytes** across the four shapes. Maximum-process RSS is mixed: stable and
-reordered means fall slightly; none/churn rise, with churn **7.65 → 7.72 MiB**.
-Common setup, both oracle states and output encoding prevent isolated allocation
-attribution. A production `unwrap` was then replaced with a guarded lookup;
-the current source again passes 26 release cases, strict Clippy and the quality
-guard. Its fixture rerun is pending. The initial full workspace run failed
-retention (zero rows instead of 169); the exact test subsequently passed on both
-temporary volumes. The nearly full internal volume is a possible cause, not
-established. A spacious external TMPDIR passed retention but exceeded Unix socket
-path limits in another test. A short alias to that directory is now being
-validated without changing tests or deadlines. All failed receipts remain
-retained. Production app comparison is pending. These helper results do not establish app-wide CPU, footprint or wakeup
-savings. Evidence is in [`performance-loop16.json`](performance-loop16.json).
+The final guarded-lookup source passes **26 release cases**, strict release
+Clippy and the quality guard. Its repeated 48-process comparison preserves all
+canonical bytes. No-network process CPU is **0.046755 → 0.024682s (-47.2%)**;
+stable **5.925440 → 3.459161s (-41.6%)**; reordered **5.703743 → 3.246849s
+(-43.1%)**; one-host churn **4.143489 → 2.528564s (-39.0%)**. The four shapes
+emit **8 / 82,182 / 82,182 / 112,088 identical bytes**. Maximum-process RSS is
+mixed: stable falls slightly, while the other three rise. Common setup, both
+oracle histories and output encoding prevent isolated allocation attribution.
+Initial pre-guard-edit measurements remain retained separately.
+
+Full workspace validation now passes **517 cases, nine manual fixtures ignored**,
+matching the exact expected case/status multiset with inputs unchanged. The
+initial run failed retention (zero rows instead of 169); the exact test then
+passed on both temporary volumes. The nearly full internal volume is a possible
+cause, not established. A spacious external TMPDIR passed retention but exceeded
+Unix socket path limits in another test. A short alias to that same directory
+passes the complete unchanged suite, without weakening tests or deadlines.
+Both failed receipts and the diagnostic sample remain retained. Validation cost
+is **218.354s wall / 92.676 CPU-seconds / 159.67 MiB sampled peak tree RSS**;
+this cache-reusing correctness run is not an A/B build comparison.
+
+Production app comparison remains pending. These helper results do not establish
+app-wide CPU, physical footprint or wakeup savings. The next build probe checks
+whether dynamic-only bridge emission avoids unused static-archive work without
+introducing duplicated feature-graph compilation. Evidence is in
+[`performance-loop16.json`](performance-loop16.json).
 
 ## Pass 15: reverted active-set cache; Swift optimizer diagnostics
 
