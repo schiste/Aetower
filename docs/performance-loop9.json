@@ -1,6 +1,6 @@
 {
-  "status": "focused checks and fixture comparisons complete; full Swift suite, packaging and app comparison pending",
-  "runtime_source_commit": "pending; generated source identified by SHA-256 in fixture",
+  "status": "focused checks, full Swift suite and fixture comparisons complete; packaging and app comparison pending",
+  "runtime_source_commit": "62506dc3f1ae450a1437f165e133517c8afab13c",
   "decoder_benchmark": {
     "scope": "actual generated full entity sequence decoding plus equality checks; identical serialized payload; no app state or collection; no app-wide claim",
     "rss_scope": "macOS wait4 maximum resident set size for each benchmark child, in bytes; not tree RSS or app footprint",
@@ -248,7 +248,8 @@
       "cpu_seconds": -18.20665774157436,
       "max_rss_bytes": 4.41625916870414,
       "wall_seconds_median": -14.085237864640664
-    }
+    },
+    "baseline_generated_source_sha256": "a1a95eab9c4c4b8e18b675a5445aeac04753ae48af6db459755e8d4c1e940f26"
   },
   "correctness_test_cache_comparison": {
     "scope": "same three decoder correctness tests, same compiler, each process starts with empty temporary module caches; baseline uses separate cache per compiled harness, candidate shares one only within that process; not whole app build or hosted CI savings",
@@ -367,5 +368,35 @@
   "hosted_ci": {
     "inspected_run": 41256165990,
     "conclusion": "quality fails mandatory dependency-policy preflight before compilation; all CodeQL checks pass; no policy waived"
+  },
+  "swift_release_tests": {
+    "command": [
+      "/usr/bin/swift",
+      "test",
+      "--package-path",
+      "../macos",
+      "--scratch-path",
+      "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/swift",
+      "-c",
+      "release",
+      "-j",
+      "2"
+    ],
+    "cwd": "/private/tmp/aetower-build-performance/rust",
+    "exit_status": 0,
+    "wall_seconds": 224.702,
+    "user_cpu_seconds": 208.491,
+    "system_cpu_seconds": 18.672,
+    "average_cpu_percent": 101.1,
+    "sampled_peak_tree_rss_bytes": 1541455872,
+    "rss_samples": 218,
+    "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+  },
+  "validation": {
+    "python_checks": 27,
+    "swift_release_tests": 212,
+    "actionlint": "pass",
+    "shellcheck_warning_severity": "pass",
+    "quality_guard_working_tree": "pass"
   }
 }

@@ -5,6 +5,42 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 9: direct UTF-8 decoding and shared test module caches
+
+The generated string reader now constructs a strict UTF-8 String from its
+bounds-checked byte slice, removing the intermediate byte array. The original
+length reading, offsets and truncation errors remain unchanged. Generation
+rejects string-template drift before publishing outputs. All **27 focused
+checks** and **212 Swift release tests** pass, including Unicode, embedded NUL,
+empty/long strings, offsets and every truncated prefix.
+
+Twelve alternating retained decoder processes perform 200 decodes each of the
+same 500-entity, 60-point-trend fixture. Every value and all 1,266,039 serialized
+bytes match. Six baseline processes use **3.958129 CPU-seconds**, versus
+**3.237486** for six candidate processes: **18.2% less fixture CPU**. Mean
+maximum RSS is **17.04 → 17.79 MiB (+4.4%)**; no memory gain is established.
+Both variants retain the pass-eight integer decoder, isolating the string change.
+
+The compiled correctness harnesses now share one temporary compiler module
+cache within the test class. Twelve alternating fresh processes run the same
+three tests with empty caches. Total CPU is **41.069833 → 32.351865 seconds
+(21.2% less)**; median wall time is **7.865 → 6.663 seconds (15.3% less)**.
+Mean maximum RSS is essentially flat, **300.55 → 299.07 MiB**. This is a local
+test-cost comparison, not a whole-app build or hosted-CI speedup.
+
+The full release suite costs **224.702s wall / 227.163 CPU-seconds / 1,470.05
+MiB sampled peak tree RSS**. These are absolute costs. Signed packaging and
+the matched app comparison are pending. Fixture sources, retained binary
+identities and all process results are in
+[`performance-loop9.json`](performance-loop9.json).
+
+Three thread-control experiments were rejected: ordinary forwarded flags and
+frontend bridging are overridden by Swift Build's later ten-thread argument,
+and its integrated driver bypasses the compiler wrapper for compilation. No
+production thread-control flags or wrappers were changed; no cap is claimed.
+The latest inspected hosted quality run, 41256165990, fails the same mandatory
+dependency-policy preflight before compilation; all CodeQL checks pass.
+
 ## Pass 8: checked Swift decoding and complete cache fingerprints
 
 The generated integer reader now uses `withUnsafeBytes` and `loadUnaligned`
