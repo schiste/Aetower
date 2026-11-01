@@ -57,6 +57,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   before trusting a new sampler: macOS libproc CPU counters use Mach ticks and
   require `mach_timebase_info` conversion on Apple Silicon. Distinguish resident
   memory from physical footprint, and keep startup settling and workloads equal.
+  Inspect visibility-dependent refresh cadence before idle comparisons. Record
+  window visibility/occlusion as well as activation when it affects scheduling;
+  if that state is uncontrolled, state the limitation rather than attributing
+  a CPU or wakeup difference to the source change alone.
   Retain baseline and candidate app bundles and benchmark executables outside
   mutable compiler-output directories; verify their hashes before later builds
   can overwrite them. Retest changed host load without recompilation, and
