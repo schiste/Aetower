@@ -5,6 +5,48 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 12: compare borrowed host trends and metric cards
+
+Host-trend and metric-card change detection now compares borrowed fields
+instead of allocating Debug signatures. Exhaustive field matching requires
+new record fields to update the comparison. Floating-point comparisons retain
+the prior Debug behavior: signed zeros differ and NaN signs/payloads compare
+equal. Card order, duplicate-ID lookup, missing-base behavior and cloned delta
+payloads remain unchanged. Host-summary and selected-entity handling are unchanged.
+
+All **19 FFI release tests**, strict release Clippy for all FFI targets, **28
+pipeline checks** and ShellCheck at warning severity pass. Tests compare complete
+deltas with the retained original implementation, including duplicate IDs,
+removals, Unicode/NUL fields, NaNs, infinities, signed zero and series lengths.
+The first benchmark launcher selected the wrong fully qualified test module;
+its required result marker caught the zero-test run before recording timings.
+The corrected cohort verifies four cases and 500 iterations per case in every
+child process.
+
+Twelve alternating retained release processes construct full deltas for 500
+rows, with 16/60 trend points and unchanged/mixed changes. All **18,547 canonical
+output bytes** match in every process. Total CPU is **2.510229 → 1.291731
+seconds (48.5% less)**; median operation wall time **0.847 → 0.287s**. Mean
+maximum-process RSS is **9.71 → 9.65 MiB**, but includes common fixture setup
+and both implementations' validation, so it cannot isolate helper memory.
+Packaging and app comparison are pending; the fixture result does not establish
+an app-wide CPU, memory or wakeup saving.
+
+A CI debug-info experiment is rejected. Twelve alternating cold history-package
+builds and unchanged repeats run the same 20 tests. Line tables reduce logical
+target-directory bytes **110.50 → 93.15 MiB (-15.7%)**, but total cold-build CPU
+is **58.970 → 61.610 seconds (+4.5%)**, median wall **7.492 → 7.714s**, and mean
+sampled peak tree RSS **424.67 → 443.88 MiB (+4.5%)**. No CI or developer debug
+profile changes are retained. These are local package-build results, not a
+full-workspace or hosted-job comparison.
+
+The next build comparison isolates the binding generator's UniFFI CLI features
+from runtime tests while retaining all tests and serial execution. Its actual
+runtime-test dependency features then match the subsequent bridge build,
+including serde_json and serde_core. Four cold full-workspace test/build sequences
+and unchanged repeats are running; no build saving is claimed yet. Evidence
+and current limits are in [`performance-loop12.json`](performance-loop12.json).
+
 ## Pass 11: compile decoder correctness checks once; reject native UTF-8 trial
 
 The integer and string correctness checks now share one optimized Swift binary,

@@ -2363,12 +2363,7 @@ fn ui_snapshot_delta_from_current(
         _ => Some(current.host.clone()),
     };
     let host_trend = match base {
-        Some(base)
-            if ui_host_trend_signature(&base.host_trend)
-                == ui_host_trend_signature(&current.host_trend) =>
-        {
-            None
-        }
+        Some(base) if ui_host_trends_match(&base.host_trend, &current.host_trend) => None,
         _ => Some(current.host_trend.clone()),
     };
     let changed_metric_cards = changed_metric_cards(current, base);
@@ -2404,10 +2399,10 @@ fn changed_metric_cards(current: &UiSnapshot, base: Option<&UiSnapshot>) -> Vec<
     let Some(base) = base else {
         return current.metric_cards.clone();
     };
-    let base_by_id: BTreeMap<&str, String> = base
+    let base_by_id: BTreeMap<&str, &UiMetricCard> = base
         .metric_cards
         .iter()
-        .map(|card| (card.id.as_str(), ui_metric_card_signature(card)))
+        .map(|card| (card.id.as_str(), card))
         .collect();
     current
         .metric_cards
@@ -2415,7 +2410,7 @@ fn changed_metric_cards(current: &UiSnapshot, base: Option<&UiSnapshot>) -> Vec<
         .filter(|card| {
             base_by_id
                 .get(card.id.as_str())
-                .map(|signature| signature != &ui_metric_card_signature(card))
+                .map(|previous| !ui_metric_cards_match(previous, card))
                 .unwrap_or(true)
         })
         .cloned()
@@ -2483,12 +2478,65 @@ fn ui_host_summary_signature(value: &UiHostSummary) -> String {
     format!("{value:?}")
 }
 
-fn ui_host_trend_signature(value: &UiHostTrend) -> String {
-    format!("{value:?}")
+fn ui_host_trends_match(left: &UiHostTrend, right: &UiHostTrend) -> bool {
+    macro_rules! fields_match {
+        ($($field:ident),* $(,)?) => {{
+            let UiHostTrend { $($field: _,)* } = left;
+            $(ui_float_slices_match(&left.$field, &right.$field) &&)* true
+        }};
+    }
+    fields_match!(
+        machine_friction,
+        cpu_percent,
+        memory_used_bytes,
+        memory_pressure_score,
+        disk_activity_bps,
+        network_activity_bps,
+        wakeups_per_second,
+        gpu_percent,
+        gpu_memory_bytes,
+        max_cpu_temperature
+    )
 }
 
-fn ui_metric_card_signature(value: &UiMetricCard) -> String {
-    format!("{value:?}")
+fn ui_metric_cards_match(left: &UiMetricCard, right: &UiMetricCard) -> bool {
+    let severity_tag = |value: &UiMetricSeverity| match value {
+        UiMetricSeverity::Normal => 0,
+        UiMetricSeverity::Warning => 1,
+        UiMetricSeverity::Critical => 2,
+    };
+    let UiMetricCard {
+        id: _,
+        title: _,
+        value: _,
+        unit: _,
+        display_value: _,
+        detail: _,
+        severity: _,
+        samples: _,
+        fixed_ceiling: _,
+    } = left;
+    left.id == right.id
+        && left.title == right.title
+        && ui_float_matches(left.value, right.value)
+        && left.unit == right.unit
+        && left.display_value == right.display_value
+        && left.detail == right.detail
+        && severity_tag(&left.severity) == severity_tag(&right.severity)
+        && ui_float_slices_match(&left.samples, &right.samples)
+        && match (left.fixed_ceiling, right.fixed_ceiling) {
+            (Some(left), Some(right)) => ui_float_matches(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+fn ui_float_slices_match(left: &[f64], right: &[f64]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(&left, &right)| ui_float_matches(left, right))
 }
 
 fn ui_process_rows_match(left: &UiProcessRow, right: &UiProcessRow) -> bool {
@@ -3059,6 +3107,311 @@ mod ui_snapshot_tests {
                 }
             }
         }
+    }
+
+    // Original Debug-based implementation retained as the complete delta oracle.
+    fn legacy_ui_snapshot_delta_from_current(
+        base_sequence: u64,
+        key: &UiSnapshotCacheKey,
+        current: &UiSnapshot,
+        base: Option<&UiSnapshot>,
+    ) -> UiSnapshotDelta {
+        let base_available = base.is_some();
+        let host = match base {
+            Some(base)
+                if ui_host_summary_signature(&base.host)
+                    == ui_host_summary_signature(&current.host) =>
+            {
+                None
+            }
+            _ => Some(current.host.clone()),
+        };
+        let host_trend = match base {
+            Some(base)
+                if ui_host_trend_signature(&base.host_trend)
+                    == ui_host_trend_signature(&current.host_trend) =>
+            {
+                None
+            }
+            _ => Some(current.host_trend.clone()),
+        };
+        let changed_metric_cards = legacy_changed_metric_cards(current, base);
+        let (changed_process_rows, removed_entity_ids) = changed_process_rows(current, base);
+        let (selected_entity, selected_entity_changed, selected_entity_removed) =
+            changed_selected_entity(current, base);
+
+        UiSnapshotDelta {
+            updated: true,
+            sequence: current.sequence,
+            base_sequence,
+            captured_at_millis: current.captured_at_millis,
+            process_limit: key.process_limit,
+            trend_points: key.trend_points,
+            base_available,
+            host,
+            host_trend,
+            changed_metric_cards,
+            changed_process_rows,
+            removed_entity_ids,
+            selected_entity,
+            selected_entity_changed,
+            selected_entity_removed,
+            total_entity_count: current.total_entity_count,
+            returned_entity_count: current.returned_entity_count,
+            total_process_count: current.total_process_count,
+            timeline_warning_count: current.timeline_warning_count,
+            timeline_critical_count: current.timeline_critical_count,
+        }
+    }
+
+    fn legacy_changed_metric_cards(
+        current: &UiSnapshot,
+        base: Option<&UiSnapshot>,
+    ) -> Vec<UiMetricCard> {
+        let Some(base) = base else {
+            return current.metric_cards.clone();
+        };
+        let base_by_id: BTreeMap<&str, String> = base
+            .metric_cards
+            .iter()
+            .map(|card| (card.id.as_str(), ui_metric_card_signature(card)))
+            .collect();
+        current
+            .metric_cards
+            .iter()
+            .filter(|card| {
+                base_by_id
+                    .get(card.id.as_str())
+                    .map(|signature| signature != &ui_metric_card_signature(card))
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn ui_host_trend_signature(value: &UiHostTrend) -> String {
+        format!("{value:?}")
+    }
+    fn ui_metric_card_signature(value: &UiMetricCard) -> String {
+        format!("{value:?}")
+    }
+
+    #[test]
+    fn ui_metric_and_host_trend_comparisons_preserve_debug_floats() {
+        let fixture = ui_snapshot_from(&model::SystemSnapshot::default(), 500, 60, None);
+        let values = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            f64::from_bits(0xfff8_0000_0000_0001),
+        ];
+        for left in values {
+            for right in values {
+                let mut a = fixture.metric_cards[0].clone();
+                let mut b = a.clone();
+                a.value = left;
+                b.value = right;
+                assert_eq!(
+                    ui_metric_cards_match(&a, &b),
+                    format!("{a:?}") == format!("{b:?}")
+                );
+                a.value = 0.0;
+                b.value = 0.0;
+                a.samples = vec![left];
+                b.samples = vec![right];
+                assert_eq!(
+                    ui_metric_cards_match(&a, &b),
+                    format!("{a:?}") == format!("{b:?}")
+                );
+                a.samples.clear();
+                b.samples.clear();
+                a.fixed_ceiling = Some(left);
+                b.fixed_ceiling = Some(right);
+                assert_eq!(
+                    ui_metric_cards_match(&a, &b),
+                    format!("{a:?}") == format!("{b:?}")
+                );
+                let mut a = fixture.host_trend.clone();
+                let mut b = a.clone();
+                a.cpu_percent = vec![left];
+                b.cpu_percent = vec![right];
+                assert_eq!(
+                    ui_host_trends_match(&a, &b),
+                    format!("{a:?}") == format!("{b:?}")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ui_metric_and_host_trend_comparisons_detect_each_field() {
+        let fixture = ui_snapshot_from(&model::SystemSnapshot::default(), 500, 60, None);
+        let original = &fixture.metric_cards[0];
+        macro_rules! card_changes {
+            ($($field:ident = $value:expr;)*) => {$(
+                let mut changed = original.clone(); changed.$field = $value;
+                assert!(!ui_metric_cards_match(original, &changed), stringify!($field));
+            )*};
+        }
+        card_changes! {
+            id = "other".into(); title = "quoted\"\\\n日本語".into(); value = -0.0;
+            unit = "other".into(); display_value = "other".into(); detail = "other".into();
+            severity = UiMetricSeverity::Critical; samples = vec![0.0]; fixed_ceiling = Some(f64::NAN);
+        }
+        let mut missing = original.clone();
+        missing.fixed_ceiling = None;
+        let mut present = missing.clone();
+        present.fixed_ceiling = Some(0.0);
+        assert!(!ui_metric_cards_match(&missing, &present));
+        assert!(!ui_float_slices_match(&[1.0], &[1.0, 2.0]));
+        macro_rules! trend_changes {
+            ($($field:ident),* $(,)?) => {$(
+                let mut changed = fixture.host_trend.clone(); changed.$field.push(0.0);
+                assert!(!ui_host_trends_match(&fixture.host_trend, &changed), stringify!($field));
+            )*};
+        }
+        trend_changes!(
+            machine_friction,
+            cpu_percent,
+            memory_used_bytes,
+            memory_pressure_score,
+            disk_activity_bps,
+            network_activity_bps,
+            wakeups_per_second,
+            gpu_percent,
+            gpu_memory_bytes,
+            max_cpu_temperature
+        );
+    }
+
+    #[test]
+    fn ui_trend_and_card_delta_matches_legacy_for_duplicates_and_missing_base() {
+        let mut base = ui_snapshot_from(&model::SystemSnapshot::default(), 500, 60, None);
+        base.metric_cards[1].id = base.metric_cards[0].id.clone();
+        base.host_trend.cpu_percent = vec![0.0, f64::NAN, f64::INFINITY];
+        for changed in [false, true] {
+            let mut current = base.clone();
+            current.host_trend.cpu_percent[1] = f64::from_bits(0xfff8_0000_0000_0001);
+            if changed {
+                current.host_trend.cpu_percent[0] = -0.0;
+                current.metric_cards.remove(2);
+                current.metric_cards[0].value = -0.0;
+                let mut card = current.metric_cards[0].clone();
+                card.id = "new\0日本語".into();
+                card.samples = vec![f64::NAN];
+                current.metric_cards.push(card);
+                current.metric_cards.reverse();
+            }
+            let key = ui_snapshot_cache_key(500, 60, None);
+            for previous in [None, Some(&base)] {
+                let actual =
+                    ui_snapshot_delta_from_current(base.sequence, &key, &current, previous);
+                let expected =
+                    legacy_ui_snapshot_delta_from_current(base.sequence, &key, &current, previous);
+                assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+                if !changed && previous.is_some() {
+                    assert!(actual.host_trend.is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual retained-binary comparison; no concurrent builds"]
+    fn ui_trend_and_card_delta_benchmark() {
+        use std::{hint::black_box, time::Instant};
+        let variant =
+            std::env::var("AETOWER_UI_TREND_BENCH_VARIANT").unwrap_or_else(|_| "candidate".into());
+        assert!(matches!(variant.as_str(), "legacy" | "candidate"));
+        let fixture = model::SystemSnapshot {
+            entities: (0..500)
+                .map(|index| test_entity(&format!("entity-{index}"), index as f32 / 10.0))
+                .collect(),
+            ..model::SystemSnapshot::default()
+        };
+        let mut output = String::new();
+        let mut cases = Vec::new();
+        for points in [16, 60] {
+            let mut base = ui_snapshot_from(&fixture, 500, points, None);
+            macro_rules! fill_trends {
+                ($($field:ident),* $(,)?) => {$(base.host_trend.$field = (0..points).map(|index| f64::from(index) / 3.5).collect();)*};
+            }
+            fill_trends!(
+                machine_friction,
+                cpu_percent,
+                memory_used_bytes,
+                memory_pressure_score,
+                disk_activity_bps,
+                network_activity_bps,
+                wakeups_per_second,
+                gpu_percent,
+                gpu_memory_bytes,
+                max_cpu_temperature
+            );
+            for card in &mut base.metric_cards {
+                card.samples = base.host_trend.cpu_percent.clone();
+            }
+            for changed in [false, true] {
+                let mut current = base.clone();
+                current.sequence += 1;
+                current.captured_at_millis += 2_000;
+                if changed {
+                    current.host_trend.cpu_percent[0] += 0.5;
+                    current.metric_cards[1].value += 0.5;
+                    current.process_rows[1].cpu_percent += 0.5;
+                }
+                let key = ui_snapshot_cache_key(500, points, None);
+                let old = legacy_ui_snapshot_delta_from_current(
+                    base.sequence,
+                    &key,
+                    &current,
+                    Some(&base),
+                );
+                let new =
+                    ui_snapshot_delta_from_current(base.sequence, &key, &current, Some(&base));
+                assert_eq!(format!("{old:?}"), format!("{new:?}"));
+                output.push_str(&format!("points={points} changed={changed} {new:?}\n"));
+                cases.push((base.clone(), current, key));
+            }
+        }
+        if let Ok(path) = std::env::var("AETOWER_UI_TREND_BENCH_OUTPUT") {
+            std::fs::write(path, output).unwrap();
+        }
+        let iterations = 500;
+        let started = Instant::now();
+        let mut checksum = 0;
+        for (base, current, key) in &cases {
+            for _ in 0..iterations {
+                let delta = if variant == "legacy" {
+                    legacy_ui_snapshot_delta_from_current(
+                        base.sequence,
+                        key,
+                        black_box(current),
+                        Some(black_box(base)),
+                    )
+                } else {
+                    ui_snapshot_delta_from_current(
+                        base.sequence,
+                        key,
+                        black_box(current),
+                        Some(black_box(base)),
+                    )
+                };
+                checksum += delta.changed_metric_cards.len() + delta.changed_process_rows.len();
+                black_box(delta);
+            }
+        }
+        println!(
+            "UI_TREND_DELTA_BENCH {{\"variant\":\"{variant}\",\"iterations_per_case\":{iterations},\"cases\":{},\"checksum\":{checksum},\"operation_nanoseconds\":{}}}",
+            cases.len(),
+            started.elapsed().as_nanos()
+        );
     }
 
     // Retain the original implementation as an output oracle and a manual
