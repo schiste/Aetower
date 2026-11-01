@@ -1723,6 +1723,21 @@ impl Engine {
         self.history_maintenance_cancel
             .store(true, Ordering::SeqCst);
         self.system_marker_generation.fetch_add(1, Ordering::SeqCst);
+        // Wake every sleeping worker before joining any of them. The stop flag
+        // is set first, so an unpark that races with entering sleep is safe:
+        // either the worker sees the flag or consumes the pending wake token.
+        for worker in [
+            self.worker.as_ref(),
+            self.adapter_worker.as_ref(),
+            self.telemetry_worker.as_ref(),
+            self.history_maintenance_worker.as_ref(),
+            self.regression_worker.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            worker.thread().unpark();
+        }
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -2569,7 +2584,9 @@ fn sleep_with_stop(running: &AtomicBool, duration: Duration) {
     let started_at = Instant::now();
     while running.load(Ordering::SeqCst) && started_at.elapsed() < duration {
         let remaining = duration.saturating_sub(started_at.elapsed());
-        thread::sleep(remaining.min(Duration::from_millis(250)));
+        // Park until work is due; stop() unparks this worker immediately.
+        // Recheck the deadline after spurious wakes without advancing cadence.
+        thread::park_timeout(remaining);
     }
 }
 
@@ -3215,6 +3232,78 @@ fn format_bps(bytes_per_second: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopped_worker_does_not_wait_for_its_deadline() {
+        sleep_with_stop(&AtomicBool::new(false), Duration::MAX);
+        sleep_with_stop(&AtomicBool::new(true), Duration::ZERO);
+    }
+
+    #[test]
+    fn parked_worker_wakes_on_stop_even_before_it_parks() {
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            ready_tx.send(thread::current()).unwrap();
+            sleep_with_stop(&worker_running, Duration::from_secs(60));
+            done_tx.send(()).unwrap();
+        });
+        let parked = ready_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        running.store(false, Ordering::SeqCst);
+        parked.unpark();
+        done_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn spurious_unpark_does_not_advance_the_work_deadline() {
+        let worker = thread::spawn(|| {
+            // Seed a wake token before parking. The first park returns early,
+            // but sleep_with_stop must still wait for the original deadline.
+            thread::current().unpark();
+            let duration = Duration::from_millis(20);
+            let started = Instant::now();
+            sleep_with_stop(&AtomicBool::new(true), duration);
+            assert!(started.elapsed() >= duration);
+        });
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn engine_stop_unparks_every_scheduled_worker() {
+        let mut engine = engine_with_test_capability();
+        engine.running.store(true, Ordering::SeqCst);
+        let running = Arc::clone(&engine.running);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        for slot in [
+            &mut engine.worker,
+            &mut engine.adapter_worker,
+            &mut engine.telemetry_worker,
+            &mut engine.history_maintenance_worker,
+            &mut engine.regression_worker,
+        ] {
+            let ready = ready_tx.clone();
+            let running = Arc::clone(&running);
+            *slot = Some(thread::spawn(move || {
+                ready.send(()).unwrap();
+                sleep_with_stop(&running, Duration::from_secs(60));
+            }));
+        }
+        for _ in 0..5 {
+            ready_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let stopping = thread::spawn(move || {
+            engine.stop();
+            done_tx.send(()).unwrap();
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("stop must wake every worker rather than wait for its deadline");
+        stopping.join().unwrap();
+    }
 
     #[test]
     fn resource_cost_rollups_aggregate_machine_entity_repo_and_session() {

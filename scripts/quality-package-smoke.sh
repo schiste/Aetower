@@ -72,11 +72,14 @@ package_cache_key() {
             rust/Cargo.lock \
             rust/crates \
             scripts/build-rust.sh \
+            scripts/build-settings.sh \
+            scripts/prepare-swift-bindings.py \
             scripts/generate-app-icon.py \
             scripts/generate-app-icon.sh \
             scripts/import-app-icon.sh \
             scripts/normalize-app-icon.py \
             scripts/package-macos.sh \
+            scripts/relocate-macos-executable.py \
             scripts/smoke-package.sh \
             scripts/quality-package-smoke.sh \
             | xargs -0 shasum -a 256

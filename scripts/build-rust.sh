@@ -2,83 +2,66 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CARGO_BIN="${CARGO_BIN:-$(command -v cargo || printf '%s' cargo)}"
-if [ -n "${HOME:-}" ] \
-    && [ -x "$HOME/.cargo/bin/cargo" ] \
-    && [ "$CARGO_BIN" = "$HOME/.chau7/cto_bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
+. "$ROOT/scripts/build-settings.sh"
+PROFILE=debug
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --profile)
+            PROFILE="${2:-}"
+            [ "$#" -ge 2 ] || { echo "--profile requires debug, release or all" >&2; exit 2; }
+            shift 2
+            ;;
+        --help|-h)
+            echo "usage: $0 [--profile debug|release|all] (default: debug)"
+            exit 0
+            ;;
+        *) echo "unsupported argument: $1" >&2; exit 2 ;;
+    esac
+done
+case "$PROFILE" in
+    debug|release) PROFILES="$PROFILE" ;;
+    all) PROFILES="debug release" ;;
+    *) echo "--profile must be debug, release or all" >&2; exit 2 ;;
+esac
+
 cd "$ROOT/rust"
-
-"$CARGO_BIN" build --locked -p aetower-mcp
-"$CARGO_BIN" build --locked -p aetower-mcp --release
-"$CARGO_BIN" build --locked -p aetower-cli
-"$CARGO_BIN" build --locked -p aetower-cli --release
-"$CARGO_BIN" build --locked -p aetower-ffi
-"$CARGO_BIN" build --locked -p aetower-ffi --release
-
-DEBUG_DYLIB="$ROOT/rust/target/debug/libaetower_ffi.dylib"
-RELEASE_DYLIB="$ROOT/rust/target/release/libaetower_ffi.dylib"
-
-set_install_name() {
-  dylib_path="$1"
-  attempts=0
-  while [ "$attempts" -lt 5 ]; do
-    if [ -f "$dylib_path" ] && install_name_tool -id "@rpath/libaetower_ffi.dylib" "$dylib_path"; then
-      return 0
+for profile in $PROFILES; do
+    if [ "$profile" = release ]; then
+        set -- --release
+    else
+        set --
     fi
-    attempts=$((attempts + 1))
-    sleep 1
-  done
-  printf 'failed to update install name for %s\n' "$dylib_path" >&2
-  return 1
-}
-
-set_install_name "$DEBUG_DYLIB"
-set_install_name "$RELEASE_DYLIB"
-
-mkdir -p "$ROOT/macos/Sources/AetowerBindings" "$ROOT/macos/Sources/aetower_ffiFFI"
-find "$ROOT/macos/Sources/AetowerBindings" -type f ! -name '.gitkeep' -delete
-find "$ROOT/macos/Sources/aetower_ffiFFI" -type f ! -name '.gitkeep' -delete
-
-find "$ROOT/macos" -type d -path '*/plugins/outputs/*/BuildRustBridgePlugin' | while IFS= read -r plugin_output_dir; do
-  mkdir -p "$plugin_output_dir/debug" "$plugin_output_dir/release"
-  cp "$DEBUG_DYLIB" "$plugin_output_dir/debug/libaetower_ffi.dylib"
-  cp "$RELEASE_DYLIB" "$plugin_output_dir/release/libaetower_ffi.dylib"
-  touch "$plugin_output_dir/.plugin-ready"
+    # Resolve the runtime feature graph once per profile. Keep bindgen separate:
+    # its uniffi CLI features must not become dependencies of the shipped engine.
+    "$CARGO_BIN" build --locked -p aetower-mcp -p aetower-cli -p aetower-ffi "$@"
+    dylib="$ROOT/rust/target/$profile/libaetower_ffi.dylib"
+    if [ "$(otool -D "$dylib" | tail -n 1)" != '@rpath/libaetower_ffi.dylib' ]; then
+        install_name_tool -id '@rpath/libaetower_ffi.dylib' "$dylib"
+    fi
+    # The app links the dylib. Remove archives left by older restored caches,
+    # so a successful app build cannot leave a stale static bridge behind.
+    rm -f "$ROOT/rust/target/$profile/libaetower_ffi.a" \
+        "$ROOT/rust/target/$profile/deps/libaetower_ffi.a"
 done
 
-# Build UniFFI once, then invoke the executable directly for all generated outputs.
+# Build the host generator in debug even when generating release bindings.
 "$CARGO_BIN" build --locked -p uniffi-bindgen-swift
 UNIFFI_BINDGEN="$ROOT/rust/target/debug/uniffi-bindgen-swift"
+if [ "$PROFILE" = release ]; then
+    BINDINGS_DYLIB="$ROOT/rust/target/release/libaetower_ffi.dylib"
+else
+    BINDINGS_DYLIB="$ROOT/rust/target/debug/libaetower_ffi.dylib"
+fi
 
-"$UNIFFI_BINDGEN" \
-  --swift-sources \
-  "$DEBUG_DYLIB" \
-  "$ROOT/macos/Sources/AetowerBindings"
+# Generate off to the side, then preserve timestamps of unchanged inputs.
+# SwiftPM can reuse compiled Swift modules when the Rust ABI did not change.
+mkdir -p "$ROOT/tmp"
+GENERATED_DIR="$(mktemp -d "$ROOT/tmp/bindings.XXXXXX")"
+trap 'rm -rf "$GENERATED_DIR"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+"$UNIFFI_BINDGEN" --swift-sources --headers --modulemap \
+    --module-name aetower_ffiFFI --modulemap-filename module.modulemap \
+    "$BINDINGS_DYLIB" "$GENERATED_DIR"
 
-"$UNIFFI_BINDGEN" \
-  --headers \
-  "$DEBUG_DYLIB" \
-  "$ROOT/macos/Sources/aetower_ffiFFI"
-
-"$UNIFFI_BINDGEN" \
-  --modulemap \
-  --module-name aetower_ffiFFI \
-  --modulemap-filename module.modulemap \
-  "$DEBUG_DYLIB" \
-  "$ROOT/macos/Sources/aetower_ffiFFI"
-
-/usr/bin/python3 - "$ROOT/macos/Sources/AetowerBindings" "$ROOT/macos/Sources/aetower_ffiFFI" <<'PY'
-import pathlib
-import sys
-
-for root in sys.argv[1:]:
-    for path in pathlib.Path(root).rglob("*"):
-        if not path.is_file():
-            continue
-        text = path.read_text()
-        cleaned = "\n".join(line.rstrip(" \t") for line in text.split("\n"))
-        if cleaned != text:
-            path.write_text(cleaned)
-PY
+/usr/bin/python3 "$ROOT/scripts/prepare-swift-bindings.py" "$GENERATED_DIR" "$ROOT/macos/Sources"

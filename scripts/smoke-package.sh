@@ -10,6 +10,7 @@ FFI_LIB="$APP_DIR/Contents/Frameworks/libaetower_ffi.dylib"
 HELPER_BIN="$APP_DIR/Contents/Helpers/aetower-helper"
 MCP_PROXY_BIN="$APP_DIR/Contents/Helpers/aetower-mcp"
 CLI_BIN="$APP_DIR/Contents/Helpers/aetower"
+UI_RESOURCE_BUNDLE="$APP_DIR/Contents/Resources/AetowerMac_AetowerUI.bundle"
 REBUILD=0
 LAUNCH=0
 
@@ -40,6 +41,9 @@ fi
 [ -f "$FFI_LIB" ]
 [ -x "$MCP_PROXY_BIN" ]
 [ -x "$CLI_BIN" ]
+[ -d "$UI_RESOURCE_BUNDLE" ]
+find "$UI_RESOURCE_BUNDLE" -type f \
+    -path '*/Aethyme/agent-contracts/v1/templates/AGENTS.md' -print -quit | grep -q .
 # The operator CLI must at least answer --version without a running app; the
 # socket-backed verbs are exercised by the live smoke below.
 "$CLI_BIN" --version >/dev/null
@@ -52,6 +56,7 @@ if [ "${AETOWER_INCLUDE_PRIVILEGED_HELPER:-0}" = "1" ]; then
     [ -x "$HELPER_BIN" ]
 fi
 
+python3 "$ROOT/scripts/relocate-macos-executable.py" --check "$APP_BIN"
 codesign --verify --deep --strict "$APP_DIR"
 
 if [ "$LAUNCH" -eq 1 ]; then

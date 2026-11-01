@@ -2,6 +2,7 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/build-settings.sh"
 
 if [ "${AETOWER_CI_LOGGING_ACTIVE:-0}" != "1" ]; then
     requested_mode="pre-commit"
@@ -46,7 +47,7 @@ INCLUDE_FILTER=""
 SKIP_FILTER=""
 PUSH_STDIN_FILE=""
 SWIFTLINT_CACHE_DIR="$ROOT/tmp/swiftlint-cache"
-SWIFT_BUILD_DIR="$ROOT/macos/.build"
+SWIFT_BUILD_DIR="${SWIFT_BUILD_DIR:-$ROOT/macos/.build}"
 CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT/tmp/clang-module-cache}"
 SUMMARY_FILE=""
 SUMMARY_PRINTED=0
@@ -324,7 +325,9 @@ remove_tree() {
 }
 
 clean_swift_build_dir() {
-    remove_tree "$SWIFT_BUILD_DIR"
+    if [ "${AETOWER_CLEAN_BUILD:-0}" = "1" ]; then
+        remove_tree "$SWIFT_BUILD_DIR"
+    fi
 }
 
 staged_files() {
@@ -435,7 +438,7 @@ confirm_dirty_worktree_for_push() {
 }
 
 should_run_full_rust_gate() {
-    if has_staged_match '^(rust/Cargo\.toml|rust/Cargo\.lock|rustfmt\.toml|rust-toolchain\.toml|scripts/build-rust\.sh|scripts/build-rust-ffi-for-swiftpm\.sh)$'; then
+    if has_staged_match '^(rust/Cargo\.toml|rust/Cargo\.lock|rustfmt\.toml|rust-toolchain\.toml|scripts/build-rust\.sh)$'; then
         return 0
     fi
     return 1
@@ -499,16 +502,17 @@ run_precommit_semgrep() {
 }
 
 run_workspace_tests() {
-    # aetower-mcp runs single-threaded on purpose. Its storage tests share one
-    # process-wide SQLite index (state_store.rs storage_index_directory), and
-    # 14 of 17 index-using tests deliberately do not override it, so parallel
-    # threads cross-contaminate the global INDEX_REPORT_SECTIONS_MEMO and
-    # fail non-deterministically with *different* tests on each run. Until
-    # every test owns its directory, serialise the crate. The suite is
-    # ~8 min, which is acceptable inside the pre-push budget.
-    run "cargo test (workspace)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" --workspace --exclude aetower-helper --exclude aetower-mcp
-    run "cargo test (aetower-mcp)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-mcp -- --test-threads=1
-    run "cargo test (aetower-helper)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper -- --test-threads=1
+    # Preserve crate-specific --include/--skip selections. The unfiltered
+    # full gate isolates generator features and keeps every test serial.
+    for label in "cargo test (workspace)" "cargo test (aetower-mcp)" "cargo test (aetower-helper)"; do
+        if filter_contains "$INCLUDE_FILTER" "$label" || filter_contains "$SKIP_FILTER" "$label"; then
+            run "cargo test (workspace)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" --workspace --exclude aetower-helper --exclude aetower-mcp
+            run "cargo test (aetower-mcp)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-mcp -- --test-threads=1
+            run "cargo test (aetower-helper)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" -p aetower-helper -- --test-threads=1
+            return
+        fi
+    done
+    run "cargo test (workspace)" sh "$ROOT/scripts/test-rust-workspace.sh"
 }
 
 # Swift tests are a real gate, not an optional extra: macos/Tests/AetowerUITests
@@ -516,7 +520,7 @@ run_workspace_tests() {
 # TrashService paths. Requires the Rust bridge, so this must run after
 # build-rust.sh in the full gate.
 run_swift_tests() {
-    run "swift test" /usr/bin/swift test --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
+    run "swift test" /usr/bin/swift test --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -j "$AETOWER_BUILD_JOBS"
 }
 
 run_precommit_swift() {
@@ -524,7 +528,7 @@ run_precommit_swift() {
         skip "swift build" "no staged Swift package changes"
         return
     fi
-    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
+    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR" -j "$AETOWER_BUILD_JOBS"
 }
 
 run_precommit_bridge() {
@@ -570,6 +574,9 @@ run_precommit_shell() {
 
 run_precommit() {
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode pre-commit
+    if has_staged_match '^scripts/(build-|measure-build|measure-runtime|compare-runtime|relocate-macos-executable|prepare-swift-bindings|package-macos|ci-local|swift-quality-checks|check-dependencies|tests/)'; then
+        run_build_pipeline_tests
+    fi
     run_precommit_gitleaks
     run_precommit_swiftlint
     run_precommit_semgrep
@@ -578,6 +585,10 @@ run_precommit() {
     run_precommit_swift
     run_precommit_benchmark
     run_precommit_shell
+}
+
+run_build_pipeline_tests() {
+    run "build pipeline tests" env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$ROOT/scripts/tests" -v
 }
 
 run_full_gitleaks() {
@@ -621,12 +632,10 @@ run_full_shellcheck() {
 }
 
 run_full_dependency_policy() {
-    deny_bin="$(command -v cargo-deny || true)"
-    if [ -z "$deny_bin" ]; then
-        echo "missing required tool: cargo-deny (install with: cargo install cargo-deny --locked)" >&2
-        exit 1
+    if ! should_run_label "cargo deny"; then
+        return
     fi
-    run "cargo deny" sh -c 'cd "$1/rust" && CARGO="$2" "$3" check advisories bans sources --disable-fetch --config "$1/deny.toml"' sh "$ROOT" "$CARGO_BIN" "$deny_bin"
+    run "cargo deny" sh "$ROOT/scripts/check-dependencies.sh"
 }
 
 run_full_gate() {
@@ -645,6 +654,11 @@ run_full_gate() {
         run "quality guard (working tree)" python3 "$ROOT/scripts/quality-guard.py" --mode working-tree
     fi
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode "$MODE"
+    # The pipeline checks include real Swift compiler harnesses. Reject the
+    # same dependency-policy failures before those compiles and other tools.
+    # Explicit include/skip selections still apply to the mandatory gate label.
+    run_full_dependency_policy
+    run_build_pipeline_tests
     run_full_gitleaks
     run_full_swiftlint
     run_full_shellcheck
@@ -661,15 +675,14 @@ run_full_gate() {
     run "FFI binding is up to date" git -C "$ROOT" diff --exit-code --stat -- \
         macos/Sources/AetowerBindings/aetower_ffi.swift \
         macos/Sources/aetower_ffiFFI/aetower_ffiFFI.h
-    run "swift build" /usr/bin/swift build --package-path "$ROOT/macos" --scratch-path "$SWIFT_BUILD_DIR"
-    run_swift_tests
+    . "$ROOT/scripts/swift-quality-checks.sh"
+    run_full_swift_checks
     run "benchmark budget" sh "$ROOT/scripts/measure-overhead.sh" --iterations "$BENCH_ITERATIONS" --enforce
     run "telemetry smoke" sh "$ROOT/scripts/telemetry-smoke.sh"
     run "package smoke" sh "$ROOT/scripts/quality-package-smoke.sh"
     if [ "$MODE" = "full" ]; then
         run "local operator smoke" sh "$ROOT/scripts/local-operator-smoke.sh"
     fi
-    run_full_dependency_policy
     if [ "$MODE" = "full" ]; then
         if command -v cargo-audit >/dev/null 2>&1; then
             run "cargo audit" cargo audit --file "$ROOT/rust/Cargo.lock" --ignore RUSTSEC-2025-0141 --ignore RUSTSEC-2026-0097

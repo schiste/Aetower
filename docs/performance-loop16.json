@@ -1,0 +1,2911 @@
+{
+  "status": "both_current_app_rounds_verified_network_runtime_candidate_withdrawn_build_change_retained",
+  "runtime_experiment": {
+    "status": "rejected_not_retained_in_production_source",
+    "proposal": "For changed cooccurrence membership, use a u16-domain bounded bitset only when requested bit payload is no larger than the active-index u16 payload; retain HashSet for sparse historical indices. Keep the prior unchanged-membership cache.",
+    "candidate_source_sha256": "245ffccd6e2106c1340752a16eedbcb794c51b20fec96eea4dbe3c5236c52d6d",
+    "retained_source": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-cooccurrence-fixture-v1/history-source.rs",
+    "restored_production_source_sha256": "4446afc5d35b5e4e34b2b24e223ac0a6ee8d4b5e371064caa0492d95c667f799",
+    "fixture_output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-cooccurrence-fixture-v1/results.json",
+    "fixture_output_sha256": "24ee78cc2b525f4724470729440100576079524fffa9412e68c54ae43479ba96",
+    "fixture_binary_sha256": "a99d3f202270a70718da26d318691fc58c48f72312f4aa86c907cd73e866a5e7",
+    "validation": "26 history release cases pass, two manual fixtures ignored; strict all-targets release Clippy passes. Extended original-algorithm/shared-hash-builder oracle covers compact and sparse/wrapped index domains, duplicates, membership churn and exact pair-table iteration. Candidate source and binary retained with receipts.",
+    "processes": 48,
+    "scope": "Cached hash-set pruning and bounded-bitset pruning in the same retained release test binary, with a common History layout. 500 entities, 100 samples per child; stable, reordered, compact-index churn and high-index churn workloads. Common setup validates counts and exact table iteration order with a shared hash builder. Not an app-wide comparison.",
+    "memory_scope": "wait4 maximum process RSS includes common setup, both state-oracle histories and canonical-output encoding. It cannot isolate retained-cache or helper memory savings.",
+    "summary": {
+      "stable": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 1.346266,
+            "median_operation_wall_seconds": 0.27779295800000003,
+            "mean_max_process_rss_bytes": 17771178.666666668
+          },
+          "candidate": {
+            "total_cpu_seconds": 1.6065450000000001,
+            "median_operation_wall_seconds": 0.39405195849999997,
+            "mean_max_process_rss_bytes": 18767872
+          }
+        },
+        "cpu_percent_change": 19.333400680103342,
+        "output_bytes": 2065860,
+        "output_sha256": "906c6a0f9df7f0ce6f36c03a9a2f61e710a6e2662a195a2547ca7bf592de95b4"
+      },
+      "reordered": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 1.1546729999999998,
+            "median_operation_wall_seconds": 0.123604979,
+            "mean_max_process_rss_bytes": 18219008
+          },
+          "candidate": {
+            "total_cpu_seconds": 1.073555,
+            "median_operation_wall_seconds": 0.1015605205,
+            "mean_max_process_rss_bytes": 18205354.666666668
+          }
+        },
+        "cpu_percent_change": -7.025192413782932,
+        "output_bytes": 2065860,
+        "output_sha256": "906c6a0f9df7f0ce6f36c03a9a2f61e710a6e2662a195a2547ca7bf592de95b4"
+      },
+      "churn": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 2.804119,
+            "median_operation_wall_seconds": 0.516730521,
+            "mean_max_process_rss_bytes": 18429269.333333332
+          },
+          "candidate": {
+            "total_cpu_seconds": 1.825332,
+            "median_operation_wall_seconds": 0.3028467085,
+            "mean_max_process_rss_bytes": 17214122.666666668
+          }
+        },
+        "cpu_percent_change": -34.90533033726457,
+        "output_bytes": 2065860,
+        "output_sha256": "955ebe05059dde45d34ac1c1d5f668bbdc91695cf403ff6924d60feeaeac1307"
+      },
+      "churn-high-index": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 3.0499469999999995,
+            "median_operation_wall_seconds": 0.524644521,
+            "mean_max_process_rss_bytes": 23713109.333333332
+          },
+          "candidate": {
+            "total_cpu_seconds": 2.7685229999999996,
+            "median_operation_wall_seconds": 0.36012508350000005,
+            "mean_max_process_rss_bytes": 24567808
+          }
+        },
+        "cpu_percent_change": -9.22717673454654,
+        "output_bytes": 2618752,
+        "output_sha256": "3c346a80e09d778ee9abff0044bbf2f390ba44fb8531ea8fd19c7d08e5db96a5"
+      }
+    },
+    "decision": "Reject this first version: compact churn CPU improves 34.9%, but the steady fixture CPU rises 19.3% and maximum-process RSS also rises. The stable hot path was intended to be unchanged. A future attempt requires investigating compiler/call context and remeasurement; favorable churn alone does not establish a net improvement. Restored exact preceding production source; no source changes from this experiment remain."
+  },
+  "build_experiment": {
+    "status": "complete_not_adopted",
+    "proposal": "Use the retained actual release UI frontend command to compare the original storage audit helper against an inline(never) candidate, in four matched ABBA optimized object compilations. Preserve optimization, sources/imports and two frontend threads; use fresh private module caches/outputs. Restore original source in finally. No compiler backend/default change.",
+    "controller": "tmp/loop16-swift-inlining-comparison.py",
+    "scope": "UI object compilation diagnostic only; excludes separate module emission, dependencies, linking, packaging, runtime and whole CI. A retained annotation additionally needs app/default-build compatibility and footprint validation.",
+    "official_guidance": "https://developer.apple.com/videos/play/wwdc2026/262/",
+    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-swift-inlining-comparison-v1/results.json",
+    "output_sha256": "2a8b1854744e4dac6a35e4e617fe0a75b8ababca1d77087470c3b3a3b33d4511",
+    "means": {
+      "baseline": {
+        "wall_seconds": 157.187,
+        "cpu_seconds": 162.401,
+        "sampled_peak_tree_rss_bytes": 2316312576,
+        "object_bytes": 69532128
+      },
+      "candidate": {
+        "wall_seconds": 289.351,
+        "cpu_seconds": 212.1815,
+        "sampled_peak_tree_rss_bytes": 1622310912,
+        "object_bytes": 69408760
+      }
+    },
+    "candidate_change_percent": {
+      "wall_seconds": 84.08074459083765,
+      "cpu_seconds": 30.65282849243538,
+      "sampled_peak_tree_rss_bytes": -29.9614858197791,
+      "object_bytes": -0.17742589440092882
+    },
+    "phases": [
+      {
+        "label": "A1",
+        "variant": "baseline",
+        "status": "complete",
+        "source_sha256": "6d4f78c5fb4191714e4b3ef70a02c10c8f1812d2730a72fea3aab06678c21159",
+        "host_load_start": [
+          8.88037109375,
+          11.27197265625,
+          15.1376953125
+        ],
+        "host_load_end": [
+          7.31689453125,
+          9.81640625,
+          14.02587890625
+        ],
+        "object_files": 91,
+        "inputs_unchanged": true,
+        "object_bytes": 69532128,
+        "cost": {
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 124.803,
+          "user_cpu_seconds": 130.884,
+          "system_cpu_seconds": 5.979,
+          "average_cpu_percent": 109.7,
+          "sampled_peak_tree_rss_bytes": 2608775168,
+          "rss_samples": 122,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "selected_nested_wall_timers": {
+          "time.swift.LLVM pipeline.wall": 26.083184957504272,
+          "time.swift.IRGen.wall": 5.126260995864868,
+          "time.swift.SIL optimization.wall": 45.10777974128723,
+          "time.swift.Type checking and Semantic analysis.wall": 19.890649557113647
+        }
+      },
+      {
+        "label": "B1",
+        "variant": "candidate",
+        "status": "complete",
+        "source_sha256": "62c71c6df09f33de1be8ab3580fa83f768d9e0190f35f671554a188b000076d3",
+        "host_load_start": [
+          7.31689453125,
+          9.81640625,
+          14.02587890625
+        ],
+        "host_load_end": [
+          22.93310546875,
+          13.78466796875,
+          14.58984375
+        ],
+        "object_files": 91,
+        "inputs_unchanged": true,
+        "object_bytes": 69408760,
+        "cost": {
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 210.373,
+          "user_cpu_seconds": 169.971,
+          "system_cpu_seconds": 10.601,
+          "average_cpu_percent": 85.8,
+          "sampled_peak_tree_rss_bytes": 1944993792,
+          "rss_samples": 203,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "selected_nested_wall_timers": {
+          "time.swift.LLVM pipeline.wall": 88.61717891693115,
+          "time.swift.IRGen.wall": 8.46999979019165,
+          "time.swift.SIL optimization.wall": 56.75799012184143,
+          "time.swift.Type checking and Semantic analysis.wall": 24.995479822158813
+        }
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "status": "complete",
+        "source_sha256": "62c71c6df09f33de1be8ab3580fa83f768d9e0190f35f671554a188b000076d3",
+        "host_load_start": [
+          22.93310546875,
+          13.78466796875,
+          14.58984375
+        ],
+        "host_load_end": [
+          19.61279296875,
+          18.48974609375,
+          16.798828125
+        ],
+        "object_files": 91,
+        "inputs_unchanged": true,
+        "object_bytes": 69408760,
+        "cost": {
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 368.329,
+          "user_cpu_seconds": 224.13,
+          "system_cpu_seconds": 19.661,
+          "average_cpu_percent": 66.2,
+          "sampled_peak_tree_rss_bytes": 1299628032,
+          "rss_samples": 350,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "selected_nested_wall_timers": {
+          "time.swift.LLVM pipeline.wall": 55.745489835739136,
+          "time.swift.IRGen.wall": 21.912432193756104,
+          "time.swift.SIL optimization.wall": 126.51791596412659,
+          "time.swift.Type checking and Semantic analysis.wall": 92.6818573474884
+        }
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "status": "complete",
+        "source_sha256": "6d4f78c5fb4191714e4b3ef70a02c10c8f1812d2730a72fea3aab06678c21159",
+        "host_load_start": [
+          19.61279296875,
+          18.48974609375,
+          16.798828125
+        ],
+        "host_load_end": [
+          13.7177734375,
+          15.91162109375,
+          16.01904296875
+        ],
+        "object_files": 91,
+        "inputs_unchanged": true,
+        "object_bytes": 69532128,
+        "cost": {
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 189.571,
+          "user_cpu_seconds": 176.774,
+          "system_cpu_seconds": 11.165,
+          "average_cpu_percent": 99.1,
+          "sampled_peak_tree_rss_bytes": 2023849984,
+          "rss_samples": 184,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "selected_nested_wall_timers": {
+          "time.swift.LLVM pipeline.wall": 67.74502086639404,
+          "time.swift.IRGen.wall": 8.426209211349487,
+          "time.swift.SIL optimization.wall": 59.616024017333984,
+          "time.swift.Type checking and Semantic analysis.wall": 23.98472571372986
+        }
+      }
+    ],
+    "decision": "Not adopted: emitted objects are 123368 bytes smaller (-0.18%) but observed mean CPU/wall cost rises. Large within-variant timing and memory variability prevents causal attribution; this does not demonstrate a useful build saving or hard memory cap. All inputs/hashes verified and original Swift source restored. No full app/package adoption or compatibility claim."
+  },
+  "app_followup": {
+    "status": "complete",
+    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/measurements/loop15-hidden-runtime-v2/summary.json",
+    "scope": "Same retained production pass-15 app pair in BAAB order, after the complete initial ABBA cohort. No compiler/fixture benchmark overlaps capture. Initial unfavorable memory results remain reported in performance-loop15.json.",
+    "means": {
+      "baseline": {
+        "average_cpu_percent": 3.44796109604521,
+        "average_phys_footprint_bytes": 144262569.47826087,
+        "interrupt_wakeups_per_second": 5.160889461349346
+      },
+      "candidate": {
+        "average_cpu_percent": 3.6085034606114714,
+        "average_phys_footprint_bytes": 147994034.86956522,
+        "interrupt_wakeups_per_second": 5.183386586047199
+      }
+    },
+    "candidate_change_percent": {
+      "average_cpu_percent": 4.656153596118084,
+      "average_phys_footprint_bytes": 2.586579044584836,
+      "interrupt_wakeups_per_second": 0.43591564722198495
+    },
+    "decision": "Precautionary removal of preceding membership cache; see pass 15 for both cohorts, all windows and source identity."
+  },
+  "network_history_candidate": {
+    "status": "withdrawn_precaution_after_unfavorable_reversed_app_followup",
+    "fixture_output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-network-history-fixture-v2/results.json",
+    "change": "Borrow current remote-host strings; retain existing owned strings when membership is unchanged, copy only new hosts and shrink capacity on removals. First observation uses the original owned collector; empty observations and disappeared entities preserve prior semantics. No new persistent fields.",
+    "limits": "Helper performance and retained-capacity checks do not establish whole-app physical footprint/CPU/wakeup savings.",
+    "fixture_output_sha256": "400e6cad4751056af29f26c3c69a9ad66312ca0fc866f96ca3609847b530a891",
+    "fixture_binary_sha256": "4039673247661142cf2ccc8f50912785f8cf3cad41adcff504af87cda1cd912a",
+    "processes": 48,
+    "summary": {
+      "none": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 0.046755,
+            "median_operation_wall_seconds": 0.004652771,
+            "mean_max_process_rss_bytes": 3347797.3333333335
+          },
+          "candidate": {
+            "total_cpu_seconds": 0.024682,
+            "median_operation_wall_seconds": 0.000214146,
+            "mean_max_process_rss_bytes": 3353258.6666666665
+          }
+        },
+        "cpu_percent_change": -47.209924072291734,
+        "output_bytes": 8,
+        "output_sha256": "7abbc9662131bc4949def02e1c73e8d32d314ad8c471d9e03a030c6fef982fb2"
+      },
+      "stable": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 5.92544,
+            "median_operation_wall_seconds": 1.0836837915,
+            "mean_max_process_rss_bytes": 8003584
+          },
+          "candidate": {
+            "total_cpu_seconds": 3.459161,
+            "median_operation_wall_seconds": 0.6219522085,
+            "mean_max_process_rss_bytes": 7968085.333333333
+          }
+        },
+        "cpu_percent_change": -41.621871118431706,
+        "output_bytes": 82182,
+        "output_sha256": "d868c403849fc8473746cb441f98e75bc963ad527564d8e663ccd5f5b4bc2f55"
+      },
+      "reordered": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 5.703743,
+            "median_operation_wall_seconds": 0.9349402915,
+            "mean_max_process_rss_bytes": 7973546.666666667
+          },
+          "candidate": {
+            "total_cpu_seconds": 3.2468489999999997,
+            "median_operation_wall_seconds": 0.5357207085,
+            "mean_max_process_rss_bytes": 7995392
+          }
+        },
+        "cpu_percent_change": -43.07511751493713,
+        "output_bytes": 82182,
+        "output_sha256": "d868c403849fc8473746cb441f98e75bc963ad527564d8e663ccd5f5b4bc2f55"
+      },
+      "churn": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 4.143489,
+            "median_operation_wall_seconds": 0.6984929165,
+            "mean_max_process_rss_bytes": 8123733.333333333
+          },
+          "candidate": {
+            "total_cpu_seconds": 2.528564,
+            "median_operation_wall_seconds": 0.4287820205,
+            "mean_max_process_rss_bytes": 8153770.666666667
+          }
+        },
+        "cpu_percent_change": -38.97500391578209,
+        "output_bytes": 112088,
+        "output_sha256": "8e8177d4bd61f6204a86a0e36c33a65887a59ff5804f35d515d319c6eaee6edd"
+      }
+    },
+    "memory_scope": "wait4 maximum process RSS includes common entity/setup allocations, both oracle histories and final canonical encoding. It cannot isolate a helper allocation saving; exact retained-set capacity is checked separately by the oracle.",
+    "scope": "Prior owned-host replacement and candidate borrowed-host/in-place update in the same retained release test binary and common History layout; equal opaque function-pointer call boundaries. 256 entities, 1000 samples per process; none, stable/reordered sets of 16 hosts over 64 connections per entity, and one-entity/one-host churn. Common 8-step oracle validates canonical state/events and no larger retained host-set capacity. Both variants apply the existing 120-event bound after each timed update. Excludes the rest of History::update, collector, Swift/UI and whole app.",
+    "validation": {
+      "passed": 26,
+      "manual_ignored": 2,
+      "clippy": "strict release all-targets -D warnings passed",
+      "quality_guard": "passed",
+      "source_sha256": "43e2833c8b822be5c9ccc202f62bc12dbce307776227fc364c90918bdc7f3623",
+      "release_log": "logs/loop16-network-history-validation-v2.jsonl",
+      "clippy_log": "logs/loop16-network-history-clippy-v2.log",
+      "scope": "Current guard-compliant source; repeated 48-process fixture and full workspace execution complete."
+    },
+    "initial_fixture_before_guard_fix": {
+      "fixture_output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-network-history-fixture-v1/results.json",
+      "fixture_output_sha256": "790e9e74ea3f2353b6043244be3611565efe94c11ddd342da7c17e56b06e9341",
+      "fixture_binary_sha256": "5369e2d3ee0a004cdb3cae12a868a3a28a793ef8e07c9cbbd4cc9652b86072cf",
+      "processes": 48,
+      "summary": {
+        "none": {
+          "variants": {
+            "previous": {
+              "total_cpu_seconds": 0.05653,
+              "median_operation_wall_seconds": 0.0052964795,
+              "mean_max_process_rss_bytes": 3388757.3333333335
+            },
+            "candidate": {
+              "total_cpu_seconds": 0.021219,
+              "median_operation_wall_seconds": 0.0002595205,
+              "mean_max_process_rss_bytes": 3394218.6666666665
+            }
+          },
+          "cpu_percent_change": -62.4641783124005,
+          "output_bytes": 8,
+          "output_sha256": "7abbc9662131bc4949def02e1c73e8d32d314ad8c471d9e03a030c6fef982fb2"
+        },
+        "stable": {
+          "variants": {
+            "previous": {
+              "total_cpu_seconds": 4.843844,
+              "median_operation_wall_seconds": 0.8587893335,
+              "mean_max_process_rss_bytes": 8006314.666666667
+            },
+            "candidate": {
+              "total_cpu_seconds": 3.3214989999999998,
+              "median_operation_wall_seconds": 0.5676024585,
+              "mean_max_process_rss_bytes": 7984469.333333333
+            }
+          },
+          "cpu_percent_change": -31.428448149857847,
+          "output_bytes": 82182,
+          "output_sha256": "d868c403849fc8473746cb441f98e75bc963ad527564d8e663ccd5f5b4bc2f55"
+        },
+        "reordered": {
+          "variants": {
+            "previous": {
+              "total_cpu_seconds": 5.359293,
+              "median_operation_wall_seconds": 0.9431209795,
+              "mean_max_process_rss_bytes": 7995392
+            },
+            "candidate": {
+              "total_cpu_seconds": 2.8772189999999997,
+              "median_operation_wall_seconds": 0.4746506875,
+              "mean_max_process_rss_bytes": 7979008
+            }
+          },
+          "cpu_percent_change": -46.31345962984297,
+          "output_bytes": 82182,
+          "output_sha256": "d868c403849fc8473746cb441f98e75bc963ad527564d8e663ccd5f5b4bc2f55"
+        },
+        "churn": {
+          "variants": {
+            "previous": {
+              "total_cpu_seconds": 5.914207,
+              "median_operation_wall_seconds": 1.5549165,
+              "mean_max_process_rss_bytes": 8017237.333333333
+            },
+            "candidate": {
+              "total_cpu_seconds": 3.329463,
+              "median_operation_wall_seconds": 0.688672437,
+              "mean_max_process_rss_bytes": 8099157.333333333
+            }
+          },
+          "cpu_percent_change": -43.70398263030023,
+          "output_bytes": 112088,
+          "output_sha256": "8e8177d4bd61f6204a86a0e36c33a65887a59ff5804f35d515d319c6eaee6edd"
+        }
+      },
+      "validation": {
+        "passed": 26,
+        "manual_ignored": 2,
+        "clippy": "strict release all-targets -D warnings passed",
+        "source_sha256": "a6b318a033d9745dd4db6055a4e0f4a70d12c36b04166ce99ee539dd9972a5cf",
+        "receipt": "c392c079ee2501d447663e89fc732e18"
+      }
+    },
+    "workspace_validation": {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-current-workspace-validation-v3/results.json",
+      "receipt_sha256": "bfed5bd1a48064cbf0b1e5e47e7bad22211ddc06b1c03255d12a594ed9d10eaf",
+      "passed": 517,
+      "manual_ignored": 9,
+      "exact_expected_cases": true,
+      "inputs_unchanged": true,
+      "cost": {
+        "command": [
+          "sh",
+          "/private/tmp/aetower-build-performance/scripts/test-rust-workspace.sh"
+        ],
+        "cwd": "/private/tmp/aetower-build-performance",
+        "exit_status": 0,
+        "wall_seconds": 218.354,
+        "user_cpu_seconds": 62.625,
+        "system_cpu_seconds": 30.051,
+        "average_cpu_percent": 42.4,
+        "sampled_peak_tree_rss_bytes": 167428096,
+        "rss_samples": 212,
+        "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+      },
+      "scope": "Current full serial workspace correctness execution through the production two-graph wrapper, including required compilation. Absolute validation cost, not an A/B measurement.",
+      "temporary_directory": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-current-workspace-validation-v3/temp",
+      "short_temp_alias": "/private/tmp/at16-18636"
+    },
+    "adoption_decision": "Restore the exact pre-candidate history source. Helper CPU gains remain valid for that bounded fixture, but the reversed combined app cohort failed to reproduce an overall footprint improvement. This is a precaution, not proof that the network change caused the observed differences; the pair also combined a bridge artifact change.",
+    "restored_source_sha256": "76c2bb040cdced3bf1f3560b0051b6b27c63c59446230e0c690ed228707f9cb1",
+    "withdrawal_validation": {
+      "cost": {
+        "command": [
+          "/Users/christophehenner/.cargo/bin/cargo",
+          "test",
+          "--locked",
+          "--manifest-path",
+          "rust/Cargo.toml",
+          "-p",
+          "aetower-history",
+          "--release"
+        ],
+        "cwd": "/private/tmp/aetower-build-performance",
+        "exit_status": 0,
+        "wall_seconds": 9.723,
+        "user_cpu_seconds": 12.346,
+        "system_cpu_seconds": 0.6,
+        "average_cpu_percent": 133.2,
+        "sampled_peak_tree_rss_bytes": 505118720,
+        "rss_samples": 10,
+        "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+      },
+      "test_results": [
+        "test result: ok. 25 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "scope": "Focused release correctness check after restoring the exact previously validated source, including required cached compilation; absolute cost, not an A/B comparison.",
+      "byte_identical_to_pre_candidate": true
+    }
+  },
+  "validation_failure": {
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-current-workspace-validation/results.json",
+    "failure": "engine::tests::default_history_retention_keeps_seven_days_under_normal_budget: range_count 0 vs 169",
+    "diagnosis": "Focused exact same test binary passes on original and external temporary volumes. Original free space near 512 MiB production write-pause reserve; original failure cause not established. Preserve failure; full rerun uses spacious external TMPDIR, unchanged tests and timeouts.",
+    "focused_receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-disk-diagnosis-v1/results.json",
+    "guard_fix": "Replaced production unwrap with if let; current source passes 26 release cases, strict Clippy and quality guard. New fixture pending.",
+    "second_attempt": {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-current-workspace-validation-v2/results.json",
+      "retention_test": "passed",
+      "failure": "chau7::tests::repeated_fetches_close_chau7_socket_connections: path must be shorter than SUN_LEN",
+      "resolution_under_validation": "Confirmed: short TMPDIR alias to external volume passes the complete unchanged suite, 517 passed and nine ignored."
+    }
+  },
+  "bridge_split_probe": {
+    "status": "complete_split_not_adopted",
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-ffi-linkage-probe-v1/results.json",
+    "receipt_sha256": "a299876e9b34f05c36ff372561c5980023301f0434d40f6c2e7521f9aa8f04ad",
+    "inputs_unchanged": true,
+    "same_exported_symbols": true,
+    "scope": "Exploratory baseline multi-product build followed by dynamic-only FFI split build, current warm dependency cache. First invocation updates the changed runtime source; not a matched timing comparison. Compilation artifacts reveal whether splitting changes feature-graph work. No production script edits.",
+    "compiled_targets_by_step": {
+      "baseline": 20,
+      "dynamic": 16,
+      "cli-repeat": 22
+    },
+    "observed_feature_difference": "syn 3.0.6 full is enabled in the existing multi-product graph and absent from the FFI-only graph. FFI-only compiles 16 targets and the subsequent CLI/MCP build compiles 22 targets. These are not matched timing samples; the initial baseline also rebuilds changed runtime inputs.",
+    "decision": "Do not split the bridge into a separate cargo rustc invocation in the production pipeline; test artifact selection while retaining the existing multi-product package/feature graph."
+  },
+  "bridge_artifact_experiment": {
+    "status": "production_package_and_repeat_verified_app_cohorts_pending",
+    "controller": "tmp/loop16-ffi-artifact-comparison-v2.py",
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-ffi-artifact-comparison-v2/results.json",
+    "scope": "Four ABBA full production release Rust/binding pipeline runs with warm dependencies and only FFI cleaned before each; unchanged repeat per phase. Vary only FFI manifest cdylib+staticlib vs cdylib. Same package/feature selection; output-only Cargo JSON wrapper audits compiled/fresh targets. Original manifest restored in finally. Excludes fully cold workspace, Swift/package, transfers and whole CI.",
+    "adoption": "Retain cdylib-only default and remove exact obsolete archive paths after successful app-profile builds. Static archives remain available explicitly through cargo rustc --crate-type cdylib,staticlib. The comparison isolates manifest artifact selection before the stale-archive cleanup was added; The final package and its unchanged repeat both passed smoke and strict signature checks; absolute measurements are recorded separately below.",
+    "failed_warmup": {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-ffi-artifact-comparison-v1/results.json",
+      "error": "No space left on device writing FFI compiler object to this worktree Cargo target cache",
+      "original_manifest_restored": true,
+      "valid_comparison_samples": 0,
+      "guard_receipt": "fe4fd2c486d42dc20c3817e74ebc6353"
+    },
+    "receipt_sha256": "f05a83b6b1af40f24cda41aa840c994b3c4ee6fdcd392cad613736a02579a707",
+    "phases": [
+      {
+        "label": "A1",
+        "variant": "baseline",
+        "status": "complete",
+        "host_load_start": [
+          10.798828125,
+          11.05859375,
+          11.92529296875
+        ],
+        "rebuild": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 60.7,
+            "user_cpu_seconds": 84.854,
+            "system_cpu_seconds": 2.79,
+            "average_cpu_percent": 144.4,
+            "sampled_peak_tree_rss_bytes": 941932544,
+            "rss_samples": 59,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [
+            [
+              "aetower_ffi",
+              [
+                "cdylib",
+                "staticlib"
+              ],
+              [
+                "cdylib",
+                "staticlib"
+              ]
+            ]
+          ],
+          "artifacts": 314
+        },
+        "unchanged_repeat": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 1.624,
+            "user_cpu_seconds": 0.484,
+            "system_cpu_seconds": 0.308,
+            "average_cpu_percent": 48.7,
+            "sampled_peak_tree_rss_bytes": 2605056,
+            "rss_samples": 2,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [],
+          "artifacts": 314
+        },
+        "dylib_bytes": 11292056,
+        "dylib_sha256": "5be092b4ba4beefeceffcc9a41f3a5997ec73c2f00ccab860c1f20dabe8d097d",
+        "sections": {
+          "__TEXT,__text": {
+            "bytes": 8953004,
+            "sha256": "e54f39296b12bb1384823e66379bea6144bd281c2e0db1dd1cc2f2461aa007c4"
+          },
+          "__TEXT,__stubs": {
+            "bytes": 3000,
+            "sha256": "07b8b25dfe5ffc786345faa2f4c648ade2d5e695f007176ad4b2784287892bae"
+          },
+          "__TEXT,__stub_helper": {
+            "bytes": 3024,
+            "sha256": "d429e693e9fce94278b883467f5ff3efcc3a47bc72f9aa1ed1c84c15f8e50063"
+          },
+          "__TEXT,__cstring": {
+            "bytes": 71279,
+            "sha256": "4c01fef44c779fd7263b04340077f881eff6e5db7845a0715038d2134147f6c4"
+          },
+          "__TEXT,__gcc_except_tab": {
+            "bytes": 282864,
+            "sha256": "1349cf08c9009f8d86535be934928c2ece356a60181c2bc79f4867e2528e316e"
+          },
+          "__TEXT,__const": {
+            "bytes": 899400,
+            "sha256": "8d7681d1a58fb3692f24a35524c88b6a72b4f6c22750bf89d96437df1bf56009"
+          },
+          "__TEXT,__unwind_info": {
+            "bytes": 98912,
+            "sha256": "51d260e30baa82aa1b527256cf4ed889d86de38211caad9b17d59707e6a9d332"
+          },
+          "__TEXT,__eh_frame": {
+            "bytes": 576908,
+            "sha256": "780d0d7984f19bb2f705171846d73f984f02025f4700c9c8246292cfe3d318d4"
+          },
+          "__DATA_CONST,__const": {
+            "bytes": 187088,
+            "sha256": "70e12c7bc92d0268e34507ba9c4eb6e3fe9db59d7813b54fe8b8354ff9da1b67"
+          },
+          "__DATA_CONST,__got": {
+            "bytes": 80,
+            "sha256": "420979138761afd97b9afee3c0f2736ceb517bb2cff64ebcebfc3e8270a1776f"
+          },
+          "__DATA,__la_symbol_ptr": {
+            "bytes": 2000,
+            "sha256": "d40c5c46b057e7055381ea81e3085cef0b0b437ddb6180ad0300a9a8827a91ac"
+          },
+          "__DATA,__data": {
+            "bytes": 18432,
+            "sha256": "62e0aefd86eb2d4c3fb14a5259e7ac9d1e188c8ead064c2100c5be503d942114"
+          },
+          "__DATA,__thread_vars": {
+            "bytes": 312,
+            "sha256": "65e82d79861768538b8d6272d10666aaa57c777a050c864eb3e94c441b620068"
+          },
+          "__DATA,__thread_data": {
+            "bytes": 33,
+            "sha256": "a65da3a8c2866e0b7a3394aa55334eafefc46a0afe38987cb10a8ecbcc2fd419"
+          }
+        },
+        "exports_sha256": "455e4d7d0baaab3f6780273c596e38aca039768fd3647450679cf56100054433",
+        "static_archive_bytes": 24080992,
+        "bindings_and_cli_products_unchanged": true,
+        "host_load_end": [
+          10.5654296875,
+          11.14208984375,
+          11.90869140625
+        ]
+      },
+      {
+        "label": "B1",
+        "variant": "candidate",
+        "status": "complete",
+        "host_load_start": [
+          10.5654296875,
+          11.14208984375,
+          11.90869140625
+        ],
+        "rebuild": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 58.002,
+            "user_cpu_seconds": 88.711,
+            "system_cpu_seconds": 3.039,
+            "average_cpu_percent": 158.2,
+            "sampled_peak_tree_rss_bytes": 838598656,
+            "rss_samples": 57,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [
+            [
+              "aetower_ffi",
+              [
+                "cdylib"
+              ],
+              [
+                "cdylib"
+              ]
+            ]
+          ],
+          "artifacts": 314
+        },
+        "unchanged_repeat": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 1.912,
+            "user_cpu_seconds": 0.41,
+            "system_cpu_seconds": 0.245,
+            "average_cpu_percent": 34.3,
+            "sampled_peak_tree_rss_bytes": 2572288,
+            "rss_samples": 2,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [],
+          "artifacts": 314
+        },
+        "dylib_bytes": 11292056,
+        "dylib_sha256": "3b4708b7978f2ed5391369cf90f32e8d05e4772d96f7982cfb3186662bccb85b",
+        "sections": {
+          "__TEXT,__text": {
+            "bytes": 8953004,
+            "sha256": "dcfdd2823a9a35b15a9c2ebd2b6a7e315a05cc32fd3a95631c689a92d7adff30"
+          },
+          "__TEXT,__stubs": {
+            "bytes": 3000,
+            "sha256": "07b8b25dfe5ffc786345faa2f4c648ade2d5e695f007176ad4b2784287892bae"
+          },
+          "__TEXT,__stub_helper": {
+            "bytes": 3024,
+            "sha256": "d429e693e9fce94278b883467f5ff3efcc3a47bc72f9aa1ed1c84c15f8e50063"
+          },
+          "__TEXT,__cstring": {
+            "bytes": 71279,
+            "sha256": "4c01fef44c779fd7263b04340077f881eff6e5db7845a0715038d2134147f6c4"
+          },
+          "__TEXT,__gcc_except_tab": {
+            "bytes": 282864,
+            "sha256": "0bd287e08f0290858954bb6f65ab8ac384979dad0a059396da568ba771c1d847"
+          },
+          "__TEXT,__const": {
+            "bytes": 899400,
+            "sha256": "95d4fee018a5257aec9e329aeeb7dd93e9b77d282e375d8a68b2566be67836f1"
+          },
+          "__TEXT,__unwind_info": {
+            "bytes": 98912,
+            "sha256": "a0fdf50292d362a22223af656c39bfc7f4f193bc4611c7313f42adf9a20dcb6f"
+          },
+          "__TEXT,__eh_frame": {
+            "bytes": 576908,
+            "sha256": "2b2b1ffdf0ae43b69fdca26a94ef31cd6472696a1a97f0328b2954057562eac1"
+          },
+          "__DATA_CONST,__const": {
+            "bytes": 187088,
+            "sha256": "6a0738219bec12528e67419b6c9f9077409735590882d343fa14ba6b385e8a1a"
+          },
+          "__DATA_CONST,__got": {
+            "bytes": 80,
+            "sha256": "420979138761afd97b9afee3c0f2736ceb517bb2cff64ebcebfc3e8270a1776f"
+          },
+          "__DATA,__la_symbol_ptr": {
+            "bytes": 2000,
+            "sha256": "d40c5c46b057e7055381ea81e3085cef0b0b437ddb6180ad0300a9a8827a91ac"
+          },
+          "__DATA,__data": {
+            "bytes": 18432,
+            "sha256": "62e0aefd86eb2d4c3fb14a5259e7ac9d1e188c8ead064c2100c5be503d942114"
+          },
+          "__DATA,__thread_vars": {
+            "bytes": 312,
+            "sha256": "65e82d79861768538b8d6272d10666aaa57c777a050c864eb3e94c441b620068"
+          },
+          "__DATA,__thread_data": {
+            "bytes": 33,
+            "sha256": "a65da3a8c2866e0b7a3394aa55334eafefc46a0afe38987cb10a8ecbcc2fd419"
+          }
+        },
+        "exports_sha256": "455e4d7d0baaab3f6780273c596e38aca039768fd3647450679cf56100054433",
+        "static_archive_bytes": 0,
+        "bindings_and_cli_products_unchanged": true,
+        "host_load_end": [
+          12.40087890625,
+          11.4375,
+          11.95703125
+        ]
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "status": "complete",
+        "host_load_start": [
+          12.40087890625,
+          11.4375,
+          11.95703125
+        ],
+        "rebuild": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 47.118,
+            "user_cpu_seconds": 69.409,
+            "system_cpu_seconds": 1.871,
+            "average_cpu_percent": 151.3,
+            "sampled_peak_tree_rss_bytes": 894992384,
+            "rss_samples": 46,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [
+            [
+              "aetower_ffi",
+              [
+                "cdylib"
+              ],
+              [
+                "cdylib"
+              ]
+            ]
+          ],
+          "artifacts": 314
+        },
+        "unchanged_repeat": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 1.016,
+            "user_cpu_seconds": 0.344,
+            "system_cpu_seconds": 0.203,
+            "average_cpu_percent": 53.8,
+            "sampled_peak_tree_rss_bytes": 2408448,
+            "rss_samples": 1,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [],
+          "artifacts": 314
+        },
+        "dylib_bytes": 11292056,
+        "dylib_sha256": "3b4708b7978f2ed5391369cf90f32e8d05e4772d96f7982cfb3186662bccb85b",
+        "sections": {
+          "__TEXT,__text": {
+            "bytes": 8953004,
+            "sha256": "dcfdd2823a9a35b15a9c2ebd2b6a7e315a05cc32fd3a95631c689a92d7adff30"
+          },
+          "__TEXT,__stubs": {
+            "bytes": 3000,
+            "sha256": "07b8b25dfe5ffc786345faa2f4c648ade2d5e695f007176ad4b2784287892bae"
+          },
+          "__TEXT,__stub_helper": {
+            "bytes": 3024,
+            "sha256": "d429e693e9fce94278b883467f5ff3efcc3a47bc72f9aa1ed1c84c15f8e50063"
+          },
+          "__TEXT,__cstring": {
+            "bytes": 71279,
+            "sha256": "4c01fef44c779fd7263b04340077f881eff6e5db7845a0715038d2134147f6c4"
+          },
+          "__TEXT,__gcc_except_tab": {
+            "bytes": 282864,
+            "sha256": "0bd287e08f0290858954bb6f65ab8ac384979dad0a059396da568ba771c1d847"
+          },
+          "__TEXT,__const": {
+            "bytes": 899400,
+            "sha256": "95d4fee018a5257aec9e329aeeb7dd93e9b77d282e375d8a68b2566be67836f1"
+          },
+          "__TEXT,__unwind_info": {
+            "bytes": 98912,
+            "sha256": "a0fdf50292d362a22223af656c39bfc7f4f193bc4611c7313f42adf9a20dcb6f"
+          },
+          "__TEXT,__eh_frame": {
+            "bytes": 576908,
+            "sha256": "2b2b1ffdf0ae43b69fdca26a94ef31cd6472696a1a97f0328b2954057562eac1"
+          },
+          "__DATA_CONST,__const": {
+            "bytes": 187088,
+            "sha256": "6a0738219bec12528e67419b6c9f9077409735590882d343fa14ba6b385e8a1a"
+          },
+          "__DATA_CONST,__got": {
+            "bytes": 80,
+            "sha256": "420979138761afd97b9afee3c0f2736ceb517bb2cff64ebcebfc3e8270a1776f"
+          },
+          "__DATA,__la_symbol_ptr": {
+            "bytes": 2000,
+            "sha256": "d40c5c46b057e7055381ea81e3085cef0b0b437ddb6180ad0300a9a8827a91ac"
+          },
+          "__DATA,__data": {
+            "bytes": 18432,
+            "sha256": "62e0aefd86eb2d4c3fb14a5259e7ac9d1e188c8ead064c2100c5be503d942114"
+          },
+          "__DATA,__thread_vars": {
+            "bytes": 312,
+            "sha256": "65e82d79861768538b8d6272d10666aaa57c777a050c864eb3e94c441b620068"
+          },
+          "__DATA,__thread_data": {
+            "bytes": 33,
+            "sha256": "a65da3a8c2866e0b7a3394aa55334eafefc46a0afe38987cb10a8ecbcc2fd419"
+          }
+        },
+        "exports_sha256": "455e4d7d0baaab3f6780273c596e38aca039768fd3647450679cf56100054433",
+        "static_archive_bytes": 0,
+        "bindings_and_cli_products_unchanged": true,
+        "host_load_end": [
+          8.775390625,
+          10.5849609375,
+          11.609375
+        ]
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "status": "complete",
+        "host_load_start": [
+          8.775390625,
+          10.5849609375,
+          11.609375
+        ],
+        "rebuild": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 45.554,
+            "user_cpu_seconds": 75.137,
+            "system_cpu_seconds": 1.865,
+            "average_cpu_percent": 169.0,
+            "sampled_peak_tree_rss_bytes": 941555712,
+            "rss_samples": 45,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [
+            [
+              "aetower_ffi",
+              [
+                "cdylib",
+                "staticlib"
+              ],
+              [
+                "cdylib",
+                "staticlib"
+              ]
+            ]
+          ],
+          "artifacts": 314
+        },
+        "unchanged_repeat": {
+          "cost": {
+            "command": [
+              "sh",
+              "/private/tmp/aetower-build-performance/scripts/build-rust.sh",
+              "--profile",
+              "release"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 1.087,
+            "user_cpu_seconds": 0.363,
+            "system_cpu_seconds": 0.229,
+            "average_cpu_percent": 54.4,
+            "sampled_peak_tree_rss_bytes": 25952256,
+            "rss_samples": 2,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "compiled": [],
+          "artifacts": 314
+        },
+        "dylib_bytes": 11292056,
+        "dylib_sha256": "5be092b4ba4beefeceffcc9a41f3a5997ec73c2f00ccab860c1f20dabe8d097d",
+        "sections": {
+          "__TEXT,__text": {
+            "bytes": 8953004,
+            "sha256": "e54f39296b12bb1384823e66379bea6144bd281c2e0db1dd1cc2f2461aa007c4"
+          },
+          "__TEXT,__stubs": {
+            "bytes": 3000,
+            "sha256": "07b8b25dfe5ffc786345faa2f4c648ade2d5e695f007176ad4b2784287892bae"
+          },
+          "__TEXT,__stub_helper": {
+            "bytes": 3024,
+            "sha256": "d429e693e9fce94278b883467f5ff3efcc3a47bc72f9aa1ed1c84c15f8e50063"
+          },
+          "__TEXT,__cstring": {
+            "bytes": 71279,
+            "sha256": "4c01fef44c779fd7263b04340077f881eff6e5db7845a0715038d2134147f6c4"
+          },
+          "__TEXT,__gcc_except_tab": {
+            "bytes": 282864,
+            "sha256": "1349cf08c9009f8d86535be934928c2ece356a60181c2bc79f4867e2528e316e"
+          },
+          "__TEXT,__const": {
+            "bytes": 899400,
+            "sha256": "8d7681d1a58fb3692f24a35524c88b6a72b4f6c22750bf89d96437df1bf56009"
+          },
+          "__TEXT,__unwind_info": {
+            "bytes": 98912,
+            "sha256": "51d260e30baa82aa1b527256cf4ed889d86de38211caad9b17d59707e6a9d332"
+          },
+          "__TEXT,__eh_frame": {
+            "bytes": 576908,
+            "sha256": "780d0d7984f19bb2f705171846d73f984f02025f4700c9c8246292cfe3d318d4"
+          },
+          "__DATA_CONST,__const": {
+            "bytes": 187088,
+            "sha256": "70e12c7bc92d0268e34507ba9c4eb6e3fe9db59d7813b54fe8b8354ff9da1b67"
+          },
+          "__DATA_CONST,__got": {
+            "bytes": 80,
+            "sha256": "420979138761afd97b9afee3c0f2736ceb517bb2cff64ebcebfc3e8270a1776f"
+          },
+          "__DATA,__la_symbol_ptr": {
+            "bytes": 2000,
+            "sha256": "d40c5c46b057e7055381ea81e3085cef0b0b437ddb6180ad0300a9a8827a91ac"
+          },
+          "__DATA,__data": {
+            "bytes": 18432,
+            "sha256": "62e0aefd86eb2d4c3fb14a5259e7ac9d1e188c8ead064c2100c5be503d942114"
+          },
+          "__DATA,__thread_vars": {
+            "bytes": 312,
+            "sha256": "65e82d79861768538b8d6272d10666aaa57c777a050c864eb3e94c441b620068"
+          },
+          "__DATA,__thread_data": {
+            "bytes": 33,
+            "sha256": "a65da3a8c2866e0b7a3394aa55334eafefc46a0afe38987cb10a8ecbcc2fd419"
+          }
+        },
+        "exports_sha256": "455e4d7d0baaab3f6780273c596e38aca039768fd3647450679cf56100054433",
+        "static_archive_bytes": 24080992,
+        "bindings_and_cli_products_unchanged": true,
+        "host_load_end": [
+          8.34765625,
+          10.23388671875,
+          11.42626953125
+        ]
+      }
+    ],
+    "means": {
+      "baseline": {
+        "rebuild": {
+          "wall_seconds": 53.127,
+          "cpu_seconds": 82.32300000000001,
+          "sampled_peak_tree_rss_bytes": 941744128
+        },
+        "unchanged_repeat": {
+          "wall_seconds": 1.3555000000000001,
+          "cpu_seconds": 0.692,
+          "sampled_peak_tree_rss_bytes": 14278656
+        }
+      },
+      "candidate": {
+        "rebuild": {
+          "wall_seconds": 52.56,
+          "cpu_seconds": 81.515,
+          "sampled_peak_tree_rss_bytes": 866795520
+        },
+        "unchanged_repeat": {
+          "wall_seconds": 1.464,
+          "cpu_seconds": 0.601,
+          "sampled_peak_tree_rss_bytes": 2490368
+        }
+      }
+    },
+    "rebuild_candidate_change_percent": {
+      "wall_seconds": -1.06725393867525,
+      "cpu_seconds": -0.9814997023918082,
+      "sampled_peak_tree_rss_bytes": -7.958489548447711
+    },
+    "verification": {
+      "same_exports": true,
+      "same_text_section": false,
+      "same_all_loadable_sections": false,
+      "inputs_unchanged": true,
+      "manifest_restored": true
+    },
+    "interpretation": "Two rebuilds per variant on a shared host, with substantial within-variant spread. CPU and wall means essentially flat; sampled peak tree RSS 7.96% lower. Avoid emitting a 24080992-byte static archive. Identical bindings/hashes/timestamps, CLI/MCP binaries and exports; dylib size equal but code sections differ. Do not claim identical machine code or a whole-CI/runtime improvement. Unchanged-repeat RSS is not interpretable with the one-second sampler.",
+    "post_default_validation": {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-dynamic-bridge-validation-v1/results.json",
+      "receipt_sha256": "4fd5b8f5376c345c8cdfc2e9acef979cefb1bf2dc3b2db874dd405164b39a3ee",
+      "exact_test_targets_preserved": 25,
+      "ffi_passed": 19,
+      "exact_ffi_cases_match": true,
+      "inputs_unchanged": true,
+      "pipeline_regressions_passed": 15,
+      "quality_guard": "passed",
+      "scope": "Compile both complete production test graphs under the dynamic-only manifest and compare the exact 25 logical executable targets to the successful 517-case workspace run. Execute the FFI tests with the same runtime workspace features; source implementation already passed all 517 cases. This is target/ABI regression validation, not a build-cost comparison.",
+      "production_stale_root_and_deps_release_archives_absent": true
+    },
+    "production_loadable_sections_match_measured_candidate": true,
+    "whole_app_limit": "The app pair combined this build-artifact change and the network source change. Higher reversed-cohort app counters cannot be attributed to either independently. Retained for its bounded compiler-memory/artifact result; no whole-app runtime gain claimed."
+  },
+  "owned_cargo_cache_relocation": {
+    "status": "complete",
+    "source": "/private/tmp/aetower-build-performance/rust/target",
+    "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/rust-production-target",
+    "original_available_bytes": 197677056,
+    "external_available_bytes": 440784887808,
+    "scope": "Relocate only the ignored Cargo-generated target cache belonging to this worktree. No application data or other sessions changed.",
+    "verified_files": 4536,
+    "verified_file_bytes": 1453941048,
+    "inventory_sha256": "f4958fbe1b59176aa6520fad79e2e0c1772d23108ee3fe7b2092baef53ce55fe",
+    "wall_seconds": 25.688439207995543,
+    "final_available_bytes": 1602547712,
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v1/results.json",
+    "receipt_sha256": "4f795b7a66327c580f1252846184ea70766b0f911159c705aa2dfafe56c9f77d",
+    "reuse_evidence": "The new comparison warm-up recompiles only FFI; copied runtime dependencies are reused."
+  },
+  "production_package": {
+    "command": [
+      "sh",
+      "scripts/package-macos.sh"
+    ],
+    "cwd": "/private/tmp/aetower-build-performance",
+    "exit_status": 0,
+    "wall_seconds": 180.973,
+    "user_cpu_seconds": 186.465,
+    "system_cpu_seconds": 9.308,
+    "average_cpu_percent": 108.2,
+    "sampled_peak_tree_rss_bytes": 2633367552,
+    "rss_samples": 177,
+    "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed",
+    "scope": "Absolute cost using existing compiler caches; jobs two; ad-hoc signing, no notarization/stapling; not an A/B build comparison."
+  },
+  "production_package_repeat": {
+    "command": [
+      "sh",
+      "scripts/package-macos.sh"
+    ],
+    "cwd": "/private/tmp/aetower-build-performance",
+    "exit_status": 0,
+    "wall_seconds": 11.017,
+    "user_cpu_seconds": 5.173,
+    "system_cpu_seconds": 2.695,
+    "average_cpu_percent": 71.4,
+    "sampled_peak_tree_rss_bytes": 538607616,
+    "rss_samples": 11,
+    "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed",
+    "scope": "Unchanged full package repeat with cache reuse; no Rust or Swift source compilation. Absolute cost; do not compare the first run percentage because compilation work differs.",
+    "guard_receipt": "93b162772c33a6c3e15c82069d665263",
+    "smoke_and_strict_signature_checks": "passed"
+  },
+  "retained_app_pair": {
+    "source_commit": "03650b0241f7ea5bc96d11e46997e2f320e90243",
+    "production_rust_diff_from_baseline": " rust/crates/aetower-ffi/Cargo.toml     |   2 +-\n rust/crates/aetower-history/src/lib.rs | 420 +++++++++++++++++++++++++++++----\n 2 files changed, 378 insertions(+), 44 deletions(-)\n",
+    "bindings_sha256": "ef9bef0300b0f7153cac17f3d7821782aaf7fe60e3cb120f1a1ecf7681d93cad",
+    "build_environment": {
+      "RUSTFLAGS": null,
+      "CARGO_ENCODED_RUSTFLAGS": null,
+      "CARGO_PROFILE_RELEASE_DEBUG": null,
+      "CARGO_PROFILE_RELEASE_LTO": null
+    },
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-baseline/Aetower.app",
+        "source": "7b613d8e2118 production Rust; bounded historical grouping before active-set sampling cache; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "d7ea0a021d62f295358f2ed911d049efb44da77e06c164f10e9b2946b9cecad6",
+        "rust_sha256": "5d10830681f2b023d30901da2746c090664c4b96beef5e20dc4d39b887cd65bc",
+        "rust_uuid": "5CC71201-CD6B-3411-B19B-E4900678853E",
+        "variant": "baseline",
+        "swift_executable_uuid": "711A34AD-B337-3212-B538-34351941CE01",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.9.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1080",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "8107507c4ce25635f3f264947a4091d619d46e04097787db32b63ca9ce32ee49"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-candidate/Aetower.app",
+        "source": "03650b0241f7 production Rust; remote-host allocation reuse and dynamic-only bridge default; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "3b08d73441d326599c1a44f06d7465cb7db144d1eaf275a1331874acad05e29b",
+        "rust_sha256": "6465d86548ae421bd669eb23f921132eb5bec7fd140581bfc305ea38f09ccefe",
+        "rust_uuid": "A4F449FA-44FB-3046-B237-17B272220A8D",
+        "variant": "candidate",
+        "swift_executable_uuid": "711A34AD-B337-3212-B538-34351941CE01",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.9.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1080",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "8107507c4ce25635f3f264947a4091d619d46e04097787db32b63ca9ce32ee49"
+      }
+    ],
+    "scope": "same production package with only baseline Rust dylib replaced, then ad-hoc re-signed; identical unsigned compiled Swift, metadata and other nonsignature payload files",
+    "common_file_count": 110,
+    "common_files_sha256": "f879da30715222dce62948418a363eca66d95608f60fb972522729a647c11f5c",
+    "baseline_library_retained_source": {
+      "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-candidate/Aetower.app",
+      "source": "7b613d8e2118 production Rust; bounded bitset grouping for dense graphs with disproportionate historical indices; common compiled Swift, metadata and other dependencies",
+      "executable_sha256": "1d7086cb86eff144de6f549f32d1dcd6a9612ebec62720ce8d579b63ce6cedb8",
+      "rust_sha256": "5d10830681f2b023d30901da2746c090664c4b96beef5e20dc4d39b887cd65bc",
+      "rust_uuid": "5CC71201-CD6B-3411-B19B-E4900678853E",
+      "variant": "candidate",
+      "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+      "info_plist": {
+        "CFBundleDisplayName": "Aetower",
+        "CFBundleExecutable": "Aetower",
+        "CFBundleIdentifier": "com.aetower.app",
+        "CFBundleIconFile": "Aetower",
+        "CFBundleName": "Aetower",
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": "0.9.0",
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "com.aetower.app.oauth",
+            "CFBundleURLSchemes": [
+              "aetower"
+            ]
+          }
+        ],
+        "CFBundleVersion": "1068",
+        "LSMinimumSystemVersion": "15.0",
+        "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+        "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+        "SUEnableAutomaticChecks": true
+      },
+      "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+    },
+    "common_swift_changed_since_prior_cohort": true,
+    "historical_comparison_limit": "Current common Swift source is unchanged, but its rebuilt image differs from previous cohorts. Compare only this matched pair; do not pool observations across different common Swift images."
+  },
+  "app_comparison": {
+    "status": "complete",
+    "controller_pid": 8125,
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-baseline/Aetower.app",
+        "source": "7b613d8e2118 production Rust; bounded historical grouping before active-set sampling cache; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "d7ea0a021d62f295358f2ed911d049efb44da77e06c164f10e9b2946b9cecad6",
+        "rust_sha256": "5d10830681f2b023d30901da2746c090664c4b96beef5e20dc4d39b887cd65bc",
+        "rust_uuid": "5CC71201-CD6B-3411-B19B-E4900678853E",
+        "variant": "baseline",
+        "swift_executable_uuid": "711A34AD-B337-3212-B538-34351941CE01",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.9.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1080",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "8107507c4ce25635f3f264947a4091d619d46e04097787db32b63ca9ce32ee49"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-candidate/Aetower.app",
+        "source": "03650b0241f7 production Rust; remote-host allocation reuse and dynamic-only bridge default; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "3b08d73441d326599c1a44f06d7465cb7db144d1eaf275a1331874acad05e29b",
+        "rust_sha256": "6465d86548ae421bd669eb23f921132eb5bec7fd140581bfc305ea38f09ccefe",
+        "rust_uuid": "A4F449FA-44FB-3046-B237-17B272220A8D",
+        "variant": "candidate",
+        "swift_executable_uuid": "711A34AD-B337-3212-B538-34351941CE01",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.9.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1080",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "8107507c4ce25635f3f264947a4091d619d46e04097787db32b63ca9ce32ee49"
+      }
+    ],
+    "configuration": {
+      "sequence": "ABBA",
+      "settle_seconds": 60,
+      "duration_seconds": 90,
+      "interval_seconds": 2,
+      "target_environment_keys": [
+        "HOME",
+        "LANG",
+        "LC_CTYPE",
+        "LOGNAME",
+        "PATH",
+        "TMPDIR",
+        "USER"
+      ],
+      "visibility": "retry startup hide within a bounded 30-second period until observed hidden; observe hidden status and zero normal onscreen windows every two seconds; invalidate on any observed change"
+    },
+    "retained_controller_sha256": {
+      "loop16-hidden-app-comparison-v3.py": "404a97507192ea532cb687ed9a6fae78b37104ae7bdf5566f0d842ed71b88d78",
+      "compare-runtime.py": "f9b6f0273539ee1acb3f8a0cf7e22a10ec128fb2943708b4d21dc0a183e619cd",
+      "measure-runtime.py": "eccac898ab323e7e46ab0b0a37d53c0e5c4a1007396e90b6c9f54a55b0945589",
+      "loop14-visibility-monitor.m": "860afd8e1981bfda5f2459cbfc1d1a7da8e310ada986633f191bef59ead6fbfa",
+      "loop14-visibility-monitor-objc": "d8bd911e29e326a18af3ced621bb1edddf132f46572ebfe3c29da006a77ae68f"
+    },
+    "scope": "app process counter deltas; common Swift, metadata and dependencies; existing app settings, no driven interaction, no builds or other benchmark workloads during sampling; hidden idle state only; shared host load remains uncontrolled; visibility checks are discrete samples; candidate combines network source and bridge artifact changes; home-volume free space checked against the history write reserve during monitoring; app-process CPU and wakeup counters exclude child processes; small shared-host cohort, no causal or general app-wide attribution",
+    "windows": [
+      {
+        "label": "A1",
+        "variant": "baseline",
+        "status": "complete",
+        "home_volume_free_bytes_samples": [
+          2046279680,
+          2046246912,
+          2046156800,
+          2046025728,
+          2046529536,
+          2046402560,
+          2046312448,
+          2046599168,
+          2035609600,
+          2036068352,
+          2036006912,
+          2035957760,
+          2035916800,
+          2044628992,
+          2062774272,
+          2062626816,
+          2062577664,
+          2062422016,
+          2061561856,
+          2062233600,
+          2061668352,
+          2061094912,
+          2061656064,
+          2061516800,
+          2061398016,
+          2061328384,
+          2061299712,
+          2061025280,
+          2061004800,
+          2060664832,
+          2060800000,
+          2060484608,
+          2060914688,
+          2061086720,
+          2061058048,
+          2061053952,
+          2060926976,
+          2060673024,
+          2060836864,
+          2060537856,
+          2060472320,
+          2071646208,
+          2071515136,
+          2071515136,
+          2071502848,
+          2071502848,
+          2070970368,
+          2070847488,
+          2072313856,
+          2073202688,
+          2072190976,
+          2071982080,
+          2070913024,
+          2070917120,
+          2068107264,
+          2067566592,
+          2067263488,
+          2067898368,
+          2067779584,
+          2067836928,
+          2066669568,
+          2066649088,
+          2042155008,
+          2042052608,
+          2041913344,
+          2041761792,
+          2041368576,
+          2041106432,
+          2041114624,
+          2040844288,
+          2040635392,
+          2040373248,
+          2040307712,
+          2040037376,
+          2040119296,
+          2039955456,
+          2039828480,
+          2039259136,
+          2039291904,
+          2043445248,
+          2042785792,
+          2041413632,
+          2043994112,
+          2041208832,
+          2041315328,
+          2034331648,
+          2022862848,
+          2018652160,
+          2018963456,
+          2018672640,
+          2018508800,
+          2017902592,
+          2017873920,
+          2017497088,
+          2017587200,
+          2016878592,
+          2016780288,
+          2016407552,
+          2015862784,
+          1993551872,
+          1972129792,
+          1971515392,
+          1971150848,
+          1971142656,
+          1947447296,
+          1945833472,
+          1945378816,
+          1937342464,
+          1936850944,
+          1928593408,
+          1928114176,
+          1919291392,
+          1919148032,
+          1918955520,
+          1918902272,
+          1918697472,
+          1918619648,
+          1918533632,
+          1918500864,
+          1918255104,
+          1918222336,
+          1918222336
+        ],
+        "pid": 8259,
+        "host_processes_start": 794,
+        "host_load_start": [
+          9.109375,
+          8.1279296875,
+          8.2626953125
+        ],
+        "wall_seconds": 90.00066995801171,
+        "samples": 46,
+        "user_time_seconds": 1.623668875,
+        "system_time_seconds": 0.954486959,
+        "average_cpu_percent": 2.864596269341989,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 411,
+        "interrupt_wakeups_per_second": 4.566632672753937,
+        "average_resident_size_bytes": 140682284.52173913,
+        "peak_resident_size_bytes": 327696384,
+        "average_phys_footprint_bytes": 123734479.47826087,
+        "peak_phys_footprint_bytes": 208503888,
+        "host_processes_end": 719,
+        "host_load_end": [
+          7.60009765625,
+          8.14208984375,
+          8.271484375
+        ],
+        "verified_hidden_samples": 75,
+        "visibility_last_elapsed_seconds": 149.47513366668136,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true,
+        "visibility_measurement_prefix_sha256": "fbfbd0bcc3427c1a4d96bcce4d17b0bf9b78e87ce1d63756a4138a09ec455326",
+        "visibility_measurement_prefix_observations": 75,
+        "visibility_final_file_sha256": "a0d91ecca1c21884b9b34506619faad1cceacb9d92d55d8545368c62eb37e209",
+        "visibility_total_observation_count": 76
+      },
+      {
+        "label": "B1",
+        "variant": "candidate",
+        "status": "complete",
+        "home_volume_free_bytes_samples": [
+          1833316352,
+          1833279488,
+          1833254912,
+          1832841216,
+          1833222144,
+          1833201664,
+          1833201664,
+          1833197568,
+          1822728192,
+          1821110272,
+          1821114368,
+          1820995584,
+          1820897280,
+          1820692480,
+          1820762112,
+          1820733440,
+          1820647424,
+          1820561408,
+          1820528640,
+          1821040640,
+          1820839936,
+          1820835840,
+          1820880896,
+          1821118464,
+          1821011968,
+          1821839360,
+          1822556160,
+          1822531584,
+          1822474240,
+          1822138368,
+          1822199808,
+          1822101504,
+          1822175232,
+          1821814784,
+          1821679616,
+          1821802496,
+          1821691904,
+          1821745152,
+          1821745152,
+          1840111616,
+          1840615424,
+          1840164864,
+          1825398784,
+          1825099776,
+          1824776192,
+          1824702464,
+          1824559104,
+          1820381184,
+          1820409856,
+          1824436224,
+          1824092160,
+          1824235520,
+          1822945280,
+          1822978048,
+          1814945792,
+          1823309824,
+          1823326208,
+          1823006720,
+          1823264768,
+          1823174656,
+          1823084544,
+          1822871552,
+          1822728192,
+          1820782592,
+          1820528640,
+          1820045312,
+          1817698304,
+          1817714688,
+          1817489408,
+          1817513984,
+          1817276416,
+          1813270528,
+          1816408064,
+          1815040000,
+          1814962176,
+          1808351232,
+          1807925248,
+          1807921152,
+          1812213760,
+          1811906560,
+          1811492864,
+          1811345408,
+          1807441920,
+          1806888960,
+          1808998400,
+          1808568320,
+          1808773120,
+          1808125952,
+          1808343040,
+          1808089088,
+          1807753216,
+          1807601664,
+          1807384576,
+          1807245312,
+          1807511552,
+          1806827520,
+          1806745600,
+          1806725120,
+          1806471168,
+          1806393344,
+          1805901824,
+          1803350016,
+          1802018816,
+          1799442432,
+          1799163904,
+          1797341184,
+          1796493312,
+          1760616448,
+          1659998208,
+          1642291200,
+          1641512960,
+          1641123840,
+          1640931328,
+          1644007424,
+          1644007424
+        ],
+        "pid": 41958,
+        "host_processes_start": 757,
+        "host_load_start": [
+          7.59521484375,
+          8.076171875,
+          8.23828125
+        ],
+        "wall_seconds": 90.00322741700802,
+        "samples": 46,
+        "user_time_seconds": 1.455792167,
+        "system_time_seconds": 0.858443959,
+        "average_cpu_percent": 2.5712812667011935,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 400,
+        "interrupt_wakeups_per_second": 4.444285071541906,
+        "average_resident_size_bytes": 148779542.26086956,
+        "peak_resident_size_bytes": 329629696,
+        "average_phys_footprint_bytes": 113648701.2173913,
+        "peak_phys_footprint_bytes": 156468376,
+        "host_processes_end": 807,
+        "host_load_end": [
+          7.919921875,
+          8.0107421875,
+          8.18994140625
+        ],
+        "verified_hidden_samples": 75,
+        "visibility_last_elapsed_seconds": 149.45140066667227,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true,
+        "visibility_measurement_prefix_sha256": "fae40b1a9b7e74540c38fa5c8f1a8d6711be732c9279669b8de135a35ad0e2ac",
+        "visibility_measurement_prefix_observations": 75,
+        "visibility_final_file_sha256": "3db8a017e092adc2929ef087520dfb2955097fab3b0e5a1ab2fe9b801e168f4b",
+        "visibility_total_observation_count": 76
+      },
+      {
+        "label": "B2",
+        "variant": "candidate",
+        "status": "complete",
+        "home_volume_free_bytes_samples": [
+          1639829504,
+          1639768064,
+          1639706624,
+          1639645184,
+          1639694336,
+          1639645184,
+          1638199296,
+          1630801920,
+          1626546176,
+          1626476544,
+          1626427392,
+          1629396992,
+          1629388800,
+          1629339648,
+          1629278208,
+          1629310976,
+          1629245440,
+          1629065216,
+          1629048832,
+          1629048832,
+          1629048832,
+          1629151232,
+          1629118464,
+          1629097984,
+          1629057024,
+          1771692032,
+          1779810304,
+          1779810304,
+          1778237440,
+          1777467392,
+          1777266688,
+          1777045504,
+          1777094656,
+          1777025024,
+          1776889856,
+          1776672768,
+          1776615424,
+          1776553984,
+          1777659904,
+          1777659904,
+          1787785216,
+          1787502592,
+          1789902848,
+          1786478592,
+          1781669888,
+          1788903424,
+          1788526592,
+          1788342272,
+          1787727872,
+          1787301888,
+          1787039744,
+          1785327616,
+          1785151488,
+          1768886272,
+          1752195072,
+          1752125440,
+          1751470080,
+          1752035328,
+          1754169344,
+          1752940544,
+          1752100864,
+          1751572480,
+          1754075136,
+          1753780224,
+          1753333760,
+          1753542656,
+          1753432064,
+          1752944640,
+          1752838144,
+          1752436736,
+          1752440832,
+          1752027136,
+          1750011904,
+          1749729280,
+          1747513344,
+          1748996096,
+          1749061632,
+          1748533248,
+          1749544960,
+          1747316736,
+          1748008960,
+          1747525632,
+          1746706432,
+          1745948672,
+          1746452480,
+          1747361792,
+          1747034112,
+          1746935808,
+          1723662336,
+          1723768832,
+          1722908672,
+          1722327040,
+          1721667584,
+          1720274944,
+          1719373824,
+          1720750080,
+          1720897536,
+          1719238656,
+          1721319424,
+          1719660544,
+          1720365056,
+          1720315904,
+          1716084736,
+          1715249152,
+          1715888128,
+          1716346880,
+          1716023296,
+          1715499008,
+          1690583040,
+          1692262400,
+          1680629760,
+          1663442944,
+          1664745472,
+          1662488576,
+          1659895808,
+          1659895808
+        ],
+        "pid": 64984,
+        "host_processes_start": 785,
+        "host_load_start": [
+          7.09912109375,
+          7.83447265625,
+          8.11328125
+        ],
+        "wall_seconds": 90.0088852919871,
+        "samples": 46,
+        "user_time_seconds": 1.965221417,
+        "system_time_seconds": 1.309416,
+        "average_cpu_percent": 3.6381268431190312,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 452,
+        "interrupt_wakeups_per_second": 5.0217264499356995,
+        "average_resident_size_bytes": 141753299.47826087,
+        "peak_resident_size_bytes": 319864832,
+        "average_phys_footprint_bytes": 119331108.69565217,
+        "peak_phys_footprint_bytes": 179406000,
+        "host_processes_end": 794,
+        "host_load_end": [
+          9.0791015625,
+          8.27099609375,
+          8.24658203125
+        ],
+        "verified_hidden_samples": 75,
+        "visibility_last_elapsed_seconds": 149.42789512500167,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true,
+        "visibility_measurement_prefix_sha256": "1333689e26ee1eea02bd4004486767c33114d4cde016fba53b485dcd72c51599",
+        "visibility_measurement_prefix_observations": 75,
+        "visibility_final_file_sha256": "c908412b13a3e084ae3eb0074bedbb6b6358a4f8f72178f36e538780367a4734",
+        "visibility_total_observation_count": 76
+      },
+      {
+        "label": "A2",
+        "variant": "baseline",
+        "status": "complete",
+        "home_volume_free_bytes_samples": [
+          1661382656,
+          1661530112,
+          1662300160,
+          1662009344,
+          1662009344,
+          1661997056,
+          1661927424,
+          1661026304,
+          1649348608,
+          1649262592,
+          1649319936,
+          1649266688,
+          1649225728,
+          1649209344,
+          1649209344,
+          1649209344,
+          1649205248,
+          1649020928,
+          1649000448,
+          1649000448,
+          1649111040,
+          1649111040,
+          1649111040,
+          1649098752,
+          1649074176,
+          1649143808,
+          1649143808,
+          1649029120,
+          1648873472,
+          1648766976,
+          1648857088,
+          1648816128,
+          1648873472,
+          1648824320,
+          1648807936,
+          1648807936,
+          1662062592,
+          1661767680,
+          1661575168,
+          1660727296,
+          1661620224,
+          1661632512,
+          1669185536,
+          1670103040,
+          1670152192,
+          1671102464,
+          1669869568,
+          1669099520,
+          1670225920,
+          1670299648,
+          1669758976,
+          1669931008,
+          1669365760,
+          1669505024,
+          1668448256,
+          1668091904,
+          1667313664,
+          1669001216,
+          1668685824,
+          1667223552,
+          1665736704,
+          1667039232,
+          1667891200,
+          1666322432,
+          1664086016,
+          1665130496,
+          1662509056,
+          1661538304,
+          1659326464,
+          1661333504,
+          1662488576,
+          1662689280,
+          1659269120,
+          1662459904,
+          1661218816,
+          1660674048,
+          1661640704,
+          1642897408,
+          1636368384,
+          1636290560,
+          1635934208,
+          1635717120,
+          1635241984,
+          1639747584,
+          1639833600,
+          1639743488,
+          1639546880,
+          1634738176,
+          1635184640,
+          1638780928,
+          1638764544,
+          1638682624,
+          1638072320,
+          1638064128,
+          1637412864,
+          1636659200,
+          1636241408,
+          1635405824,
+          1636044800,
+          1635831808,
+          1636044800,
+          1635762176,
+          1635180544,
+          1634791424,
+          1634287616,
+          1634009088,
+          1633718272,
+          1634701312,
+          1634496512,
+          1634516992,
+          1634455552,
+          1634455552
+        ],
+        "pid": 96752,
+        "host_processes_start": 811,
+        "host_load_start": [
+          8.11279296875,
+          8.17529296875,
+          8.21240234375
+        ],
+        "wall_seconds": 90.00361879100092,
+        "samples": 46,
+        "user_time_seconds": 1.845306667,
+        "system_time_seconds": 1.167911584,
+        "average_cpu_percent": 3.3478856644609483,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 477,
+        "interrupt_wakeups_per_second": 5.299786901987248,
+        "average_resident_size_bytes": 167027756.52173913,
+        "peak_resident_size_bytes": 333856768,
+        "average_phys_footprint_bytes": 118918294.26086956,
+        "peak_phys_footprint_bytes": 164283544,
+        "host_processes_end": 810,
+        "host_load_end": [
+          7.140625,
+          8.12109375,
+          8.20751953125
+        ],
+        "verified_hidden_samples": 75,
+        "visibility_last_elapsed_seconds": 149.57080350001343,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true,
+        "visibility_measurement_prefix_sha256": "22d888fd40eabe8a61cbe07dddf0c6c13796c4eedac7d53029bbc00ead265187",
+        "visibility_measurement_prefix_observations": 75,
+        "visibility_final_file_sha256": "2e9597aa09702e9c9162e89c464d3eb9849a36ef4d2b68c91011910d17caddab",
+        "visibility_total_observation_count": 76
+      }
+    ],
+    "means": {
+      "baseline": {
+        "average_cpu_percent": 3.106240966901469,
+        "average_phys_footprint_bytes": 121326386.86956522,
+        "interrupt_wakeups_per_second": 4.9332097873705925
+      },
+      "candidate": {
+        "average_cpu_percent": 3.1047040549101124,
+        "average_phys_footprint_bytes": 116489904.95652173,
+        "interrupt_wakeups_per_second": 4.733005760738803
+      }
+    },
+    "candidate_change_percent": {
+      "average_cpu_percent": -0.04947819592018288,
+      "average_phys_footprint_bytes": -3.986339689026641,
+      "interrupt_wakeups_per_second": -4.0582913612214
+    },
+    "raw_controller_summary_sha256": "e384ecb9ea310e7911f009ecb7b4c6707654ee4d2664eac53230bc7e3cc7116a",
+    "derived_verification": "Counter summaries recomputed from raw samples; all visibility observations checked; measurement-end visibility prefix and final file hashes independently verified; both loaded images and bundled paths rechecked.",
+    "excluded_setup_attempts": [],
+    "interpretation": "First fresh ABBA cohort only: CPU essentially flat, physical footprint and interrupt wakeups about four percent lower. Small shared-host cohort with substantial per-window variation; reversed BAAB is still running and no final whole-app conclusion is established.",
+    "follow_up": {
+      "status": "complete",
+      "controller_pid": 22252,
+      "apps": [
+        {
+          "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-baseline/Aetower.app",
+          "source": "7b613d8e2118 production Rust; bounded historical grouping before active-set sampling cache; common compiled Swift, metadata and other dependencies",
+          "executable_sha256": "d7ea0a021d62f295358f2ed911d049efb44da77e06c164f10e9b2946b9cecad6",
+          "rust_sha256": "5d10830681f2b023d30901da2746c090664c4b96beef5e20dc4d39b887cd65bc",
+          "rust_uuid": "5CC71201-CD6B-3411-B19B-E4900678853E",
+          "variant": "baseline",
+          "swift_executable_uuid": "711A34AD-B337-3212-B538-34351941CE01",
+          "info_plist": {
+            "CFBundleDisplayName": "Aetower",
+            "CFBundleExecutable": "Aetower",
+            "CFBundleIdentifier": "com.aetower.app",
+            "CFBundleIconFile": "Aetower",
+            "CFBundleName": "Aetower",
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "0.9.0",
+            "CFBundleURLTypes": [
+              {
+                "CFBundleURLName": "com.aetower.app.oauth",
+                "CFBundleURLSchemes": [
+                  "aetower"
+                ]
+              }
+            ],
+            "CFBundleVersion": "1080",
+            "LSMinimumSystemVersion": "15.0",
+            "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+            "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+            "SUEnableAutomaticChecks": true
+          },
+          "unsigned_swift_executable_sha256": "8107507c4ce25635f3f264947a4091d619d46e04097787db32b63ca9ce32ee49"
+        },
+        {
+          "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-candidate/Aetower.app",
+          "source": "03650b0241f7 production Rust; remote-host allocation reuse and dynamic-only bridge default; common compiled Swift, metadata and other dependencies",
+          "executable_sha256": "3b08d73441d326599c1a44f06d7465cb7db144d1eaf275a1331874acad05e29b",
+          "rust_sha256": "6465d86548ae421bd669eb23f921132eb5bec7fd140581bfc305ea38f09ccefe",
+          "rust_uuid": "A4F449FA-44FB-3046-B237-17B272220A8D",
+          "variant": "candidate",
+          "swift_executable_uuid": "711A34AD-B337-3212-B538-34351941CE01",
+          "info_plist": {
+            "CFBundleDisplayName": "Aetower",
+            "CFBundleExecutable": "Aetower",
+            "CFBundleIdentifier": "com.aetower.app",
+            "CFBundleIconFile": "Aetower",
+            "CFBundleName": "Aetower",
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "0.9.0",
+            "CFBundleURLTypes": [
+              {
+                "CFBundleURLName": "com.aetower.app.oauth",
+                "CFBundleURLSchemes": [
+                  "aetower"
+                ]
+              }
+            ],
+            "CFBundleVersion": "1080",
+            "LSMinimumSystemVersion": "15.0",
+            "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+            "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+            "SUEnableAutomaticChecks": true
+          },
+          "unsigned_swift_executable_sha256": "8107507c4ce25635f3f264947a4091d619d46e04097787db32b63ca9ce32ee49"
+        }
+      ],
+      "configuration": {
+        "sequence": "BAAB",
+        "settle_seconds": 60,
+        "duration_seconds": 90,
+        "interval_seconds": 2,
+        "target_environment_keys": [
+          "HOME",
+          "LANG",
+          "LC_CTYPE",
+          "LOGNAME",
+          "PATH",
+          "TMPDIR",
+          "USER"
+        ],
+        "visibility": "retry startup hide within a bounded 30-second period until observed hidden; observe hidden status and zero normal onscreen windows every two seconds; invalidate on any observed change"
+      },
+      "retained_controller_sha256": {
+        "loop16-hidden-app-comparison-v4.py": "b5efae44e8231b937d597327547ebed48ce03f745a169e183163bd005c41a18f",
+        "compare-runtime.py": "f9b6f0273539ee1acb3f8a0cf7e22a10ec128fb2943708b4d21dc0a183e619cd",
+        "measure-runtime.py": "eccac898ab323e7e46ab0b0a37d53c0e5c4a1007396e90b6c9f54a55b0945589",
+        "loop14-visibility-monitor.m": "860afd8e1981bfda5f2459cbfc1d1a7da8e310ada986633f191bef59ead6fbfa",
+        "loop14-visibility-monitor-objc": "d8bd911e29e326a18af3ced621bb1edddf132f46572ebfe3c29da006a77ae68f"
+      },
+      "scope": "app process counter deltas; common Swift, metadata and dependencies; existing app settings, no driven interaction, no builds or other benchmark workloads during sampling; hidden idle state only; shared host load remains uncontrolled; visibility checks are discrete samples; candidate combines network source and bridge artifact changes; home-volume free space checked against the history write reserve during monitoring; app-process CPU and wakeup counters exclude child processes; small shared-host cohort, no causal or general app-wide attribution",
+      "windows": [
+        {
+          "label": "B1",
+          "variant": "candidate",
+          "status": "complete",
+          "home_volume_free_bytes_samples": [
+            1632382976,
+            1632391168,
+            1632391168,
+            1632309248,
+            1632305152,
+            1632296960,
+            1632288768,
+            1632288768,
+            1632243712,
+            1629306880,
+            1621262336,
+            1621241856,
+            1621233664,
+            1621213184,
+            1621172224,
+            1620795392,
+            1620791296,
+            1621143552,
+            1621143552,
+            1620955136,
+            1620955136,
+            1620946944,
+            1620865024,
+            1621041152,
+            1621041152,
+            1621041152,
+            1621041152,
+            1621504000,
+            1621504000,
+            1621504000,
+            1621426176,
+            1621102592,
+            1621164032,
+            1621131264,
+            1621192704,
+            1621245952,
+            1621229568,
+            1621229568,
+            1621229568,
+            1621221376,
+            1621221376,
+            1631936512,
+            1631764480,
+            1631367168,
+            1630986240,
+            1630969856,
+            1626439680,
+            1626329088,
+            1626210304,
+            1625849856,
+            1625972736,
+            1625853952,
+            1625858048,
+            1626148864,
+            1625915392,
+            1625559040,
+            1625423872,
+            1624068096,
+            1623691264,
+            1623367680,
+            1613377536,
+            1613070336,
+            1674493952,
+            1674223616,
+            1674022912,
+            1674027008,
+            1673785344,
+            1671831552,
+            1671725056,
+            1671548928,
+            1671258112,
+            1670991872,
+            1670156288,
+            1670635520,
+            1670574080,
+            1670045696,
+            1670090752,
+            1669242880,
+            1669283840,
+            1669181440,
+            1668841472,
+            1669173248,
+            1666727936,
+            1668943872,
+            1668685824,
+            1668419584,
+            1668173824,
+            1666179072,
+            1667956736,
+            1668104192,
+            1667686400,
+            1667383296,
+            1667211264,
+            1667256320,
+            1667293184,
+            1667108864,
+            1666748416,
+            1666961408,
+            1666682880,
+            1666514944,
+            1666621440,
+            1666502656,
+            1666486272,
+            1666199552,
+            1659899904,
+            1650286592,
+            1654136832,
+            1657450496,
+            1669173248,
+            1668550656,
+            1668689920,
+            1668534272,
+            1668730880,
+            1668575232,
+            1666359296,
+            1666928640,
+            1666949120
+          ],
+          "pid": 22289,
+          "host_processes_start": 818,
+          "host_load_start": [
+            7.22900390625,
+            8.25830078125,
+            8.27294921875
+          ],
+          "wall_seconds": 90.00142887499533,
+          "samples": 46,
+          "user_time_seconds": 1.862966458,
+          "system_time_seconds": 1.263956,
+          "average_cpu_percent": 3.474303127279281,
+          "pkg_idle_wakeups": 0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "interrupt_wakeups": 477,
+          "interrupt_wakeups_per_second": 5.299915856475059,
+          "average_resident_size_bytes": 139658284.52173913,
+          "peak_resident_size_bytes": 163954688,
+          "average_phys_footprint_bytes": 126219147.13043478,
+          "peak_phys_footprint_bytes": 181503128,
+          "host_processes_end": 806,
+          "host_load_end": [
+            6.52783203125,
+            7.72216796875,
+            8.05810546875
+          ],
+          "verified_hidden_samples": 75,
+          "visibility_last_elapsed_seconds": 149.36329999999725,
+          "loaded_rust_image_verified": true,
+          "loaded_swift_image_verified": true,
+          "visibility_measurement_prefix_sha256": "7084cb754907065a04bc21806f3cfc86e8710a2e0011683830e583b550fa88ec",
+          "visibility_measurement_prefix_observations": 75,
+          "visibility_final_file_sha256": "f29da21486f855627ce33735d38b3a6cdb436a2058d76a4f515e9a5607f26d81",
+          "visibility_total_observation_count": 76
+        },
+        {
+          "label": "A1",
+          "variant": "baseline",
+          "status": "complete",
+          "home_volume_free_bytes_samples": [
+            1639804928,
+            1634672640,
+            1633947648,
+            1632837632,
+            1632768000,
+            1632829440,
+            1632473088,
+            1632407552,
+            1621762048,
+            1621139456,
+            1620103168,
+            1619222528,
+            1618673664,
+            1618595840,
+            1618235392,
+            1618067456,
+            1616318464,
+            1615183872,
+            1614622720,
+            1614553088,
+            1613144064,
+            1611771904,
+            1611325440,
+            1611505664,
+            1611358208,
+            1607757824,
+            1607229440,
+            1607036928,
+            1606946816,
+            1605455872,
+            1607004160,
+            1606782976,
+            1602707456,
+            1602371584,
+            1600094208,
+            1598963712,
+            1598963712,
+            1598697472,
+            1586720768,
+            1583869952,
+            1578037248,
+            1572507648,
+            1570070528,
+            1570971648,
+            1569800192,
+            1570906112,
+            1569931264,
+            1565724672,
+            1565802496,
+            1543245824,
+            1542324224,
+            1542582272,
+            1542422528,
+            1541599232,
+            1540849664,
+            1540558848,
+            1530302464,
+            1525084160,
+            1523642368,
+            1521336320,
+            1522151424,
+            1523294208,
+            1522724864,
+            1523707904,
+            1522896896,
+            1523097600,
+            1522552832,
+            1511616512,
+            1502781440,
+            1501696000,
+            1488875520,
+            1466859520,
+            1466990592,
+            1466454016,
+            1466216448,
+            1440792576,
+            1426903040,
+            1429483520,
+            1428410368,
+            1428377600,
+            1427881984,
+            1427304448,
+            1426587648,
+            1400868864,
+            1400807424,
+            1399980032,
+            1398149120,
+            1399287808,
+            1399099392,
+            1399074816,
+            1398960128,
+            1398222848,
+            1398202368,
+            1397743616,
+            1397526528,
+            1397895168,
+            1397719040,
+            1397862400,
+            1397170176,
+            1396006912,
+            1395372032,
+            1393369088,
+            1391284224,
+            1393827840,
+            1394184192,
+            1393725440,
+            1384202240,
+            1370001408,
+            1370521600,
+            1370177536,
+            1369886720,
+            1369645056,
+            1369645056
+          ],
+          "pid": 45040,
+          "host_processes_start": 810,
+          "host_load_start": [
+            8.16064453125,
+            8.146484375,
+            8.2021484375
+          ],
+          "wall_seconds": 90.00089349999325,
+          "samples": 46,
+          "user_time_seconds": 1.519611167,
+          "system_time_seconds": 0.932702125,
+          "average_cpu_percent": 2.7247654958005323,
+          "pkg_idle_wakeups": 0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "interrupt_wakeups": 435,
+          "interrupt_wakeups_per_second": 4.833285349550809,
+          "average_resident_size_bytes": 157744439.6521739,
+          "peak_resident_size_bytes": 343998464,
+          "average_phys_footprint_bytes": 117009914.43478261,
+          "peak_phys_footprint_bytes": 165430424,
+          "host_processes_end": 815,
+          "host_load_end": [
+            4.47998046875,
+            6.8955078125,
+            7.70947265625
+          ],
+          "verified_hidden_samples": 75,
+          "visibility_last_elapsed_seconds": 149.3912127916701,
+          "loaded_rust_image_verified": true,
+          "loaded_swift_image_verified": true,
+          "visibility_measurement_prefix_sha256": "d6e84e7493eb6f5b740989f510f1f0ba2e67403c5ab8659a0dd65762651a929c",
+          "visibility_measurement_prefix_observations": 75,
+          "visibility_final_file_sha256": "25c3d64f8b560c977373f3ddffee349f2b5af3a488bfa6624a618b163233ee8f",
+          "visibility_total_observation_count": 76
+        },
+        {
+          "label": "A2",
+          "variant": "baseline",
+          "status": "complete",
+          "home_volume_free_bytes_samples": [
+            1368834048,
+            1368674304,
+            1368608768,
+            1368608768,
+            1368580096,
+            1368580096,
+            1368551424,
+            1357959168,
+            1357684736,
+            1357680640,
+            1357504512,
+            1357496320,
+            1357496320,
+            1357271040,
+            1357271040,
+            1357541376,
+            1357615104,
+            1357647872,
+            1357623296,
+            1357623296,
+            1357623296,
+            1357619200,
+            1357619200,
+            1357619200,
+            1357430784,
+            1357385728,
+            1357488128,
+            1357467648,
+            1357606912,
+            1357529088,
+            1357430784,
+            1357418496,
+            1357414400,
+            1357369344,
+            1357369344,
+            1365671936,
+            1364877312,
+            1365086208,
+            1368440832,
+            1368104960,
+            1367957504,
+            1367252992,
+            1367359488,
+            1366863872,
+            1366736896,
+            1366323200,
+            1366253568,
+            1363189760,
+            1362882560,
+            1365098496,
+            1344745472,
+            1344380928,
+            1344004096,
+            1343877120,
+            1343590400,
+            1343221760,
+            1344225280,
+            1342689280,
+            1341775872,
+            1341603840,
+            1341476864,
+            1342795776,
+            1342496768,
+            1342341120,
+            1342197760,
+            1342222336,
+            1341677568,
+            1341825024,
+            1340805120,
+            1340149760,
+            1340805120,
+            1339883520,
+            1339756544,
+            1330958336,
+            1331101696,
+            1335132160,
+            1337237504,
+            1336905728,
+            1336537088,
+            1336061952,
+            1331834880,
+            1331609600,
+            1331081216,
+            1330794496,
+            1332326400,
+            1332125696,
+            1331851264,
+            1331871744,
+            1331847168,
+            1331773440,
+            1331712000,
+            1331384320,
+            1331326976,
+            1331453952,
+            1331187712,
+            1331220480,
+            1330950144,
+            1330495488,
+            1330204672,
+            1329905664,
+            1329508352,
+            1329180672,
+            1329065984,
+            1329168384,
+            1328955392,
+            1328631808,
+            1328783360,
+            1328873472,
+            1328787456,
+            1328537600,
+            1328537600
+          ],
+          "pid": 78651,
+          "host_processes_start": 842,
+          "host_load_start": [
+            6.5068359375,
+            6.96044921875,
+            7.66796875
+          ],
+          "wall_seconds": 90.00343504201737,
+          "samples": 46,
+          "user_time_seconds": 1.562202,
+          "system_time_seconds": 0.984035542,
+          "average_cpu_percent": 2.829044847911982,
+          "pkg_idle_wakeups": 0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "interrupt_wakeups": 423,
+          "interrupt_wakeups_per_second": 4.699820621318796,
+          "average_resident_size_bytes": 171268363.13043478,
+          "peak_resident_size_bytes": 357531648,
+          "average_phys_footprint_bytes": 114568352.17391305,
+          "peak_phys_footprint_bytes": 174687432,
+          "host_processes_end": 823,
+          "host_load_end": [
+            6.0673828125,
+            6.7392578125,
+            7.51123046875
+          ],
+          "verified_hidden_samples": 75,
+          "visibility_last_elapsed_seconds": 149.38483774999622,
+          "loaded_rust_image_verified": true,
+          "loaded_swift_image_verified": true,
+          "visibility_measurement_prefix_sha256": "2b2df52e7ffd6c4a67651d74c4296da421502ba4a3c09dc06aee42bf43ca1e85",
+          "visibility_measurement_prefix_observations": 75,
+          "visibility_final_file_sha256": "84d9aa67fc0e79d65a7e30ab5d8771fcd7d5bf9e796ad1ac81ae22a02dfb5e74",
+          "visibility_total_observation_count": 76
+        },
+        {
+          "label": "B2",
+          "variant": "candidate",
+          "status": "complete",
+          "home_volume_free_bytes_samples": [
+            1328128000,
+            1328107520,
+            1328103424,
+            1328074752,
+            1327980544,
+            1327972352,
+            1327951872,
+            1327923200,
+            1316945920,
+            1316941824,
+            1316872192,
+            1316843520,
+            1316900864,
+            1316900864,
+            1316900864,
+            1316663296,
+            1316708352,
+            1316704256,
+            1316700160,
+            1316823040,
+            1316823040,
+            1316818944,
+            1316777984,
+            1316704256,
+            1316753408,
+            1316749312,
+            1316749312,
+            1316614144,
+            1316614144,
+            1317064704,
+            1317117952,
+            1317036032,
+            1317072896,
+            1317036032,
+            1316704256,
+            1315999744,
+            1315999744,
+            1303195648,
+            1306189824,
+            1284014080,
+            1283735552,
+            1283768320,
+            1283555328,
+            1280950272,
+            1280827392,
+            1278849024,
+            1281126400,
+            1275617280,
+            1278873600,
+            1278767104,
+            1278713856,
+            1278558208,
+            1278496768,
+            1282564096,
+            1281941504,
+            1280983040,
+            1281466368,
+            1281273856,
+            1279168512,
+            1279070208,
+            1278795776,
+            1279115264,
+            1279057920,
+            1278836736,
+            1277485056,
+            1277210624,
+            1276743680,
+            1276796928,
+            1275990016,
+            1275576320,
+            1275289600,
+            1274888192,
+            1274585088,
+            1274413056,
+            1274208256,
+            1273917440,
+            1272061952,
+            1272627200,
+            1251057664,
+            1250852864,
+            1250414592,
+            1247367168,
+            1247043584,
+            1249591296,
+            1249009664,
+            1246633984,
+            1246355456,
+            1248378880,
+            1248333824,
+            1248079872,
+            1245122560,
+            1244860416,
+            1241600000,
+            1241448448,
+            1241026560,
+            1243611136,
+            1242140672,
+            1241288704,
+            1242845184,
+            1245970432,
+            1244127232,
+            1243344896,
+            1245806592,
+            1246515200,
+            1247080448,
+            1246203904,
+            1246658560,
+            1242857472,
+            1242492928,
+            1241743360,
+            1240141824,
+            1241325568,
+            1241325568
+          ],
+          "pid": 99478,
+          "host_processes_start": 804,
+          "host_load_start": [
+            4.67529296875,
+            6.28173828125,
+            7.28564453125
+          ],
+          "wall_seconds": 90.00203833298292,
+          "samples": 46,
+          "user_time_seconds": 1.63584325,
+          "system_time_seconds": 1.061037459,
+          "average_cpu_percent": 2.996466256711075,
+          "pkg_idle_wakeups": 1,
+          "pkg_idle_wakeups_per_second": 0.011110859470763025,
+          "interrupt_wakeups": 432,
+          "interrupt_wakeups_per_second": 4.799891291369627,
+          "average_resident_size_bytes": 181499102.60869566,
+          "peak_resident_size_bytes": 358088704,
+          "average_phys_footprint_bytes": 127537346.7826087,
+          "peak_phys_footprint_bytes": 175752344,
+          "host_processes_end": 846,
+          "host_load_end": [
+            5.08203125,
+            6.01220703125,
+            7.07958984375
+          ],
+          "verified_hidden_samples": 75,
+          "visibility_last_elapsed_seconds": 149.3632585000014,
+          "loaded_rust_image_verified": true,
+          "loaded_swift_image_verified": true,
+          "visibility_measurement_prefix_sha256": "fb7093767c61b383c6a3042d4793fc824ebe590172553eaaee853f1d77319d1f",
+          "visibility_measurement_prefix_observations": 75,
+          "visibility_final_file_sha256": "2b0dcd6ab07b34a2e8f9a0d5240d600af1a578dd7abd90e83a6bbeb5e17799e4",
+          "visibility_total_observation_count": 76
+        }
+      ],
+      "means": {
+        "baseline": {
+          "average_cpu_percent": 2.7769051718562574,
+          "average_phys_footprint_bytes": 115789133.30434783,
+          "interrupt_wakeups_per_second": 4.766552985434803
+        },
+        "candidate": {
+          "average_cpu_percent": 3.235384691995178,
+          "average_phys_footprint_bytes": 126878246.95652175,
+          "interrupt_wakeups_per_second": 5.049903573922343
+        }
+      },
+      "candidate_change_percent": {
+        "average_cpu_percent": 16.51044928669436,
+        "average_phys_footprint_bytes": 9.576989943457438,
+        "interrupt_wakeups_per_second": 5.94455971334793
+      },
+      "raw_controller_summary_sha256": "b9c1bf03aa37ff4184c07ae38143855b221eb64dee9e19c369ab0bd9a187e335",
+      "derived_verification": "Counter summaries recomputed from raw samples; all visibility observations checked; measurement-end visibility prefix and final file hashes independently verified; both loaded images and bundled paths rechecked.",
+      "interpretation": "Reversed-order same-pair follow-up; retain separate initial cohort and unfavorable observations. Shared host and undriven inputs preclude causal/general app-wide attribution."
+    },
+    "combined_descriptive_summary": {
+      "window_count": 8,
+      "windows_per_variant": 4,
+      "means": {
+        "baseline": {
+          "average_cpu_percent": 2.9415730693788626,
+          "average_phys_footprint_bytes": 118557760.08695653,
+          "interrupt_wakeups_per_second": 4.849881386402697
+        },
+        "candidate": {
+          "average_cpu_percent": 3.170044373452645,
+          "average_phys_footprint_bytes": 121684075.95652173,
+          "interrupt_wakeups_per_second": 4.8914546673305725
+        }
+      },
+      "candidate_change_percent": {
+        "average_cpu_percent": 7.766977011454146,
+        "average_phys_footprint_bytes": 2.6369559169068246,
+        "interrupt_wakeups_per_second": 0.8572020141447423
+      },
+      "scope": "Eight completed windows from the same pair and common Swift; descriptive aggregation only. Shared host and undriven live inputs preclude causal/general app-wide attribution. The first excluded v1 attempt is not pooled."
+    }
+  },
+  "app_capture_retry": {
+    "excluded_attempt": "measurements/loop16-hidden-runtime-v1/summary.json",
+    "excluded_reason": "A1/B1/B2 completed, A2 failed the predetermined 512 MiB home-volume reserve; no balanced cohort means used.",
+    "skipped_attempt": "measurements/loop16-hidden-runtime-v2 was never started because v1 failed.",
+    "fresh_rounds": [
+      "measurements/loop16-hidden-runtime-v3",
+      "measurements/loop16-hidden-runtime-v4"
+    ],
+    "artifact_reuse": "Both fresh rounds use retained/loop16-pair.json; no rebuild or visibility/reserve guard changes.",
+    "cache_headroom": "retained/loop16-owned-cache-relocation-v2/results.json",
+    "gate": "Both fresh current rounds must reach terminal completion; no build or benchmark overlap.",
+    "excluded_windows": [
+      {
+        "label": "A1",
+        "status": "complete",
+        "minimum_home_volume_free_bytes": 724324352
+      },
+      {
+        "label": "B1",
+        "status": "complete",
+        "minimum_home_volume_free_bytes": 558129152
+      },
+      {
+        "label": "B2",
+        "status": "complete",
+        "minimum_home_volume_free_bytes": 539680768
+      },
+      {
+        "label": "A2",
+        "status": "failed",
+        "minimum_home_volume_free_bytes": 527900672
+      }
+    ]
+  },
+  "owned_additional_cache_relocation": {
+    "status": "complete",
+    "free_before_bytes": 1632378880,
+    "paths": [
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/clang-module-cache",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/clang-module-cache",
+        "files": 208,
+        "file_bytes": 158255695,
+        "inventory_sha256": "b016dd1af7095efe5b8cf8c3c3541a1d0572473a876d5b71beb761296cef8491"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/bridge-fixture/macos/.build",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/bridge-fixture/macos/.build",
+        "files": 1588,
+        "file_bytes": 112027212,
+        "inventory_sha256": "e21baa58919513c0051c9ec7bc9397ad493a74539273495633b164e34eae21d0"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/bridge-direct-fixture/macos/.build",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/bridge-direct-fixture/macos/.build",
+        "files": 166,
+        "file_bytes": 20325505,
+        "inventory_sha256": "4603a020e768876b74b998cc7201dd51748fffebef0f8d6eac04a338e42421e0"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/macos/.build",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/loop7-swift-cache-fixture/macos/.build",
+        "files": 68,
+        "file_bytes": 17522579,
+        "inventory_sha256": "12eb05a02d6d2b847f79de2b2381b0c32b4856d873c54ce67fe4978ee0857df5"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/retained cache with spaces",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/loop7-swift-cache-fixture/retained cache with spaces",
+        "files": 68,
+        "file_bytes": 17534035,
+        "inventory_sha256": "5a96a0f5a3be0481f50588b3ced5aa78d606b05b83467323b82d26a8b5666fa0"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/loop9-thread-fixture-v3/cache",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/loop9-thread-fixture-v3/cache",
+        "files": 82,
+        "file_bytes": 32441389,
+        "inventory_sha256": "32d16607863960ee07211a314816826fa94e000488ecdbc6eaebcad743482ebe"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/loop9-thread-fixture-v2/cache",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/loop9-thread-fixture-v2/cache",
+        "files": 79,
+        "file_bytes": 16898073,
+        "inventory_sha256": "dcbc6b5e0ced17da4e760f737df6b0cc99031f9946f6cd1b78b2abbec2c9fb79"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/loop9-thread-fixture/cache",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/loop9-thread-fixture/cache",
+        "files": 79,
+        "file_bytes": 16882805,
+        "inventory_sha256": "c771d4795728b6743394a51e48f85122578ce1e571629889c04a5cddbe6b2882"
+      },
+      {
+        "source": "/private/tmp/aetower-build-performance/tmp/custom swift scratch",
+        "destination": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop16-owned-cache-relocation-v2/caches/custom swift scratch",
+        "files": 82,
+        "file_bytes": 16699094,
+        "inventory_sha256": "6c1d3d3e0f7e6c371d5b2a529c8d00e99f073d073871f056589165b55b49bdc9"
+      }
+    ],
+    "free_after_bytes": 2049105920,
+    "wall_seconds": 3.621656500006793
+  }
+}
