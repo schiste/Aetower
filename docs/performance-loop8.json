@@ -1,6 +1,6 @@
 {
   "runtime_source_commit": "e3440f725848",
-  "status": "decoder_fixture_verified; production package and app comparison pending",
+  "status": "1 of four app windows verified; comparison incomplete",
   "decoder_benchmark": {
     "scope": "actual generated full entity sequence decoding plus equality checks; identical serialized payload; no app state or collection; no app-wide claim",
     "rss_scope": "macOS wait4 maximum resident set size for each benchmark child, in bytes; not tree RSS or app footprint",
@@ -285,5 +285,197 @@
     "git diff --check"
   ],
   "generated_bindings_sha256": "a1a95eab9c4c4b8e18b675a5445aeac04753ae48af6db459755e8d4c1e940f26",
-  "scope": "fixture savings only; all decoded values and reserialized bytes match; slightly higher mean maximum fixture RSS; no app-wide performance claim"
+  "scope": "fixture savings only; all decoded values and reserialized bytes match; slightly higher mean maximum fixture RSS; no app-wide performance claim",
+  "production_package_builds": {
+    "first_after_release_tests": {
+      "command": [
+        "sh",
+        "scripts/package-macos.sh"
+      ],
+      "cwd": "/private/tmp/aetower-build-performance",
+      "exit_status": 0,
+      "wall_seconds": 371.487,
+      "user_cpu_seconds": 320.225,
+      "system_cpu_seconds": 21.015,
+      "average_cpu_percent": 91.9,
+      "sampled_peak_tree_rss_bytes": 2266857472,
+      "rss_samples": 357,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    },
+    "unchanged_repeat": {
+      "command": [
+        "sh",
+        "scripts/package-macos.sh"
+      ],
+      "cwd": "/private/tmp/aetower-build-performance",
+      "exit_status": 0,
+      "wall_seconds": 17.418,
+      "user_cpu_seconds": 6.478,
+      "system_cpu_seconds": 2.439,
+      "average_cpu_percent": 51.2,
+      "sampled_peak_tree_rss_bytes": 323731456,
+      "rss_samples": 17,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    }
+  },
+  "production_build_configuration": {
+    "runtime_roots": [
+      "aetower-mcp",
+      "aetower-cli",
+      "aetower-ffi"
+    ],
+    "profile": "release",
+    "package_jobs": 2,
+    "cargo_jobs": 2,
+    "rustc_wrapper": "",
+    "signing": "ad hoc",
+    "notarization": false,
+    "swift_scratch_directory": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/swift",
+    "scope": "first rebuild after testability switch, then unchanged repeat; absolute costs, not a matched speedup"
+  },
+  "build_request_evidence": {
+    "requests": [
+      {
+        "kind": "release-build",
+        "description": "ccca2fae7514f3acedaf42bab51f3a22.xcbuilddata",
+        "sha256": "e0a43baf8620a6262f94a41d8ebcfba762481072690442375b5f92147c195019",
+        "target": "ALL-EXCLUDING-TESTS",
+        "configuration": "Release",
+        "enable_testability": "unspecified"
+      },
+      {
+        "kind": "release-tests",
+        "description": "f367b4724d4435479478f73dda890efc.xcbuilddata",
+        "sha256": "a182ba4456a6a8d4d75ca6aa3ad9562f6f6dbf32b32280259b6924f01fbac128",
+        "target": "ALL-INCLUDING-TESTS",
+        "configuration": "Release",
+        "enable_testability": "YES"
+      }
+    ],
+    "synthesized_setting_differences": {
+      "ENABLE_TESTABILITY": [
+        null,
+        "YES"
+      ]
+    },
+    "packaging_live_frontend": {
+      "module": "AetowerUI",
+      "optimization": "-O",
+      "enable_testing": false,
+      "num_threads": 10
+    },
+    "scope": "same release configuration, different testability and target graph; explains why release tests are not an unchanged packaging-cache warmup; not proof of the earlier debug/release invalidation cause",
+    "package_job_budget": 2
+  },
+  "matched_pair": {
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-baseline/Aetower.app",
+        "source": "f41e21c11211 compiled Swift; legacy generated decoder; common production Rust, bundle metadata and dependencies",
+        "executable_sha256": "b79df6820060849c71911ead69475ae66cecde452a8e5e608a78b6620d437fe7",
+        "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+        "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+        "variant": "baseline",
+        "swift_executable_uuid": "1759DE74-CDF5-343C-B2A7-86BFBB776387"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-candidate/Aetower.app",
+        "source": "e3440f725848 compiled Swift; checked unaligned decoder; common production Rust, bundle metadata and dependencies",
+        "executable_sha256": "0fb017e1b75aeac9448207fbf259936e831d5a22298b58f55d282348af4c5367",
+        "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+        "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+        "variant": "candidate",
+        "swift_executable_uuid": "3581EE7C-7D5F-393B-9FE8-B883A47E8142"
+      }
+    ],
+    "common_file_count": 111,
+    "common_files_sha256": "c43771d68d0d04213355889ccc77908f0b8db658eb4d02f4e4a5b14a4c02a3ea",
+    "scope": "same production package with only its Swift executable replaced for baseline, then ad-hoc re-signed; identical non-signature payload files, Info.plist and Rust library",
+    "baseline_executable_retained_source": {
+      "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-candidate/Aetower.app",
+      "source": "f41e21c11211 FFI; common Swift/dependencies f41e21c11211; production MCP/CLI/FFI roots",
+      "executable_sha256": "99afc7a2b56c177e21f1365fb13438bec096be8f884d78e0792809f0a8f0cdad",
+      "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+      "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+      "swift_executable_uuid": "1759DE74-CDF5-343C-B2A7-86BFBB776387",
+      "loaded_bundled_rust_verified": true
+    }
+  },
+  "package_validation": [
+    "strict deep signature verification",
+    "bundle relocation check",
+    "static package smoke",
+    "identical nonsignature bundle files except Swift executable"
+  ],
+  "matched_app_comparison": {
+    "status": "running",
+    "controller_pid": 57629,
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-baseline/Aetower.app",
+        "source": "f41e21c11211 compiled Swift with legacy decoder; common production Rust, metadata and dependencies",
+        "executable_sha256": "b79df6820060849c71911ead69475ae66cecde452a8e5e608a78b6620d437fe7",
+        "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+        "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+        "variant": "baseline"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-candidate/Aetower.app",
+        "source": "e3440f725848 compiled Swift with checked unaligned decoder; common production Rust, metadata and dependencies",
+        "executable_sha256": "0fb017e1b75aeac9448207fbf259936e831d5a22298b58f55d282348af4c5367",
+        "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+        "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+        "variant": "candidate"
+      }
+    ],
+    "configuration": {
+      "sequence": "ABBA",
+      "settle_seconds": 60.0,
+      "duration_seconds": 90.0,
+      "interval_seconds": 2.0
+    },
+    "scope": "app-process counters; existing settings; no driven interaction; image inspection after sampling",
+    "windows": [
+      {
+        "label": "A1",
+        "variant": "baseline",
+        "status": "complete",
+        "pid": 57723,
+        "host_processes_start": 782,
+        "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+        "host_load_start": [
+          35.4599609375,
+          27.1044921875,
+          24.9130859375
+        ],
+        "host_load_end": [
+          33.33056640625,
+          27.86865234375,
+          25.37841796875
+        ],
+        "wall_seconds": 90.00811883300776,
+        "samples": 46,
+        "user_time_seconds": 3.273876958,
+        "system_time_seconds": 1.685159042,
+        "average_cpu_percent": 5.509542988228105,
+        "pkg_idle_wakeups": 0,
+        "pkg_idle_wakeups_per_second": 0.0,
+        "interrupt_wakeups": 457,
+        "interrupt_wakeups_per_second": 5.077319756541885,
+        "average_resident_size_bytes": 90554368,
+        "peak_resident_size_bytes": 117702656,
+        "average_phys_footprint_bytes": 117758572.17391305,
+        "peak_phys_footprint_bytes": 149767248,
+        "host_processes_end": 729,
+        "loaded_rust_image_verified": true,
+        "loaded_swift_image_verified": true
+      },
+      {
+        "label": "B1",
+        "variant": "candidate",
+        "status": "starting",
+        "pid": 87921
+      }
+    ]
+  }
 }

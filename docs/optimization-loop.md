@@ -28,6 +28,23 @@ CPU-seconds / 1,635 MiB sampled peak tree RSS**. This is an absolute cost,
 not a build speedup. The fixture source/binary hashes, flags and all twelve
 process results are in [`performance-loop8.json`](performance-loop8.json).
 
+Production packaging passes strict signatures, relocation and static smoke.
+The build after release tests costs **371.487s wall / 341.240 CPU-seconds /
+2,161.84 MiB sampled peak tree RSS**; its unchanged repeat costs **17.418s /
+8.917 CPU-seconds / 308.73 MiB**. These are absolute costs. Retained build
+requests show the release test sets `ENABLE_TESTABILITY=YES`, whereas ordinary
+release packaging does not; that is the only synthesized setting difference.
+The packaging frontend has `-enable-testing` disabled. These are different
+compilation modes despite the same release label, so the rebuild is expected;
+this does not explain the earlier debug/release invalidation observation.
+The frontend also uses ten internal threads beneath the two-job package
+budget. That is retained evidence for the next pressure investigation.
+
+The app pair differs only in its Swift executable and resulting signature;
+all other nonsignature bundle files, Rust library and metadata match. Four
+fresh A/B/B/A windows are running with 60s settling, 90s sampling and a 2s
+interval. No builds run during sampling. No app-wide result is claimed yet.
+
 ### Diagnostic evidence
 
 CI artifact keys now include the scripts that select compilation graphs and
