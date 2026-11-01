@@ -20,14 +20,21 @@ All **26 history release tests** and strict release all-targets Clippy pass, wit
 two ignored manual fixtures. Oracles clone the hash builder and compare exact
 counts, actual table iteration order and resulting grouping text across stable,
 reordered and duplicate IDs, churn, disappearance/reappearance, empty input and
-wrapped indices. Thirty-six retained release processes compare the preceding
+wrapped indices. Full workspace execution through the production wrapper passes
+**517 cases, nine ignored**, with the exact preceding case/status counts plus
+the new oracle and manual fixture; inputs remain unchanged. This validation is
+outside the performance comparison. Thirty-six retained release processes compare the preceding
 algorithm and candidate. Every variant emits identical **2,065,860 bytes** for
 its workload. Stable total process CPU is **2.519774 → 1.169930s (-53.6%)**;
 reordered **2.507878 → 1.109039s (-55.8%)**; churn **2.635103 → 2.600750s
 (-1.3%)**. Stable mean maximum-process RSS rises **16.93 → 17.32 MiB**, while
 reordered/churn means fall. Common setup, both oracle histories and final encoding
 prevent isolated cache-memory attribution. No app memory saving is claimed;
-production packaging and a fresh app comparison remain pending.
+production packaging passes in **191.788s wall / 151.070 CPU seconds**,
+with 757.95 MiB sampled peak tree RSS using existing
+caches and two jobs. This is an absolute cost, not a build A/B result. The retained
+app pair has identical unsigned Swift code, metadata and 110 common payload files;
+a fresh hidden-idle ABBA comparison is running with builds stopped.
 
 Build investigation replays the captured native frontend command with private
 outputs and hashed sources/imported modules. Typecheck-only execution across 91
@@ -40,8 +47,13 @@ comparison establishes a build saving. A function timer may include lazy or
 nested work. The first full replay could not read an expired driver temporary
 output map and started no compiler; the completed replay omits supplementary
 outputs and retains all semantic flags and private object outputs. Optimized
-SIL per-pass diagnostics are running to narrow the next build change. No compiler
-optimization level, native backend default or quality gate is changed.
+SIL per-pass diagnostics complete in **137.432s wall / 112.436 CPU seconds**,
+with 1703.19 MiB sampled peak tree RSS and unchanged inputs. The largest
+individual pass is module dead-function elimination (1.677s); StorageView body
+pack specialization takes 1.126s. Several passes also concentrate on
+recordCleanupExecutionResult. This diagnostic emits SIL rather than LLVM objects;
+its timing is not a build comparison. No compiler optimization level, native
+backend default or quality gate is changed.
 Detailed evidence is in [`performance-loop15.json`](performance-loop15.json).
 
 ## Pass 14: preserve build accounting; bound historical grouping work

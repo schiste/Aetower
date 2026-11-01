@@ -1,5 +1,5 @@
 {
-  "status": "source_and_fixture_validated_app_comparison_pending",
+  "status": "source_fixture_workspace_and_production_package_validated_app_comparison_running",
   "change": "Cache the sorted unique u16 active set after cooccurrence pruning. Pair increments retain input order and duplicate semantics. Skip the full pair-table retention scan only when the set is unchanged; changed membership still performs the original pruning. Cache is initialized on the first sample, including empty input; boxed storage is exactly two bytes per unique active index, at most 128 KiB plus Option metadata. No sampling/counter/schema/text changes.",
   "history_source_sha256": "4446afc5d35b5e4e34b2b24e223ac0a6ee8d4b5e371064caa0492d95c667f799",
   "fixture": {
@@ -67,11 +67,42 @@
     "history_release_passed": 26,
     "manual_ignored": 2,
     "clippy": "strict release all-targets -D warnings passed",
-    "oracle": "Original sampling algorithm and candidate share a cloned hash builder; compare exact counts, actual table iteration order, resulting grouping text and active membership after each update. Covers stable/reordered/duplicate IDs, churn, empty first sample with stale entries, disappearance/reappearance and wrapped indices."
+    "oracle": "Original sampling algorithm and candidate share a cloned hash builder; compare exact counts, actual table iteration order, resulting grouping text and active membership after each update. Covers stable/reordered/duplicate IDs, churn, empty first sample with stale entries, disappearance/reappearance and wrapped indices.",
+    "full_workspace": {
+      "status": "complete",
+      "source_commit": "7e8e2823b25b2ea03a6e53838bba399eda2d1b80",
+      "history_source_sha256": "4446afc5d35b5e4e34b2b24e223ac0a6ee8d4b5e371064caa0492d95c667f799",
+      "scope": "Current full serial workspace correctness execution through the production two-graph wrapper, including required compilation. Absolute validation cost, not an A/B measurement.",
+      "diagnostic": null,
+      "exit_status": 0,
+      "exact_prior_cases_plus_declared_addition": true,
+      "passed": 517,
+      "total": 526,
+      "inputs_unchanged": true,
+      "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-current-workspace-validation/results.json",
+      "ignored": 9
+    }
   },
   "app_comparison": {
-    "status": "pending",
-    "scope": "Production packaging and app A/B required; helper CPU results do not establish app-wide CPU, physical footprint or wakeup savings."
+    "status": "starting",
+    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/measurements/loop15-hidden-runtime-v1/summary.json",
+    "configuration": {
+      "sequence": "ABBA",
+      "settle_seconds": 60,
+      "duration_seconds": 90,
+      "interval_seconds": 2,
+      "target_environment_keys": [
+        "HOME",
+        "LANG",
+        "LC_CTYPE",
+        "LOGNAME",
+        "PATH",
+        "TMPDIR",
+        "USER"
+      ],
+      "visibility": "retry startup hide within a bounded 30-second period until observed hidden; observe hidden status and zero normal onscreen windows every two seconds; invalidate on any observed change"
+    },
+    "scope": "app process counter deltas; common Swift, metadata and dependencies; existing app settings, no driven interaction, no builds or other benchmark workloads during sampling; hidden idle state only; shared host load remains uncontrolled; visibility checks are discrete samples"
   },
   "build_investigation": {
     "scope": "Compiler diagnostics only; no new build optimization or native backend adopted. Optimized and typecheck-only timings are different scopes and are not an A/B comparison. Native app build and all 212 UI cases pass, but packaging portability and comparative pressure are unverified; see pass 14.",
@@ -132,13 +163,239 @@
       "reason": "Expired driver temporary supplementary-output map; no compiler started. Follow-up omits supplementary outputs and retains semantic flags/object outputs."
     },
     "sil_pass_diagnostic": {
-      "status": "running",
-      "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-swift-sil-pass-diagnostic-v1/results.json"
+      "status": "complete",
+      "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-swift-sil-pass-diagnostic-v1/results.json",
+      "output_sha256": "6b59e2ded7775fb96b9d8fd481876f6c87b13c647f7bbe7ea969a6e241a657db",
+      "wall_seconds": 137.432,
+      "cpu_seconds": 112.436,
+      "sampled_peak_tree_rss_bytes": 1785921536,
+      "inputs_unchanged": true,
+      "rows_above_20_ms": 176,
+      "largest_individual_passes": [
+        {
+          "wall_milliseconds": 1677.054,
+          "pass_name": "sil-deadfuncelim",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 1126.185,
+          "pass_name": "pack-specialization",
+          "function": "protocol witness for SwiftUI.View.body.getter : A.Body in conformance AetowerUI.StorageView : SwiftUI.View in AetowerUI"
+        },
+        {
+          "wall_milliseconds": 911.515,
+          "pass_name": "inline-always-inlining",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 905.85,
+          "pass_name": "read-only-global-variables",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 788.665,
+          "pass_name": "ownership-model-eliminator",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 650.023,
+          "pass_name": "sil-deadfuncelim",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 374.479,
+          "pass_name": "loop-invariant-code-motion",
+          "function": "AetowerUI.StorageView.(recordCleanupExecutionResult in _3339E3856C04F21CD2DF13BED24DA569)(request: AetowerUI.(StorageCleanupExecutionRequest in _3339E3856C04F21CD2DF13BED24DA569), result: AetowerUI.(StorageCleanupExecutionResult in _3339E3856C04F21CD2DF13BED24DA569)) -> ()"
+        },
+        {
+          "wall_milliseconds": 303.651,
+          "pass_name": "performance-constant-propagation",
+          "function": "AetowerUI.StorageView.(recordCleanupExecutionResult in _3339E3856C04F21CD2DF13BED24DA569)(request: AetowerUI.(StorageCleanupExecutionRequest in _3339E3856C04F21CD2DF13BED24DA569), result: AetowerUI.(StorageCleanupExecutionResult in _3339E3856C04F21CD2DF13BED24DA569)) -> ()"
+        },
+        {
+          "wall_milliseconds": 248.876,
+          "pass_name": "let-properties-opt",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 243.854,
+          "pass_name": "mandatory-inlining",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 230.172,
+          "pass_name": "silgen-cleanup",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 222.39,
+          "pass_name": "stack-protection",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 183.026,
+          "pass_name": "cmo",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 180.931,
+          "pass_name": "performance-linker",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 178.698,
+          "pass_name": "late-deadfuncelim",
+          "function": "<module pass>"
+        },
+        {
+          "wall_milliseconds": 169.312,
+          "pass_name": "redundant-load-elimination",
+          "function": "AetowerUI.StorageView.(recordCleanupExecutionResult in _3339E3856C04F21CD2DF13BED24DA569)(request: AetowerUI.(StorageCleanupExecutionRequest in _3339E3856C04F21CD2DF13BED24DA569), result: AetowerUI.(StorageCleanupExecutionResult in _3339E3856C04F21CD2DF13BED24DA569)) -> ()"
+        }
+      ],
+      "limits": "Optimized SIL emission and per-pass timing diagnostic for the actual UI sources. Excludes LLVM object generation, separate module emission, dependencies and linking. No app binary or comparative performance result. Phase timers may be nested and are not additive exclusive CPU costs."
     },
     "official_guidance": "https://github.com/swiftlang/swift/blob/main/docs/CompilerPerformance.md"
   },
   "limits": [
     "Stable maximum-process RSS rises 16.93 to 17.32 MiB in the common fixture; reordered/churn means fall. Common setup/oracles and final encoding prevent isolated cache-memory attribution; no app memory saving claimed.",
     "Only the sampling helper is timed. App cadence, complete History update, collector and UI work require separate app comparison."
-  ]
+  ],
+  "hosted_ci": {
+    "source_commit": "7e8e2823b25b2ea03a6e53838bba399eda2d1b80",
+    "run_url": "https://github.com/schiste/Aetower/actions/runs/41274052935",
+    "conclusion": "failure",
+    "failed_step": "Dependency policy preflight",
+    "rust_and_swift_artifact_restores": "skipped",
+    "full_quality_gate": "skipped",
+    "limits": "No successful hosted compilation/cache performance claim; mandatory checks unchanged."
+  },
+  "production_package": {
+    "command": [
+      "sh",
+      "scripts/package-macos.sh"
+    ],
+    "cwd": "/private/tmp/aetower-build-performance",
+    "exit_status": 0,
+    "wall_seconds": 191.788,
+    "user_cpu_seconds": 141.01,
+    "system_cpu_seconds": 10.06,
+    "average_cpu_percent": 78.8,
+    "sampled_peak_tree_rss_bytes": 794771456,
+    "rss_samples": 185,
+    "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed",
+    "scope": "Absolute cost using existing compiler caches; jobs two; ad-hoc signing, no notarization/stapling; not an A/B build comparison."
+  },
+  "retained_app_pair": {
+    "source_commit": "7e8e2823b25b2ea03a6e53838bba399eda2d1b80",
+    "production_rust_diff_from_baseline": " rust/crates/aetower-history/src/lib.rs | 198 ++++++++++++++++++++++++++++++---\n 1 file changed, 183 insertions(+), 15 deletions(-)\n",
+    "bindings_sha256": "ef9bef0300b0f7153cac17f3d7821782aaf7fe60e3cb120f1a1ecf7681d93cad",
+    "build_environment": {
+      "RUSTFLAGS": null,
+      "CARGO_ENCODED_RUSTFLAGS": null,
+      "CARGO_PROFILE_RELEASE_DEBUG": null,
+      "CARGO_PROFILE_RELEASE_LTO": null
+    },
+    "apps": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-baseline/Aetower.app",
+        "source": "7b613d8e2118 production Rust; bounded historical grouping before active-set sampling cache; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "cc4148468ccd147ca776b4fbf3a80807c09a1b0e307d234d30ec25e7aaa802bf",
+        "rust_sha256": "5d10830681f2b023d30901da2746c090664c4b96beef5e20dc4d39b887cd65bc",
+        "rust_uuid": "5CC71201-CD6B-3411-B19B-E4900678853E",
+        "variant": "baseline",
+        "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.9.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1074",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-candidate/Aetower.app",
+        "source": "7e8e2823b25b production Rust; skip pair-table pruning for unchanged active membership; common compiled Swift, metadata and other dependencies",
+        "executable_sha256": "bd3647af711d538ecf3c4ef031da0d7d7a720c4f71e12749d37407c5c76ebf6f",
+        "rust_sha256": "5e51f9d707b04d5f0a2402f722e47b4413e0de3c57cc819dd347840b037183aa",
+        "rust_uuid": "946F5239-B5CA-3FE9-BF7D-D6F9C0D9A5BF",
+        "variant": "candidate",
+        "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+        "info_plist": {
+          "CFBundleDisplayName": "Aetower",
+          "CFBundleExecutable": "Aetower",
+          "CFBundleIdentifier": "com.aetower.app",
+          "CFBundleIconFile": "Aetower",
+          "CFBundleName": "Aetower",
+          "CFBundlePackageType": "APPL",
+          "CFBundleShortVersionString": "0.9.0",
+          "CFBundleURLTypes": [
+            {
+              "CFBundleURLName": "com.aetower.app.oauth",
+              "CFBundleURLSchemes": [
+                "aetower"
+              ]
+            }
+          ],
+          "CFBundleVersion": "1074",
+          "LSMinimumSystemVersion": "15.0",
+          "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+          "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+          "SUEnableAutomaticChecks": true
+        },
+        "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+      }
+    ],
+    "scope": "same production package with only baseline Rust dylib replaced, then ad-hoc re-signed; identical unsigned compiled Swift, metadata and other nonsignature payload files",
+    "common_file_count": 110,
+    "common_files_sha256": "c74d79f3ba45580e02386e5c8de891aba669fab30725fa1b03c5aea856d4ec85",
+    "baseline_library_retained_source": {
+      "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-candidate/Aetower.app",
+      "source": "7b613d8e2118 production Rust; bounded bitset grouping for dense graphs with disproportionate historical indices; common compiled Swift, metadata and other dependencies",
+      "executable_sha256": "1d7086cb86eff144de6f549f32d1dcd6a9612ebec62720ce8d579b63ce6cedb8",
+      "rust_sha256": "5d10830681f2b023d30901da2746c090664c4b96beef5e20dc4d39b887cd65bc",
+      "rust_uuid": "5CC71201-CD6B-3411-B19B-E4900678853E",
+      "variant": "candidate",
+      "swift_executable_uuid": "0D6A2138-F98C-30CF-8460-97516D5068BC",
+      "info_plist": {
+        "CFBundleDisplayName": "Aetower",
+        "CFBundleExecutable": "Aetower",
+        "CFBundleIdentifier": "com.aetower.app",
+        "CFBundleIconFile": "Aetower",
+        "CFBundleName": "Aetower",
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": "0.9.0",
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "com.aetower.app.oauth",
+            "CFBundleURLSchemes": [
+              "aetower"
+            ]
+          }
+        ],
+        "CFBundleVersion": "1068",
+        "LSMinimumSystemVersion": "15.0",
+        "NSHumanReadableCopyright": "Copyright \u00a9 2026 Aetower contributors. Licensed under AGPL-3.0-only.",
+        "NSAppleEventsUsageDescription": "Aetower uses Apple Events only for optional app-specific enrichments you explicitly request.",
+        "SUEnableAutomaticChecks": true
+      },
+      "unsigned_swift_executable_sha256": "55365d87b0aa472a298b77dca7ff225690e5210c53b1122587434cc4a75a8022"
+    }
+  }
 }
