@@ -68,6 +68,13 @@ case/status counts. Those compilation timings will exclude test execution and
 must not be presented as a complete CI-job saving. Evidence
 and current limits are in [`performance-loop12.json`](performance-loop12.json).
 
+A separate 30-second Time Profiler diagnostic of retained baseline sources
+records 931 running-thread samples: 61.3% of sample weight is on the main thread
+and 32.4% on one worker. Matching Swift symbols and a Rust linker map are
+retained, with 213 exported addresses independently verified. Source attribution
+is still pending; these sample weights are not function durations or an A/B
+result. Only sanitized CPU-table exports remain; the raw trace was deleted.
+
 ## Pass 11: compile decoder correctness checks once; reject native UTF-8 trial
 
 The integer and string correctness checks now share one optimized Swift binary,
