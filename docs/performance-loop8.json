@@ -1,0 +1,289 @@
+{
+  "runtime_source_commit": "e3440f725848",
+  "status": "decoder_fixture_verified; production package and app comparison pending",
+  "decoder_benchmark": {
+    "scope": "actual generated full entity sequence decoding plus equality checks; identical serialized payload; no app state or collection; no app-wide claim",
+    "rss_scope": "macOS wait4 maximum resident set size for each benchmark child, in bytes; not tree RSS or app footprint",
+    "status": "complete",
+    "builds": [
+      {
+        "variant": "legacy",
+        "command": [
+          "/usr/bin/swiftc",
+          "-O",
+          "-whole-module-optimization",
+          "-swift-version",
+          "6",
+          "-target",
+          "arm64-apple-macosx15.0",
+          "-module-name",
+          "Loop8Decoder",
+          "-module-cache-path",
+          "/private/tmp/aetower-build-performance/tmp/clang-module-cache",
+          "-I",
+          "/private/tmp/aetower-build-performance/macos/Sources/aetower_ffiFFI",
+          "-L",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/Aetower.app/Contents/Frameworks",
+          "-laetower_ffi",
+          "-Xlinker",
+          "-rpath",
+          "-Xlinker",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/Aetower.app/Contents/Frameworks",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-decoder-fixture-v2/legacy.swift",
+          "-o",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-decoder-fixture-v2/legacy"
+        ],
+        "wall_seconds": 26.152535957982764,
+        "source_sha256": "a3f4e0e96215c296f08c06458b860163f83e9dc4ee79901695149d2df30719be",
+        "binary_sha256": "243492b6456c94b392e7b762f3d3ce9fad2b3ff2f20ad17dfd5cc4160eaa261a"
+      },
+      {
+        "variant": "candidate",
+        "command": [
+          "/usr/bin/swiftc",
+          "-O",
+          "-whole-module-optimization",
+          "-swift-version",
+          "6",
+          "-target",
+          "arm64-apple-macosx15.0",
+          "-module-name",
+          "Loop8Decoder",
+          "-module-cache-path",
+          "/private/tmp/aetower-build-performance/tmp/clang-module-cache",
+          "-I",
+          "/private/tmp/aetower-build-performance/macos/Sources/aetower_ffiFFI",
+          "-L",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/Aetower.app/Contents/Frameworks",
+          "-laetower_ffi",
+          "-Xlinker",
+          "-rpath",
+          "-Xlinker",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/Aetower.app/Contents/Frameworks",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-decoder-fixture-v2/candidate.swift",
+          "-o",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-decoder-fixture-v2/candidate"
+        ],
+        "wall_seconds": 12.291848374996334,
+        "source_sha256": "2fe44b443a1e43e5dbf96482dc565c6e22027fa95d1383807456d818c269fb95",
+        "binary_sha256": "3c037d9317197c2c343ea12a75b0fb89e5da18988f69a7d28e5d5459c695da86"
+      }
+    ],
+    "runs": [
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 2467978292,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 17514496,
+        "variant": "legacy",
+        "wall_seconds": 2.7042524999997113,
+        "user_cpu_seconds": 1.238045,
+        "system_cpu_seconds": 0.038875,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 136745541,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 18169856,
+        "variant": "candidate",
+        "wall_seconds": 0.3830786670150701,
+        "user_cpu_seconds": 0.06297799999999999,
+        "system_cpu_seconds": 0.006704,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 74743708,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 18186240,
+        "variant": "candidate",
+        "wall_seconds": 0.08781212501344271,
+        "user_cpu_seconds": 0.064993,
+        "system_cpu_seconds": 0.005449,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 2400663042,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 18153472,
+        "variant": "legacy",
+        "wall_seconds": 2.4104952089837752,
+        "user_cpu_seconds": 1.127188,
+        "system_cpu_seconds": 0.0361,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 2067477541,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 17842176,
+        "variant": "legacy",
+        "wall_seconds": 2.086123667017091,
+        "user_cpu_seconds": 1.170371,
+        "system_cpu_seconds": 0.033638,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 91095750,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 19349504,
+        "variant": "candidate",
+        "wall_seconds": 0.10768354198080488,
+        "user_cpu_seconds": 0.074359,
+        "system_cpu_seconds": 0.007496999999999999,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 85740208,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 18251776,
+        "variant": "candidate",
+        "wall_seconds": 0.09691995798493735,
+        "user_cpu_seconds": 0.070392,
+        "system_cpu_seconds": 0.006816999999999999,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 2418123417,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 17481728,
+        "variant": "legacy",
+        "wall_seconds": 2.433393832994625,
+        "user_cpu_seconds": 1.181241,
+        "system_cpu_seconds": 0.039280999999999996,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 2283363958,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 17645568,
+        "variant": "legacy",
+        "wall_seconds": 2.2989081659761723,
+        "user_cpu_seconds": 1.202814,
+        "system_cpu_seconds": 0.039431,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 82627000,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 17498112,
+        "variant": "candidate",
+        "wall_seconds": 0.0957383339991793,
+        "user_cpu_seconds": 0.060356,
+        "system_cpu_seconds": 0.006656,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 98886917,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 19021824,
+        "variant": "candidate",
+        "wall_seconds": 0.1087194999854546,
+        "user_cpu_seconds": 0.071617,
+        "system_cpu_seconds": 0.006756,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 20,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 1398608208,
+        "checksum": 728395055172667800,
+        "max_rss_bytes": 18743296,
+        "variant": "legacy",
+        "wall_seconds": 1.4091272910009138,
+        "user_cpu_seconds": 1.088216,
+        "system_cpu_seconds": 0.033819999999999996,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      }
+    ],
+    "source_commit": "e3440f72584818f2deb8c485711d929efcc719bb",
+    "generated_source_sha256": "a1a95eab9c4c4b8e18b675a5445aeac04753ae48af6db459755e8d4c1e940f26",
+    "swift_version": "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0",
+    "common_rust_library_sha256": "1b6dc30f2a2c6fff00f8b870471873ff5510130f4c0d70bb0409f4425b8aa1dd",
+    "aggregate": {
+      "legacy": {
+        "processes": 6,
+        "cpu_seconds": 7.22902,
+        "mean_max_process_rss_bytes": 17896789.333333332,
+        "median_operation_seconds": 2.3420135
+      },
+      "candidate": {
+        "processes": 6,
+        "cpu_seconds": 0.44457399999999997,
+        "mean_max_process_rss_bytes": 18412885.333333332,
+        "median_operation_seconds": 0.088417979
+      }
+    }
+  },
+  "release_test_build": {
+    "command": [
+      "/usr/bin/swift",
+      "test",
+      "--package-path",
+      "../macos",
+      "--scratch-path",
+      "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/swift",
+      "-c",
+      "release",
+      "-j",
+      "2"
+    ],
+    "cwd": "/private/tmp/aetower-build-performance/rust",
+    "exit_status": 0,
+    "wall_seconds": 336.824,
+    "user_cpu_seconds": 239.611,
+    "system_cpu_seconds": 23.55,
+    "average_cpu_percent": 78.1,
+    "sampled_peak_tree_rss_bytes": 1714405376,
+    "rss_samples": 323,
+    "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+  },
+  "release_tests": {
+    "count": 212,
+    "failures": 0,
+    "execution_seconds": 6.755
+  },
+  "focused_python_checks": {
+    "count": 26,
+    "result": "pass"
+  },
+  "checks": [
+    "actionlint",
+    "ShellCheck --severity=warning",
+    "working-tree quality guard",
+    "git diff --check"
+  ],
+  "generated_bindings_sha256": "a1a95eab9c4c4b8e18b675a5445aeac04753ae48af6db459755e8d4c1e940f26",
+  "scope": "fixture savings only; all decoded values and reserialized bytes match; slightly higher mean maximum fixture RSS; no app-wide performance claim"
+}

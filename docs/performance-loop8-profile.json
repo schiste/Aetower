@@ -57,7 +57,8 @@
       "0x102f96dc8": "specialized static FfiConverterTypeEntitySnapshot.read(from:) (aetower_ffi.swift:4229)",
       "0x102f5840c": "specialized static FfiConverterRustBuffer.lift(_:) (aetower_ffi.swift:198)",
       "0x10302d168": "closure #1 in AppState.refresh(force:) (AppState.swift:1984)"
-    }
+    },
+    "retained_dsym_path": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/AetowerApp.dSYM"
   },
   "memory_summary": {
     "scope": "single diagnostic at 60 seconds; includes profiler overhead; not a comparison or a component attribution",

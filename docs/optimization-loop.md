@@ -5,7 +5,30 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
-## Pass 8 investigation: profile the actual snapshot decode
+## Pass 8: checked Swift decoding and complete cache fingerprints
+
+The generated integer reader now uses `withUnsafeBytes` and `loadUnaligned`
+after the original bounds guard. Its byte order, UInt8 path, offset updates
+and errors stay unchanged. Binding generation applies the transformation to
+the exact supported template and rejects drift before publishing any outputs.
+All 26 focused checks pass, including compiled Swift integer-width, alignment,
+endianness and truncation tests. All **212 Swift release tests pass**.
+
+Two retained release executables decode the same 500-entity fixture with
+60-point trends. Twelve alternating processes (six per implementation) perform
+20 decodes each, checking every decoded value and byte-for-byte serialization.
+The 1,266,039-byte output has the same SHA-256 in every run. Total child CPU
+is **7.229020 → 0.444574 seconds**, **93.9% less fixture CPU**. Mean maximum
+process RSS is **17.07 → 17.56 MiB**, slightly higher; no memory saving is
+claimed. Median operation times are 2.342s versus 0.088s. App-wide effects
+remain unverified pending matched app windows.
+
+The release suite rebuild and execution cost **336.824s wall / 263.161
+CPU-seconds / 1,635 MiB sampled peak tree RSS**. This is an absolute cost,
+not a build speedup. The fixture source/binary hashes, flags and all twelve
+process results are in [`performance-loop8.json`](performance-loop8.json).
+
+### Diagnostic evidence
 
 CI artifact keys now include the scripts that select compilation graphs and
 prepare Swift bindings. A script-only change can therefore publish a refreshed

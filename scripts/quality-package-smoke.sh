@@ -73,6 +73,7 @@ package_cache_key() {
             rust/crates \
             scripts/build-rust.sh \
             scripts/build-settings.sh \
+            scripts/prepare-swift-bindings.py \
             scripts/generate-app-icon.py \
             scripts/generate-app-icon.sh \
             scripts/import-app-icon.sh \
