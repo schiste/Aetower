@@ -429,34 +429,13 @@ impl History {
                 .retain(|(a, b), _| active_idx_set.contains(a) && active_idx_set.contains(b));
         }
         if self.cooccurrence_sample_count >= COOCCURRENCE_MIN_SAMPLES {
-            let threshold = (self.cooccurrence_sample_count as f32 * 0.8).ceil() as u32;
-            let names: HashMap<String, String> = entities
-                .iter()
-                .map(|e| (e.entity_id.clone(), e.display_name.clone()))
-                .collect();
-            let mut suggestions: HashMap<String, String> = HashMap::new();
-            for (&(a_idx, b_idx), count) in &self.cooccurrence {
-                if *count < threshold {
-                    continue;
-                }
-                let a = &self.entity_reverse_index[a_idx as usize];
-                let b = &self.entity_reverse_index[b_idx as usize];
-                if let Some(b_name) = names.get(b) {
-                    suggestions.entry(a.clone()).or_insert_with(|| {
-                        format!("Often runs alongside {b_name} — consider grouping")
-                    });
-                }
-                if let Some(a_name) = names.get(a) {
-                    suggestions.entry(b.clone()).or_insert_with(|| {
-                        format!("Often runs alongside {a_name} — consider grouping")
-                    });
-                }
-            }
+            let mut suggestions = self.grouping_suggestions(entities);
             for entity in entities.iter_mut() {
                 if entity.grouping_suggestion.is_none() {
-                    entity.grouping_suggestion = suggestions.remove(&entity.entity_id);
+                    entity.grouping_suggestion = suggestions.remove(entity.entity_id.as_str());
                 }
             }
+            drop(suggestions);
             self.compact_cooccurrence_window();
         }
 
@@ -611,6 +590,35 @@ impl History {
             self.host_history.snapshot(),
             forecast,
         )
+    }
+
+    fn grouping_suggestions(&self, entities: &[EntitySnapshot]) -> HashMap<&str, String> {
+        let threshold = (self.cooccurrence_sample_count as f32 * 0.8).ceil() as u32;
+        let names: HashMap<&str, &str> = entities
+            .iter()
+            .map(|entity| (entity.entity_id.as_str(), entity.display_name.as_str()))
+            .collect();
+        // Keys refer to the interned index, not the entities or an allocated
+        // copy per qualifying edge. Keep pair iteration and first-match order.
+        let mut suggestions = HashMap::new();
+        for (&(a_idx, b_idx), count) in &self.cooccurrence {
+            if *count < threshold {
+                continue;
+            }
+            let a = self.entity_reverse_index[a_idx as usize].as_str();
+            let b = self.entity_reverse_index[b_idx as usize].as_str();
+            if let Some(b_name) = names.get(b) {
+                suggestions.entry(a).or_insert_with(|| {
+                    format!("Often runs alongside {b_name} — consider grouping")
+                });
+            }
+            if let Some(a_name) = names.get(a) {
+                suggestions.entry(b).or_insert_with(|| {
+                    format!("Often runs alongside {a_name} — consider grouping")
+                });
+            }
+        }
+        suggestions
     }
 
     fn compact_cooccurrence_window(&mut self) {
@@ -2102,6 +2110,154 @@ mod tests {
             binary_reputation: None,
             app_version: None,
         }
+    }
+
+    fn legacy_grouping_suggestions(
+        history: &History,
+        entities: &[aetower_model::EntitySnapshot],
+    ) -> std::collections::HashMap<String, String> {
+        let threshold = (history.cooccurrence_sample_count as f32 * 0.8).ceil() as u32;
+        let names: std::collections::HashMap<String, String> = entities
+            .iter()
+            .map(|entity| (entity.entity_id.clone(), entity.display_name.clone()))
+            .collect();
+        let mut suggestions = std::collections::HashMap::new();
+        for (&(a_idx, b_idx), count) in &history.cooccurrence {
+            if *count < threshold {
+                continue;
+            }
+            let a = &history.entity_reverse_index[a_idx as usize];
+            let b = &history.entity_reverse_index[b_idx as usize];
+            if let Some(b_name) = names.get(b) {
+                suggestions.entry(a.clone()).or_insert_with(|| {
+                    format!("Often runs alongside {b_name} — consider grouping")
+                });
+            }
+            if let Some(a_name) = names.get(a) {
+                suggestions.entry(b.clone()).or_insert_with(|| {
+                    format!("Often runs alongside {a_name} — consider grouping")
+                });
+            }
+        }
+        suggestions
+    }
+
+    #[test]
+    fn grouping_suggestions_preserve_thresholds_names_and_pair_order() {
+        let entities = vec![
+            entity_with_process("a", "測定 🗼", 1, 1),
+            entity_with_process("b", "", 2, 1),
+            entity_with_process("c", "nul\0inside", 3, 1),
+            entity_with_process("b", "last duplicate café", 4, 1),
+        ];
+        // Each map has a different iteration order. Both readers must choose
+        // exactly the same first qualifying partner for that particular map.
+        for samples in [3, 5, 7, 100] {
+            for _ in 0..8 {
+                let mut history = History::new();
+                for id in ["a", "b", "c", "missing"] {
+                    history.intern_entity_id(id);
+                }
+                history.cooccurrence_sample_count = samples;
+                let threshold = (samples as f32 * 0.8).ceil() as u32;
+                for (pair, count) in [
+                    ((0, 1), threshold),
+                    ((0, 2), threshold + 1),
+                    ((1, 2), threshold - 1),
+                    ((1, 3), threshold),
+                ] {
+                    history.cooccurrence.insert(pair, count);
+                }
+                let expected = legacy_grouping_suggestions(&history, &entities);
+                let actual: std::collections::HashMap<String, String> = history
+                    .grouping_suggestions(&entities)
+                    .into_iter()
+                    .map(|(key, value)| (key.to_owned(), value))
+                    .collect();
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn grouping_suggestions_keep_existing_entity_hint() {
+        let mut history = History::new();
+        history.intern_entity_id("a");
+        history.intern_entity_id("b");
+        history.cooccurrence_sample_count = 5;
+        history.cooccurrence.insert((0, 1), 5);
+        let mut entities = vec![
+            entity_with_process("a", "測定 🗼", 1, 1),
+            entity_with_process("b", "café", 2, 1),
+        ];
+        entities[0].grouping_suggestion = Some("existing hint".to_owned());
+        history.update(1_000, &HostSnapshot::default(), &mut entities);
+        assert_eq!(
+            entities[0].grouping_suggestion.as_deref(),
+            Some("existing hint")
+        );
+        assert_eq!(
+            entities[1].grouping_suggestion.as_deref(),
+            Some("Often runs alongside 測定 🗼 — consider grouping")
+        );
+    }
+
+    #[test]
+    #[ignore = "manual release fixture; run retained binaries without concurrent builds"]
+    fn grouping_suggestions_benchmark() {
+        let mut history = History::new();
+        let entities: Vec<_> = (0..500)
+            .map(|index| {
+                entity_with_process(
+                    &format!("entity-{index:04}"),
+                    "測定 🗼 shared partner name",
+                    index + 1,
+                    1,
+                )
+            })
+            .collect();
+        for entity in &entities {
+            history.intern_entity_id(&entity.entity_id);
+        }
+        history.cooccurrence_sample_count = 12;
+        for a in 0..500u16 {
+            for b in (a + 1)..500u16 {
+                history.cooccurrence.insert((a, b), 12);
+            }
+        }
+        // Shared partner names make the serialized oracle stable across the
+        // per-process randomized pair order. The separate correctness check
+        // above also covers different names and preserves that exact order.
+        let expected: std::collections::BTreeMap<_, _> =
+            legacy_grouping_suggestions(&history, &entities)
+                .into_iter()
+                .collect();
+        let actual: std::collections::BTreeMap<_, _> = history
+            .grouping_suggestions(&entities)
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect();
+        assert_eq!(actual, expected);
+        if let Ok(path) = std::env::var("AETOWER_HISTORY_BENCH_OUTPUT") {
+            std::fs::write(path, format!("{actual:?}")).unwrap();
+        }
+        let variant = std::env::var("AETOWER_HISTORY_BENCH_VARIANT")
+            .unwrap_or_else(|_| "candidate".to_owned());
+        assert!(matches!(variant.as_str(), "legacy" | "candidate"));
+        let iterations = 50;
+        let started = std::time::Instant::now();
+        let mut checksum = 0;
+        for _ in 0..iterations {
+            checksum += if variant == "legacy" {
+                std::hint::black_box(legacy_grouping_suggestions(&history, &entities)).len()
+            } else {
+                std::hint::black_box(history.grouping_suggestions(&entities)).len()
+            };
+        }
+        println!(
+            "HISTORY_GROUPING_BENCH {{\"variant\":\"{variant}\",\"iterations\":{iterations},\"checksum\":{checksum},\"operation_nanoseconds\":{}}}",
+            started.elapsed().as_nanos()
+        );
     }
 
     fn entity_with_processes(

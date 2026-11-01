@@ -1,0 +1,497 @@
+{
+  "status": "fixture comparisons, release unit tests and strict Clippy complete; production app validation pending",
+  "runtime_source_commit": "pending; actual release test source SHA-256 retained in grouping fixture",
+  "history_grouping_fixture": {
+    "status": "complete",
+    "scope": "dense 500-entity grouping fixture; 50 grouping operations per child; original and borrowed-key helpers in the same retained release test binary; common setup validates their exact output for the same pair order; not app-wide savings",
+    "memory_scope": "macOS wait4 maximum process RSS includes fixture setup and the common legacy/candidate validation before timing, so it cannot isolate memory savings from the changed helper",
+    "binary_sha256": "9d185b4a23c5f011568e082dfabfc9e69c2797f7c83202f77256db49254e3dc9",
+    "source_sha256": "cfc5e7c56e556e8a6543fc8e4ccc4c00376a6887d8a7c64fe82442be182f11c5",
+    "source_commit": "5d2fb2a20b032348e19cefd7b5473a08d35718f9",
+    "artifact": {
+      "reason": "compiler-artifact",
+      "package_id": "path+file:///private/tmp/aetower-build-performance/rust/crates/aetower-history#0.1.0",
+      "manifest_path": "/private/tmp/aetower-build-performance/rust/crates/aetower-history/Cargo.toml",
+      "target": {
+        "kind": [
+          "lib"
+        ],
+        "crate_types": [
+          "lib"
+        ],
+        "name": "aetower_history",
+        "src_path": "/private/tmp/aetower-build-performance/rust/crates/aetower-history/src/lib.rs",
+        "edition": "2024",
+        "doc": true,
+        "doctest": true,
+        "test": true
+      },
+      "profile": {
+        "opt_level": "3",
+        "debuginfo": 0,
+        "debug_assertions": false,
+        "overflow_checks": false,
+        "test": true
+      },
+      "features": [],
+      "filenames": [
+        "/private/tmp/aetower-build-performance/rust/target/release/deps/aetower_history-3a732c337808ca80"
+      ],
+      "executable": "/private/tmp/aetower-build-performance/rust/target/release/deps/aetower_history-3a732c337808ca80",
+      "fresh": false
+    },
+    "runs": [
+      {
+        "variant": "legacy",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 541409958,
+        "wall_seconds": 0.6278034169808961,
+        "user_cpu_seconds": 0.544771,
+        "system_cpu_seconds": 0.010997,
+        "max_rss_bytes": 9945088,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 387835250,
+        "wall_seconds": 0.41333079198375344,
+        "user_cpu_seconds": 0.38927,
+        "system_cpu_seconds": 0.006515,
+        "max_rss_bytes": 9617408,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 665427750,
+        "wall_seconds": 0.6935119580011815,
+        "user_cpu_seconds": 0.541234,
+        "system_cpu_seconds": 0.013588999999999999,
+        "max_rss_bytes": 9338880,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 692076250,
+        "wall_seconds": 0.7334468330082018,
+        "user_cpu_seconds": 0.640416,
+        "system_cpu_seconds": 0.015097999999999999,
+        "max_rss_bytes": 9797632,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 691043125,
+        "wall_seconds": 0.7326047089882195,
+        "user_cpu_seconds": 0.663948,
+        "system_cpu_seconds": 0.017497,
+        "max_rss_bytes": 9732096,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 498615167,
+        "wall_seconds": 0.5332142089901026,
+        "user_cpu_seconds": 0.47095899999999996,
+        "system_cpu_seconds": 0.014903,
+        "max_rss_bytes": 9666560,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 482390583,
+        "wall_seconds": 0.5185669579950627,
+        "user_cpu_seconds": 0.46952699999999997,
+        "system_cpu_seconds": 0.012265,
+        "max_rss_bytes": 9748480,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 586290708,
+        "wall_seconds": 0.6189274170028511,
+        "user_cpu_seconds": 0.565391,
+        "system_cpu_seconds": 0.016182,
+        "max_rss_bytes": 9781248,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 641191209,
+        "wall_seconds": 0.6714106670115143,
+        "user_cpu_seconds": 0.5982959999999999,
+        "system_cpu_seconds": 0.01911,
+        "max_rss_bytes": 9764864,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 462794208,
+        "wall_seconds": 0.4984921659925021,
+        "user_cpu_seconds": 0.439558,
+        "system_cpu_seconds": 0.015496,
+        "max_rss_bytes": 9814016,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "candidate",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 472717834,
+        "wall_seconds": 0.5055443750170525,
+        "user_cpu_seconds": 0.45208,
+        "system_cpu_seconds": 0.01478,
+        "max_rss_bytes": 9076736,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      },
+      {
+        "variant": "legacy",
+        "iterations": 50,
+        "checksum": 25000,
+        "operation_nanoseconds": 594873875,
+        "wall_seconds": 0.6333475000283215,
+        "user_cpu_seconds": 0.581714,
+        "system_cpu_seconds": 0.015092999999999999,
+        "max_rss_bytes": 9814016,
+        "output_sha256": "c209b18ea12e2a22db4bdada24d6722be961f30515482aa1feea2ed6742e00ed",
+        "output_bytes": 46500
+      }
+    ],
+    "means": {
+      "legacy": {
+        "cpu_seconds": 0.6147521666666667,
+        "max_rss_bytes": 9805824,
+        "wall_seconds_median": 0.6523790835199179
+      },
+      "candidate": {
+        "cpu_seconds": 0.47336266666666665,
+        "max_rss_bytes": 9543680,
+        "wall_seconds_median": 0.5120556665060576
+      }
+    },
+    "candidate_change_percent": {
+      "cpu_seconds": -22.99943093598965,
+      "max_rss_bytes": -2.6733500417710943,
+      "wall_seconds_median": -21.50949050308969
+    }
+  },
+  "selected_local_gate_failure_comparison": {
+    "status": "complete",
+    "scope": "selected local full-gate failure path with real dependency audit and all build-pipeline tests; identical policy/database and test sources; no compilation runs concurrently; not hosted CI or successful-build savings",
+    "memory_scope": "macOS wait4 maximum RSS reported for each gate child; largest-process accounting, not sampled aggregate tree RSS",
+    "source_commit": "5d2fb2a20b032348e19cefd7b5473a08d35718f9",
+    "script_sha256": {
+      "baseline": "b9acfa89cbb1d39bab8a1ae77dce6aa5ee765f062e8ecc862ad707ae2886812e",
+      "candidate": "e3732df4c3123b074bb98aa71c247090c90cba1e98ab83574bf8c365b52a9da8"
+    },
+    "runs": [
+      {
+        "variant": "baseline",
+        "exit_status": 1,
+        "wall_seconds": 14.474235333997058,
+        "user_cpu_seconds": 5.567567,
+        "system_cpu_seconds": 3.049822,
+        "max_rss_bytes": 309166080,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": true,
+        "log_sha256": "5e80092096652ccb2357da76db28e7aa73ecfb1794828991c382f0bddee031f6"
+      },
+      {
+        "variant": "candidate",
+        "exit_status": 1,
+        "wall_seconds": 0.7572303329943679,
+        "user_cpu_seconds": 0.48485399999999995,
+        "system_cpu_seconds": 0.312313,
+        "max_rss_bytes": 67796992,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": false,
+        "log_sha256": "7f2fdbb18b8b5d1823b0d59d8d86a0f8c163c2c5db14b9c0f0c8397f0ada59a5"
+      },
+      {
+        "variant": "candidate",
+        "exit_status": 1,
+        "wall_seconds": 0.8066442910057958,
+        "user_cpu_seconds": 0.52037,
+        "system_cpu_seconds": 0.31770899999999996,
+        "max_rss_bytes": 68829184,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": false,
+        "log_sha256": "7f2fdbb18b8b5d1823b0d59d8d86a0f8c163c2c5db14b9c0f0c8397f0ada59a5"
+      },
+      {
+        "variant": "baseline",
+        "exit_status": 1,
+        "wall_seconds": 21.959890500002075,
+        "user_cpu_seconds": 6.951218,
+        "system_cpu_seconds": 3.8034179999999997,
+        "max_rss_bytes": 266895360,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": true,
+        "log_sha256": "c2d333653326e16e81e06ac54dfcaab838bd8af438adca947a373b52078ab34f"
+      },
+      {
+        "variant": "baseline",
+        "exit_status": 1,
+        "wall_seconds": 12.949495917011518,
+        "user_cpu_seconds": 5.950495,
+        "system_cpu_seconds": 2.822658,
+        "max_rss_bytes": 302874624,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": true,
+        "log_sha256": "9ac3000a7ae8690be7dba7025368d5098bfa43746e970f256bc5cbddf390f2b2"
+      },
+      {
+        "variant": "candidate",
+        "exit_status": 1,
+        "wall_seconds": 0.8550932910002302,
+        "user_cpu_seconds": 0.537254,
+        "system_cpu_seconds": 0.35587599999999997,
+        "max_rss_bytes": 68108288,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": false,
+        "log_sha256": "c6703cd109515094138ede9900e4e09817bc8cd39be8fd3149fe5ef6b711ff77"
+      },
+      {
+        "variant": "candidate",
+        "exit_status": 1,
+        "wall_seconds": 0.8307421659992542,
+        "user_cpu_seconds": 0.501696,
+        "system_cpu_seconds": 0.340538,
+        "max_rss_bytes": 68894720,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": false,
+        "log_sha256": "c6703cd109515094138ede9900e4e09817bc8cd39be8fd3149fe5ef6b711ff77"
+      },
+      {
+        "variant": "baseline",
+        "exit_status": 1,
+        "wall_seconds": 9.166637207992608,
+        "user_cpu_seconds": 5.082516,
+        "system_cpu_seconds": 1.774538,
+        "max_rss_bytes": 315752448,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": true,
+        "log_sha256": "0ae11659760c0c5c45ed41079ae5de9196630877ee0efd4a924d5df1776474e8"
+      },
+      {
+        "variant": "baseline",
+        "exit_status": 1,
+        "wall_seconds": 10.270768457994564,
+        "user_cpu_seconds": 5.861099,
+        "system_cpu_seconds": 2.07782,
+        "max_rss_bytes": 315736064,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": true,
+        "log_sha256": "6ee99e5c8ba0329047b05dc8bb271cbe599fdf0d0b8f88eed8c54a4d714a9893"
+      },
+      {
+        "variant": "candidate",
+        "exit_status": 1,
+        "wall_seconds": 0.6676453340041917,
+        "user_cpu_seconds": 0.47712699999999997,
+        "system_cpu_seconds": 0.277573,
+        "max_rss_bytes": 69009408,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": false,
+        "log_sha256": "c6703cd109515094138ede9900e4e09817bc8cd39be8fd3149fe5ef6b711ff77"
+      },
+      {
+        "variant": "candidate",
+        "exit_status": 1,
+        "wall_seconds": 0.6242931250017136,
+        "user_cpu_seconds": 0.460146,
+        "system_cpu_seconds": 0.25235799999999997,
+        "max_rss_bytes": 68435968,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": false,
+        "log_sha256": "c6703cd109515094138ede9900e4e09817bc8cd39be8fd3149fe5ef6b711ff77"
+      },
+      {
+        "variant": "baseline",
+        "exit_status": 1,
+        "wall_seconds": 7.229176249995362,
+        "user_cpu_seconds": 4.387544,
+        "system_cpu_seconds": 1.3608419999999999,
+        "max_rss_bytes": 314654720,
+        "advisories": [
+          "RUSTSEC-2026-0346",
+          "RUSTSEC-2026-0347",
+          "RUSTSEC-2026-0348",
+          "RUSTSEC-2026-0349",
+          "RUSTSEC-2026-0374",
+          "RUSTSEC-2026-0381",
+          "RUSTSEC-2026-0382"
+        ],
+        "ran_compiled_checks": true,
+        "log_sha256": "fe72d93e4e162e0874cab6f4ec73a34774887df7839f93bb84f6526f9317030c"
+      }
+    ],
+    "means": {
+      "baseline": {
+        "cpu_seconds": 8.114922833333333,
+        "max_rss_bytes": 304179882.6666667,
+        "wall_seconds_median": 11.61013218750304
+      },
+      "candidate": {
+        "cpu_seconds": 0.8063023333333333,
+        "max_rss_bytes": 68512426.66666667,
+        "wall_seconds_median": 0.7819373120000819
+      }
+    },
+    "candidate_change_percent": {
+      "cpu_seconds": -90.063955629728,
+      "max_rss_bytes": -77.476345225057,
+      "wall_seconds_median": -93.26504384815061
+    }
+  },
+  "validation": {
+    "history_release_tests": 22,
+    "history_manual_fixture": 12,
+    "python_checks": 28,
+    "python_proof": "all six baseline selected-gate runs execute the full 28-check suite successfully before the expected advisory rejection; focused pipeline run also passes all 12 tests",
+    "strict_clippy": "pass; all history targets, -D warnings",
+    "shellcheck_warning_severity": "pass",
+    "quality_guard_working_tree": "pass"
+  },
+  "release_test_build": {
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--manifest-path",
+      "rust/Cargo.toml",
+      "-p",
+      "aetower-history",
+      "--release",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "cwd": "/private/tmp/aetower-build-performance",
+    "exit_status": 0,
+    "wall_seconds": 24.598,
+    "user_cpu_seconds": 23.86,
+    "system_cpu_seconds": 1.599,
+    "average_cpu_percent": 103.5,
+    "sampled_peak_tree_rss_bytes": 461684736,
+    "rss_samples": 24,
+    "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+  },
+  "limits": "grouping fixture CPU and local gate rejection-path savings only; no app-wide or successful-hosted-CI improvement established"
+}

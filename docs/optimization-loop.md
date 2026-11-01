@@ -5,6 +5,35 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 10: borrow grouping keys and reject before compiler harnesses
+
+Grouping suggestions now borrow interned entity keys and display names. The
+original code cloned an owned key for every qualifying pair, including keys
+already present in the suggestion map. Pair iteration, first-match choice,
+threshold rounding and existing hints retain their behavior. All **22 history
+release tests** and strict Clippy pass, including legacy-output checks across
+randomized pair orders, Unicode/NUL names, duplicate IDs and missing entities.
+
+Twelve alternating retained release-test processes run 50 grouping operations
+each on the same dense 500-entity fixture. The 46,500-byte canonical output
+matches in every process. Six legacy processes use **3.688513 CPU-seconds**,
+versus **2.840176** for six candidate processes: **23.0% less fixture CPU**.
+Mean maximum process RSS is 9.35 → 9.10 MiB, but includes a shared legacy and
+candidate correctness check before timing and cannot isolate helper memory
+savings. Production packaging and the app comparison are pending.
+
+The local full gate now runs its selected mandatory dependency audit before
+the build-pipeline tests, which include real Swift compiler harnesses. Twelve
+alternating selected-gate processes report the same seven advisories and exit
+with the same failure status. Candidate processes skip the compiled checks.
+Median rejection wall time is **11.610 → 0.782s (-93.3%)**, total CPU
+**48.689537 → 4.837814 seconds (-90.1%)**, and mean maximum-process RSS
+**290.09 → 65.34 MiB (-77.5%)**. This is local failure feedback, not passing
+CI, a successful-build gain or a hosted-job comparison. Explicit include/skip
+selectors retain their behavior. All **28 Python checks** pass in every
+baseline gate run. Retained identities, outputs and all process results are in
+[`performance-loop10.json`](performance-loop10.json).
+
 ## Pass 9: direct UTF-8 decoding and shared test module caches
 
 The generated string reader now constructs a strict UTF-8 String from its

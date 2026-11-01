@@ -144,6 +144,33 @@ sys.exit(int(os.environ.get("FAKE_DENY_EXIT", "0")))
                     "cargo": str(self.bin / "cargo"), "jobs": "2",
                 })
 
+    def test_full_gate_rejects_dependencies_before_compiled_checks(self):
+        shutil.copyfile(SOURCE / "ci-local.sh", self.root / "scripts/ci-local.sh")
+        self.executable("git", "#!/bin/sh\nexit 0\n")
+        for tool in ("gitleaks", "swiftlint"):
+            self.executable(tool, "#!/bin/sh\nexit 0\n")
+        self.executable("python3", '#!/bin/sh\nprintf "%s\\n" pipeline >> "$AETOWER_TEST_EVENTS"\n')
+        self.executable("cargo-deny", '#!/bin/sh\nprintf "%s\\n" deny >> "$AETOWER_TEST_EVENTS"\nexit "$FAKE_DENY_EXIT"\n')
+        events = self.root / "gate-events"
+        self.env.update(AETOWER_CI_LOGGING_ACTIVE="1", AETOWER_CLEAN_BUILD="0",
+                        AETOWER_TEST_EVENTS=str(events))
+        cases = [
+            (0, "cargo deny,build pipeline tests", "", 0, ["deny", "pipeline"]),
+            (7, "cargo deny,build pipeline tests", "", 7, ["deny"]),
+            (7, "build pipeline tests", "", 0, ["pipeline"]),
+            (7, "cargo deny,build pipeline tests", "cargo deny", 0, ["pipeline"]),
+        ]
+        for deny_status, include, skip, expected_status, expected_events in cases:
+            with self.subTest(deny_status=deny_status, include=include, skip=skip):
+                events.unlink(missing_ok=True)
+                self.env["FAKE_DENY_EXIT"] = str(deny_status)
+                result = subprocess.run([
+                    "sh", str(self.root / "scripts/ci-local.sh"), "--mode", "full",
+                    "--include", include, "--skip", skip,
+                ], env=self.env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, expected_status, result.stdout + result.stderr)
+                self.assertEqual(events.read_text().splitlines(), expected_events)
+
     def test_release_build_does_not_compile_debug_runtime(self):
         self.env["AETOWER_BUILD_JOBS"] = "3"
         self.env["CARGO_BUILD_JOBS"] = "1"

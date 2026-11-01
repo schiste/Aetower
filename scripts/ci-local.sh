@@ -654,15 +654,16 @@ run_full_gate() {
         run "quality guard (working tree)" python3 "$ROOT/scripts/quality-guard.py" --mode working-tree
     fi
     run "quality guard" python3 "$ROOT/scripts/quality-guard.py" --mode "$MODE"
+    # The pipeline checks include real Swift compiler harnesses. Reject the
+    # same dependency-policy failures before those compiles and other tools.
+    # Explicit include/skip selections still apply to the mandatory gate label.
+    run_full_dependency_policy
     run_build_pipeline_tests
     run_full_gitleaks
     run_full_swiftlint
     run_full_shellcheck
     run_full_semgrep
     run "cargo fmt --check" "$CARGO_BIN" fmt --manifest-path "$ROOT/rust/Cargo.toml" --all -- --check
-    # Reject dependency-policy failures before spending time on compilation,
-    # tests and packaging. Keep the same mandatory audit and selected labels.
-    run_full_dependency_policy
     run "cargo clippy" "$CARGO_BIN" clippy --locked --manifest-path "$ROOT/rust/Cargo.toml" --all-targets -- -D warnings
     run_workspace_tests
     clean_swift_build_dir
