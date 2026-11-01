@@ -1,0 +1,144 @@
+{
+  "status": "source_and_fixture_validated_app_comparison_pending",
+  "change": "Cache the sorted unique u16 active set after cooccurrence pruning. Pair increments retain input order and duplicate semantics. Skip the full pair-table retention scan only when the set is unchanged; changed membership still performs the original pruning. Cache is initialized on the first sample, including empty input; boxed storage is exactly two bytes per unique active index, at most 128 KiB plus Option metadata. No sampling/counter/schema/text changes.",
+  "history_source_sha256": "4446afc5d35b5e4e34b2b24e223ac0a6ee8d4b5e371064caa0492d95c667f799",
+  "fixture": {
+    "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-cooccurrence-fixture-v1/results.json",
+    "output_sha256": "afc04c760c74b8d7ab42ec179c981c506dbca0325fbb7e5e7217a57ca0500f08",
+    "scope": "Original and active-set-cached pair sampling in the same retained release test binary, with a common History layout. 500 entities, 100 samples per child; stable, reordered and one-entity-churn workloads. Common setup validates counts and exact table iteration order with a shared hash builder. Not an app-wide comparison.",
+    "memory_scope": "wait4 maximum process RSS includes common setup, both state-oracle histories and canonical-output encoding. It cannot isolate retained-cache or helper memory savings.",
+    "binary_sha256": "b7b40cee4e12c4378284efd754973f48d2501f37b91623526963d6cb27c60cec",
+    "processes": 36,
+    "summary": {
+      "stable": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 2.519774,
+            "median_operation_wall_seconds": 0.3405932085,
+            "mean_max_process_rss_bytes": 17754794.666666668
+          },
+          "candidate": {
+            "total_cpu_seconds": 1.16993,
+            "median_operation_wall_seconds": 0.119347834,
+            "mean_max_process_rss_bytes": 18158933.333333332
+          }
+        },
+        "cpu_percent_change": -53.57004239269077,
+        "output_bytes": 2065860,
+        "output_sha256": "906c6a0f9df7f0ce6f36c03a9a2f61e710a6e2662a195a2547ca7bf592de95b4"
+      },
+      "reordered": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 2.507878,
+            "median_operation_wall_seconds": 0.32766395849999996,
+            "mean_max_process_rss_bytes": 18505728
+          },
+          "candidate": {
+            "total_cpu_seconds": 1.1090389999999999,
+            "median_operation_wall_seconds": 0.105679646,
+            "mean_max_process_rss_bytes": 17509034.666666668
+          }
+        },
+        "cpu_percent_change": -55.77779301863966,
+        "output_bytes": 2065860,
+        "output_sha256": "906c6a0f9df7f0ce6f36c03a9a2f61e710a6e2662a195a2547ca7bf592de95b4"
+      },
+      "churn": {
+        "variants": {
+          "previous": {
+            "total_cpu_seconds": 2.635103,
+            "median_operation_wall_seconds": 0.33133375,
+            "mean_max_process_rss_bytes": 19027285.333333332
+          },
+          "candidate": {
+            "total_cpu_seconds": 2.6007499999999997,
+            "median_operation_wall_seconds": 0.3237255415,
+            "mean_max_process_rss_bytes": 18336426.666666668
+          }
+        },
+        "cpu_percent_change": -1.3036682057589566,
+        "output_bytes": 2065860,
+        "output_sha256": "955ebe05059dde45d34ac1c1d5f668bbdc91695cf403ff6924d60feeaeac1307"
+      }
+    }
+  },
+  "validation": {
+    "history_release_passed": 26,
+    "manual_ignored": 2,
+    "clippy": "strict release all-targets -D warnings passed",
+    "oracle": "Original sampling algorithm and candidate share a cloned hash builder; compare exact counts, actual table iteration order, resulting grouping text and active membership after each update. Covers stable/reordered/duplicate IDs, churn, empty first sample with stale entries, disappearance/reappearance and wrapped indices."
+  },
+  "app_comparison": {
+    "status": "pending",
+    "scope": "Production packaging and app A/B required; helper CPU results do not establish app-wide CPU, physical footprint or wakeup savings."
+  },
+  "build_investigation": {
+    "scope": "Compiler diagnostics only; no new build optimization or native backend adopted. Optimized and typecheck-only timings are different scopes and are not an A/B comparison. Native app build and all 212 UI cases pass, but packaging portability and comparative pressure are unverified; see pass 14.",
+    "typecheck": {
+      "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-swift-typecheck-diagnostic-v1/results.json",
+      "source_files": 91,
+      "function_rows": 12903,
+      "wall_seconds": 21.248,
+      "cpu_seconds": 19.953,
+      "inputs_unchanged": true,
+      "limits": "Individual function timings include nested/lazy compiler work and are not additive exclusive CPU costs."
+    },
+    "optimized_object_compilation": {
+      "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-swift-phase-diagnostic-v2/results.json",
+      "wall_seconds": 182.642,
+      "cpu_seconds": 179.751,
+      "sampled_peak_tree_rss_bytes": 1947090944,
+      "phase_wall_seconds": {
+        "time.swift.source-file-populate-cache.wall": 0.007332563400268555,
+        "time.swift.LLVM pipeline.wall": 50.02654004096985,
+        "time.swift.IRGen.wall": 12.182743787765503,
+        "time.swift.SIL verification, post-optimization.wall": 0.0039370059967041016,
+        "time.swift.SIL optimization.wall": 68.61211895942688,
+        "time.swift.SIL verification, pre-optimization.wall": 0.0019419193267822266,
+        "time.swift.definite-init.wall": 0.05276846885681152,
+        "time.swift.SIL-mandatory-passes.wall": 6.646227121353149,
+        "time.swift.SIL-processing.wall": 75.26744890213013,
+        "time.swift.SIL-and-LLVM-processing.wall": 141.4842391014099,
+        "time.swift.SILGen-function.wall": 11.63529658317566,
+        "time.swift.SILGen.wall": 12.062455892562866,
+        "time.swift.perform-whole-module-type-checking.wall": 8.606910705566406e-05,
+        "time.swift.typecheck-expr-pattern.wall": 0.2703850269317627,
+        "time.swift.AST verification.wall": 4.601478576660156e-05,
+        "time.swift.typecheck-for-each.wall": 0.02126598358154297,
+        "time.swift.get-conformance-access-path.wall": 0.0026350021362304688,
+        "time.swift.typecheck-stmt.wall": 16.245975971221924,
+        "time.swift.load-non-storage-members.wall": 9.298324584960938e-06,
+        "time.swift.load-storage-members.wall": 0.00194549560546875,
+        "time.swift.associated-type-inference.wall": 0.0018839836120605469,
+        "time.swift.precheck-target.wall": 2.254701852798462,
+        "time.swift.typecheck-expr.wall": 6.226100206375122,
+        "time.swift.typecheck-decl.wall": 5.745201349258423,
+        "time.swift.Type checking and Semantic analysis.wall": 22.717917919158936,
+        "time.swift.perform-sema.wall": 22.723610877990723,
+        "time.swift.build-rewrite-system.wall": 0.08887290954589844,
+        "time.swift.import-clang-decl.wall": 0.1872692108154297,
+        "time.swift.module-populate-cache.wall": 0.0026781558990478516,
+        "time.swift.Import resolution.wall": 5.443678379058838,
+        "time.swift.parse-and-resolve-imports.wall": 5.4696409702301025,
+        "time.swift.load-stdlib.wall": 0.11838793754577637,
+        "time.swift-frontend.AetowerUI-all-arm64_apple_macosx15.0-o-O.wall": 181.89110684394836
+      },
+      "inputs_unchanged": true,
+      "limits": "Single UI module object-code diagnostic; excludes separate module emission, dependency outputs and linking. Phase timers are nested and cannot be summed."
+    },
+    "excluded_setup_attempt": {
+      "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-swift-phase-diagnostic-v1/results.json",
+      "reason": "Expired driver temporary supplementary-output map; no compiler started. Follow-up omits supplementary outputs and retains semantic flags/object outputs."
+    },
+    "sil_pass_diagnostic": {
+      "status": "running",
+      "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop15-swift-sil-pass-diagnostic-v1/results.json"
+    },
+    "official_guidance": "https://github.com/swiftlang/swift/blob/main/docs/CompilerPerformance.md"
+  },
+  "limits": [
+    "Stable maximum-process RSS rises 16.93 to 17.32 MiB in the common fixture; reordered/churn means fall. Common setup/oracles and final encoding prevent isolated cache-memory attribution; no app memory saving claimed.",
+    "Only the sampling helper is timed. App cadence, complete History update, collector and UI work require separate app comparison."
+  ]
+}

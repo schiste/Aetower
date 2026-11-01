@@ -388,7 +388,7 @@
       "limits": "Small real Swift package only. Native backend is deprecated by installed SwiftPM. No default backend, app compiler cap or app build performance change retained; full app build/test/package compatibility requires validation."
     },
     "native_app_validation": {
-      "status": "running",
+      "status": "build_and_tests_compatible_packaging_and_performance_unverified",
       "output": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-native-app-validation-v1/results.json",
       "scope": "Actual app build/test compatibility probe; deprecated native backend, two package jobs, explicit two frontend threads, release optimization. Not a comparative performance result; no default changed.",
       "resource_lookup_inspection": {
@@ -446,6 +446,44 @@
           "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
         },
         "scope": "Single fresh-scratch app build with existing shared dependency/SDK caches; no comparative saving established. UI test execution remains running."
+      },
+      "test": {
+        "exit_status": 0,
+        "passed_cases": 212,
+        "exact_case_status_counts_match_prior": true,
+        "absolute_cost": {
+          "command": [
+            "/usr/bin/swift",
+            "test",
+            "--package-path",
+            "/private/tmp/aetower-build-performance/macos",
+            "--scratch-path",
+            "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop14-native-app-validation-v1/scratch",
+            "-c",
+            "release",
+            "-j",
+            "2",
+            "--build-system",
+            "native",
+            "-Xswiftc",
+            "-num-threads",
+            "-Xswiftc",
+            "2",
+            "-v",
+            "-Xswiftc",
+            "-v"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 207.044,
+          "user_cpu_seconds": 207.755,
+          "system_cpu_seconds": 13.656,
+          "average_cpu_percent": 106.9,
+          "sampled_peak_tree_rss_bytes": 2261270528,
+          "rss_samples": 201,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scope": "Separate release test compilation/execution. Not a comparative performance result."
       }
     }
   },

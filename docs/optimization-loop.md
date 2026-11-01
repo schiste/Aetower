@@ -5,6 +5,45 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 15: skip unchanged active-set pruning; diagnose Swift optimizer cost
+
+Cooccurrence samples now retain their sorted unique active indices. Pair increments
+keep the original order and duplicate semantics; when membership is unchanged,
+the previous pruning already guarantees that every stored pair is active, so the
+full retention scan is redundant. Changed membership still performs the original
+pruning. The optional boxed cache initializes even for an empty first sample and
+uses two bytes per unique u16 index: at most 128 KiB plus metadata, normally
+1,000 bytes for the 500-entity fixture. Sampling cadence, counters, grouping order,
+text and schemas remain unchanged.
+
+All **26 history release tests** and strict release all-targets Clippy pass, with
+two ignored manual fixtures. Oracles clone the hash builder and compare exact
+counts, actual table iteration order and resulting grouping text across stable,
+reordered and duplicate IDs, churn, disappearance/reappearance, empty input and
+wrapped indices. Thirty-six retained release processes compare the preceding
+algorithm and candidate. Every variant emits identical **2,065,860 bytes** for
+its workload. Stable total process CPU is **2.519774 → 1.169930s (-53.6%)**;
+reordered **2.507878 → 1.109039s (-55.8%)**; churn **2.635103 → 2.600750s
+(-1.3%)**. Stable mean maximum-process RSS rises **16.93 → 17.32 MiB**, while
+reordered/churn means fall. Common setup, both oracle histories and final encoding
+prevent isolated cache-memory attribution. No app memory saving is claimed;
+production packaging and a fresh app comparison remain pending.
+
+Build investigation replays the captured native frontend command with private
+outputs and hashed sources/imported modules. Typecheck-only execution across 91
+UI source files takes **21.248s wall / 19.953 CPU seconds**, reporting 12,903
+function timings. Full optimized object compilation takes **182.642s wall /
+179.751 CPU seconds**, with 1856.89 MiB sampled peak tree RSS. Phase timers
+include semantic analysis **22.718s**, SIL optimization **68.612s** and the LLVM
+pipeline **50.027s**. These scopes differ and phase timers are nested; neither
+comparison establishes a build saving. A function timer may include lazy or
+nested work. The first full replay could not read an expired driver temporary
+output map and started no compiler; the completed replay omits supplementary
+outputs and retains all semantic flags and private object outputs. Optimized
+SIL per-pass diagnostics are running to narrow the next build change. No compiler
+optimization level, native backend default or quality gate is changed.
+Detailed evidence is in [`performance-loop15.json`](performance-loop15.json).
+
 ## Pass 14: preserve build accounting; bound historical grouping work
 
 The test wrapper retains its waiting shell across both Cargo phases, preserving
@@ -57,8 +96,9 @@ marks that backend deprecated. No app default or compiler cap is changed;
 the actual fresh-scratch app build passes with four compilation frontend commands
 using two threads and all three packaging products present. Its absolute cost is
 227.699s wall and 205.674 CPU seconds, with existing shared caches; this is not an
-A/B result. The 212-case UI compatibility execution is running, while packaging
-and comparative pressure measurements remain required. Its generated resource accessor
+A/B result. All **212 UI cases** pass with exact prior case/status agreement.
+Separate test compilation/execution costs 207.044s wall and 221.411 CPU seconds.
+Packaging portability and comparative pressure measurements remain unverified. Its generated resource accessor
 searches the bundle root and then an absolute build-directory fallback, whereas
 packaging copies resources under `Contents/Resources`. Build-tree UI tests cannot
 establish packaged portability; relocated resource access requires verification.

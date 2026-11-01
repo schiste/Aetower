@@ -24,6 +24,7 @@ pub struct History {
     entity_reverse_index: Vec<String>,
     next_entity_idx: u16,
     cooccurrence: HashMap<(u16, u16), u32>,
+    cooccurrence_active_indices: Option<Box<[u16]>>,
     cooccurrence_tick: u32,
     cooccurrence_sample_count: u32,
     metric_history: HashMap<String, MetricTrendState>,
@@ -188,6 +189,7 @@ impl History {
             entity_reverse_index: Vec::new(),
             next_entity_idx: 0,
             cooccurrence: HashMap::new(),
+            cooccurrence_active_indices: None,
             cooccurrence_tick: 0,
             cooccurrence_sample_count: 0,
             metric_history: HashMap::new(),
@@ -412,21 +414,7 @@ impl History {
             .cooccurrence_tick
             .is_multiple_of(COOCCURRENCE_SAMPLE_INTERVAL_TICKS);
         if sample_cooccurrence {
-            let active_indices: Vec<u16> = entities
-                .iter()
-                .map(|entity| self.intern_entity_id(&entity.entity_id))
-                .collect();
-            self.cooccurrence_sample_count = self.cooccurrence_sample_count.saturating_add(1);
-            for (i, &a) in active_indices.iter().enumerate() {
-                for &b in active_indices.iter().skip(i + 1) {
-                    let key = if a < b { (a, b) } else { (b, a) };
-                    *self.cooccurrence.entry(key).or_insert(0) += 1;
-                }
-            }
-
-            let active_idx_set: HashSet<u16> = active_indices.iter().copied().collect();
-            self.cooccurrence
-                .retain(|(a, b), _| active_idx_set.contains(a) && active_idx_set.contains(b));
+            self.sample_cooccurrence(entities);
         }
         if self.cooccurrence_sample_count >= COOCCURRENCE_MIN_SAMPLES {
             let mut suggestions = self.grouping_suggestions(entities);
@@ -589,6 +577,53 @@ impl History {
             self.host_history.snapshot(),
             forecast,
         )
+    }
+
+    fn sample_cooccurrence(&mut self, entities: &[EntitySnapshot]) {
+        let mut active_indices: Vec<u16> = entities
+            .iter()
+            .map(|entity| self.intern_entity_id(&entity.entity_id))
+            .collect();
+        self.cooccurrence_sample_count = self.cooccurrence_sample_count.saturating_add(1);
+        for (i, &a) in active_indices.iter().enumerate() {
+            for &b in active_indices.iter().skip(i + 1) {
+                let key = if a < b { (a, b) } else { (b, a) };
+                *self.cooccurrence.entry(key).or_insert(0) += 1;
+            }
+        }
+
+        // Retention already removed every inactive index on the previous sample.
+        // The pair updates above add only currently active indices. When the set
+        // is unchanged, another full pair-table scan cannot remove anything.
+        active_indices.sort_unstable();
+        active_indices.dedup();
+        if self.cooccurrence_active_indices.as_deref() != Some(active_indices.as_slice()) {
+            let active_idx_set: HashSet<u16> = active_indices.iter().copied().collect();
+            self.cooccurrence
+                .retain(|(a, b), _| active_idx_set.contains(a) && active_idx_set.contains(b));
+            // Box the deduplicated slice so retained storage is bounded by the
+            // u16 domain, even if the input contains many duplicate entities.
+            self.cooccurrence_active_indices = Some(active_indices.into_boxed_slice());
+        }
+    }
+
+    #[cfg(test)]
+    fn previous_sample_cooccurrence(&mut self, entities: &[EntitySnapshot]) {
+        let active_indices: Vec<u16> = entities
+            .iter()
+            .map(|entity| self.intern_entity_id(&entity.entity_id))
+            .collect();
+        self.cooccurrence_sample_count = self.cooccurrence_sample_count.saturating_add(1);
+        for (i, &a) in active_indices.iter().enumerate() {
+            for &b in active_indices.iter().skip(i + 1) {
+                let key = if a < b { (a, b) } else { (b, a) };
+                *self.cooccurrence.entry(key).or_insert(0) += 1;
+            }
+        }
+
+        let active_idx_set: HashSet<u16> = active_indices.iter().copied().collect();
+        self.cooccurrence
+            .retain(|(a, b), _| active_idx_set.contains(a) && active_idx_set.contains(b));
     }
 
     fn grouping_suggestions(&self, entities: &[EntitySnapshot]) -> HashMap<&str, String> {
@@ -2284,6 +2319,139 @@ mod tests {
             }
         }
         suggestions
+    }
+
+    #[test]
+    fn cooccurrence_sampling_preserves_counts_order_and_membership_changes() {
+        for _ in 0..8 {
+            let mut expected = History::new();
+            let mut actual = History::new();
+            expected.cooccurrence =
+                std::collections::HashMap::with_hasher(actual.cooccurrence.hasher().clone());
+            expected.next_entity_idx = u16::MAX - 3;
+            actual.next_entity_idx = u16::MAX - 3;
+            // An uninitialized cache must still prune an empty first sample.
+            expected.cooccurrence.insert((100, 100), 5);
+            actual.cooccurrence.insert((100, 100), 5);
+            for ids in [
+                vec![],
+                vec!["a"],
+                vec!["a", "b", "c"],
+                vec!["c", "b", "a"],
+                vec!["a", "b", "a", "c"],
+                vec!["a", "c", "d"],
+                vec!["d", "c", "a"],
+                vec!["d", "e"],
+                vec![],
+                vec![],
+                vec!["e", "a", "b"],
+                vec!["b", "e", "a"],
+            ] {
+                let entities: Vec<_> = ids
+                    .iter()
+                    .enumerate()
+                    .map(|(index, id)| {
+                        entity_with_process(id, &format!("{id} 測定\0🗼"), index as u32 + 1, 1)
+                    })
+                    .collect();
+                expected.previous_sample_cooccurrence(&entities);
+                actual.sample_cooccurrence(&entities);
+                assert_eq!(actual.entity_reverse_index, expected.entity_reverse_index);
+                assert_eq!(
+                    actual.cooccurrence_sample_count,
+                    expected.cooccurrence_sample_count
+                );
+                assert_eq!(actual.cooccurrence, expected.cooccurrence);
+                assert_eq!(
+                    actual.cooccurrence.iter().collect::<Vec<_>>(),
+                    expected.cooccurrence.iter().collect::<Vec<_>>()
+                );
+                assert_eq!(
+                    actual.grouping_suggestions(&entities),
+                    expected.grouping_suggestions(&entities)
+                );
+                let mut active: Vec<_> = entities
+                    .iter()
+                    .map(|entity| actual.entity_index[&entity.entity_id])
+                    .collect();
+                active.sort_unstable();
+                active.dedup();
+                assert_eq!(
+                    actual.cooccurrence_active_indices.as_deref(),
+                    Some(active.as_slice())
+                );
+                assert!(
+                    actual.cooccurrence_active_indices.as_deref().unwrap().len()
+                        <= u16::MAX as usize + 1
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual cooccurrence sampling comparison; no concurrent builds"]
+    fn cooccurrence_sampling_benchmark() {
+        let variant = std::env::var("AETOWER_COOCCURRENCE_VARIANT")
+            .unwrap_or_else(|_| "candidate".to_owned());
+        let shape =
+            std::env::var("AETOWER_COOCCURRENCE_SHAPE").unwrap_or_else(|_| "stable".to_owned());
+        assert!(matches!(variant.as_str(), "previous" | "candidate"));
+        assert!(matches!(shape.as_str(), "stable" | "reordered" | "churn"));
+        let mut entities: Vec<_> = (0..500)
+            .map(|index| {
+                entity_with_process(&format!("entity-{index:04}"), "測定 🗼", index + 1, 1)
+            })
+            .collect();
+        let mut expected = History::new();
+        let mut actual = History::new();
+        expected.cooccurrence =
+            std::collections::HashMap::with_hasher(actual.cooccurrence.hasher().clone());
+        for step in 0..8 {
+            if shape == "reordered" {
+                entities.reverse();
+            }
+            if shape == "churn" {
+                entities[0].entity_id = format!("new-{step:04}");
+            }
+            expected.previous_sample_cooccurrence(&entities);
+            actual.sample_cooccurrence(&entities);
+            assert_eq!(actual.cooccurrence, expected.cooccurrence);
+            assert_eq!(
+                actual.cooccurrence.iter().collect::<Vec<_>>(),
+                expected.cooccurrence.iter().collect::<Vec<_>>()
+            );
+        }
+        let mut history = if variant == "previous" {
+            expected
+        } else {
+            actual
+        };
+        let iterations = 100;
+        let started = std::time::Instant::now();
+        for step in 0..iterations {
+            if shape == "reordered" {
+                entities.reverse();
+            }
+            if shape == "churn" {
+                entities[0].entity_id = format!("measured-new-{step:04}");
+            }
+            if variant == "previous" {
+                history.previous_sample_cooccurrence(std::hint::black_box(&entities));
+            } else {
+                history.sample_cooccurrence(std::hint::black_box(&entities));
+            }
+            std::hint::black_box(&history.cooccurrence);
+        }
+        let elapsed = started.elapsed().as_nanos();
+        let pairs: std::collections::BTreeMap<_, _> = history.cooccurrence.into_iter().collect();
+        if let Ok(path) = std::env::var("AETOWER_COOCCURRENCE_OUTPUT") {
+            std::fs::write(path, format!("{pairs:?}")).unwrap();
+        }
+        println!(
+            "COOCCURRENCE_BENCH {{\"variant\":\"{variant}\",\"shape\":\"{shape}\",\"iterations\":{iterations},\"pair_count\":{},\"count_sum\":{},\"operation_nanoseconds\":{elapsed}}}",
+            pairs.len(),
+            pairs.values().map(|&count| count as u64).sum::<u64>()
+        );
     }
 
     #[test]
