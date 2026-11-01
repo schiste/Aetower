@@ -5,6 +5,33 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 18: reduce snapshot allocation traffic and hardware pressure
+
+The engine now transfers six owned host fields from the collector into its
+published snapshot. Remaining process/self/timing data stays available; refresh
+cadence and wake sources are unchanged. No cache or persistent state is added.
+The collector supplies exact-size arrays or clones of cached arrays, so the
+transfer retains the prior published capacities.
+
+A private native constructor oracle uses real model types and exact initializer
+bodies. All four shapes preserve complete host/process/self/timing JSON bytes
+and vector capacities across three repetitions. The small shape observes
+**20 → 2 allocation requests / 724 → 25 requested bytes**. Interface-heavy and
+dense shapes observe **139 → 2 / 6858 → 25 bytes** and **218 → 2 / 10937 → 25
+bytes**; the empty shape remains **2 / 25 bytes**. Those remaining allocations
+copy the unchanged frontmost-app strings. This is diagnostic allocation traffic,
+not measured CPU savings, RSS, physical footprint or whole-app wakeups.
+The allocator is isolated to a temporary integration executable and removed
+before normal tests. All **70 normal core release cases** pass with exact native
+case coverage, followed by strict all-target core Clippy and formatting checks.
+Absolute validation cost is **133.359s wall / 98.041 CPU-seconds / 517.97 MiB
+sampled peak tree RSS**; no comparative build saving is inferred.
+
+Build work reuses the retained Rust target with one Cargo job, and retains the
+pass-17 app for later comparisons without recompiling unchanged Swift code.
+Package job counts do not bound compiler-internal threads. No matched build-job
+comparison or new whole-CI saving is established yet.
+
 ## Pass 17: stream scan publication; measure SQLite test-profile costs
 
 Publishing a large scan used to retain every decoded file row before recording
@@ -52,7 +79,16 @@ validates the canonical manifest without a command-line profile override:
 information, debug assertions and overflow checks. Its absolute cache-reusing
 cost is **110.854s wall / 52.631 CPU-seconds / 204.58 MiB sampled peak tree RSS**;
 this is validation, not another matched timing comparison. Release settings are
-unchanged. See
+unchanged.
+
+The current pass-17 package at `aab2d15` and its unchanged repeat pass smoke and
+strict signatures: **271.684s / 357.039 CPU-seconds / 2260.59 MiB sampled peak
+tree RSS**, then **7.251s / 6.009 CPU-seconds / 355.67 MiB**. These are absolute
+costs with existing caches, not A/B or cold comparisons. The app is retained
+outside the temporary worktree, with 115 hashed payload files. The independent
+repeat-output timestamp audit could not complete before the temporary compiler
+outputs disappeared; no claim of independently verified zero compilation is
+made. No installation, notarization or release occurred. See
 [`performance-loop17.json`](performance-loop17.json).
 
 ## Pass 16: reject compiler/pruning candidates; validate network allocation reuse

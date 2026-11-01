@@ -853,8 +853,8 @@ impl Engine {
                         guard.runtime_lag_metrics.clone(),
                     )
                 };
-                // Single HostSnapshot construction — passed to pipeline
-                // (which runs identity + attribution + friction internally).
+                // Transfer the collected host data into the snapshot; the pipeline
+                // borrows it for identity, attribution and friction.
                 let mut host = HostSnapshot {
                     cpu_percent: raw.host.cpu_percent,
                     memory_used_bytes: raw.host.memory_used_bytes,
@@ -875,7 +875,7 @@ impl Engine {
                     thermal_state: raw.host.thermal_state,
                     on_battery: raw.host.on_battery,
                     battery_charge_percent: raw.host.battery_charge_percent,
-                    battery_health: raw.host.battery_health.clone(),
+                    battery_health: raw.host.battery_health,
                     low_power_mode: raw.host.low_power_mode,
                     frontmost_app_name: frontmost_app_state
                         .as_ref()
@@ -892,11 +892,11 @@ impl Engine {
                     fans: sensor_sample.fans.clone(),
                     cpu_temperatures: sensor_sample.cpu_temperatures.clone(),
                     power_readings: sensor_sample.power_readings.clone(),
-                    boot_session: raw.host.boot_session.clone(),
-                    bluetooth_devices: raw.host.bluetooth_devices.clone(),
-                    network_interfaces: raw.host.network_interfaces.clone(),
-                    disks: raw.host.disks.clone(),
-                    per_core_cpu: raw.host.per_core_cpu.clone(),
+                    boot_session: raw.host.boot_session,
+                    bluetooth_devices: raw.host.bluetooth_devices,
+                    network_interfaces: raw.host.network_interfaces,
+                    disks: raw.host.disks,
+                    per_core_cpu: raw.host.per_core_cpu,
                 };
                 let gpu_interval = runtime_config.gpu_interval(&host);
                 let mut gpu_sample_millis = 0.0;

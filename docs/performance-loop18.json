@@ -1,0 +1,214 @@
+{
+  "status": "source_validated_allocation_traffic_reduced_app_runtime_pending",
+  "baseline_commit": "aab2d15c2a4a6a1c55f6bb63ebfa7a4785e351c5",
+  "change": "Move battery health, boot session, Bluetooth devices, network interfaces, disk health and per-core CPU from the collected sample into HostSnapshot instead of cloning. No remaining raw-host use; process/self/timing uses preserved.",
+  "allocation_oracle": {
+    "status": "complete",
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop18-owned-host-allocations-v2/results.json",
+    "source_plan": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop18-owned-host-allocations-v2/source-plan.json",
+    "cases": [
+      {
+        "baseline": [
+          2,
+          25,
+          0,
+          0,
+          0,
+          0
+        ],
+        "candidate": [
+          2,
+          25,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacities": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "case": "empty",
+        "output_bytes": 1970,
+        "repetitions": 3,
+        "output_sha256": "0d06718533854ecce1b80eb5e62f0b09b9723f0139cc959d36a275049659e801"
+      },
+      {
+        "baseline": [
+          20,
+          724,
+          18,
+          699,
+          0,
+          0
+        ],
+        "candidate": [
+          2,
+          25,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacities": [
+          2,
+          2,
+          1,
+          10
+        ],
+        "case": "small",
+        "output_bytes": 3287,
+        "repetitions": 3,
+        "output_sha256": "ebfafb186b4b1f43c52f571db45034ccf2be4b807b85e4f208e813d5e902bb72"
+      },
+      {
+        "baseline": [
+          139,
+          6858,
+          137,
+          6833,
+          0,
+          0
+        ],
+        "candidate": [
+          2,
+          25,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacities": [
+          64,
+          0,
+          1,
+          10
+        ],
+        "case": "interfaces",
+        "output_bytes": 9715,
+        "repetitions": 3,
+        "output_sha256": "a2010d2230ba432bc66e9f04c62891b866611bd38c6be0490f9af039270599f8"
+      },
+      {
+        "baseline": [
+          218,
+          10937,
+          216,
+          10912,
+          0,
+          0
+        ],
+        "candidate": [
+          2,
+          25,
+          0,
+          0,
+          0,
+          0
+        ],
+        "capacities": [
+          64,
+          32,
+          8,
+          32
+        ],
+        "case": "dense",
+        "output_bytes": 15706,
+        "repetitions": 3,
+        "output_sha256": "1ea0d5e9b34fce007931e4f7c7284ecd978fd2b412b6981fa8b42de90c2c9716"
+      }
+    ],
+    "calibration": "Exactly one allocation and deallocation of 1024 bytes; no reallocations.",
+    "count_fields": [
+      "allocation_requests",
+      "allocated_bytes",
+      "deallocation_requests",
+      "deallocated_bytes",
+      "reallocations",
+      "reallocated_requested_bytes"
+    ],
+    "canonical_inputs_unchanged": true,
+    "temporary_fixture_removed": true,
+    "scope": "Private integration fixture imports real collector/model types and contains the exact retained old/new HostSnapshot initializers, removing only unused mut. Allocation counts are diagnostic; do not derive CPU timing savings from the instrumented allocator. Serialized complete host plus remaining process/self/timing data and retained vector capacities must match in four shapes and three repetitions each. Normal production library source remains canonical; only a uniquely named temporary integration target is added and removed. Compilation uses the retained Rust cache and one Cargo job; absolute cost, not A/B.",
+    "absolute_build_and_oracle_cost": {
+      "command": [
+        "/Users/christophehenner/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--manifest-path",
+        "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/rust/Cargo.toml",
+        "-p",
+        "aetower-core",
+        "--test",
+        "loop18_owned_host_allocations",
+        "--",
+        "--exact",
+        "owned_host_transfer_preserves_output_and_counts_allocations",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+      "exit_status": 0,
+      "wall_seconds": 16.464,
+      "user_cpu_seconds": 13.394,
+      "system_cpu_seconds": 0.891,
+      "average_cpu_percent": 86.8,
+      "sampled_peak_tree_rss_bytes": 259194880,
+      "rss_samples": 16,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    }
+  },
+  "capacity_review": "Collector per-core vector has exact capacity; network metadata mapping is exact-size; disk/Bluetooth vectors are cloned before reaching the engine. Oracle verifies equal published capacities.",
+  "build_hardware_scope": "Reuse retained Rust target and already packaged Swift image for prospective app comparisons; one Cargo job for focused validation. This is no hard frontend-thread cap or matched one-vs-two-job saving.",
+  "baseline_app_receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-production-package-v1/results.json",
+  "normal_core_validation": {
+    "status": "complete",
+    "passed": 70,
+    "total": 70,
+    "expected_native_cases": 70,
+    "exact_native_case_coverage": true,
+    "canonical_inputs_unchanged": true,
+    "cost": {
+      "command": [
+        "/Users/christophehenner/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--message-format=json",
+        "--manifest-path",
+        "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/rust/Cargo.toml",
+        "-p",
+        "aetower-core",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+      "exit_status": 0,
+      "wall_seconds": 133.359,
+      "user_cpu_seconds": 94.409,
+      "system_cpu_seconds": 3.632,
+      "average_cpu_percent": 73.5,
+      "sampled_peak_tree_rss_bytes": 543129600,
+      "rss_samples": 125,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    },
+    "scope": "All normal aetower-core release unit, integration and documentation tests; one Cargo job and retained target cache. Temporary allocation integration target is absent. Validate selected native test coverage using each emitted executable test list. Absolute validation cost, not A/B or whole workspace.",
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop18-core-validation-v1/results.json",
+    "native_test_executables": 2
+  },
+  "excluded_setup_attempts": [
+    {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop18-owned-host-allocations-v1/results.json",
+      "reason": "Diagnostic fixture assumed nonexistent RawProcessSample::default; corrected to existing synthetic helper. Production candidate compiled; zero allocation windows."
+    }
+  ],
+  "app_runtime_claim": "No current app CPU, physical-footprint or wakeup gain is established from constructor counts. Whole-app measurement pending.",
+  "compiler_checks": {
+    "formatting": "cargo fmt --all -- --check passed; broker receipt 6948b3dab107ea75745506615b693dbd",
+    "clippy": "cargo clippy --locked --release -p aetower-core --all-targets -- -D warnings passed; one Cargo job; broker receipt 47a70b0a3c36e754f4915514bbd5148d"
+  }
+}
