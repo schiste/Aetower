@@ -29,8 +29,12 @@ Mean maximum RSS is essentially flat, **300.55 → 299.07 MiB**. This is a local
 test-cost comparison, not a whole-app build or hosted-CI speedup.
 
 The full release suite costs **224.702s wall / 227.163 CPU-seconds / 1,470.05
-MiB sampled peak tree RSS**. These are absolute costs. Signed packaging and
-the matched app comparison are pending. Fixture sources, retained binary
+MiB sampled peak tree RSS**. Signed production packaging and smoke pass;
+packaging after release tests costs **276.500s wall / 229.352 CPU-seconds /
+1,694.91 MiB sampled peak tree RSS**, and its unchanged repeat costs
+**14.115s / 9.332 CPU-seconds / 362.72 MiB**. These are absolute costs.
+The retained app pair shares all nonsignature payload files except its Swift
+executable; the four-window app comparison is running. Fixture sources, retained binary
 identities and all process results are in
 [`performance-loop9.json`](performance-loop9.json).
 
