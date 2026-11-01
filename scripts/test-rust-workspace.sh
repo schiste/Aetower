@@ -10,5 +10,7 @@ cd "$ROOT/rust"
 # every crate's tests, including the generator, serial for storage isolation.
 "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" \
     --workspace --exclude uniffi-bindgen-swift -- --test-threads=1
-exec "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" \
+# Keep the waiting shell: exec can discard earlier child CPU accounting on macOS.
+"$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" \
     -p uniffi-bindgen-swift -- --test-threads=1
+exit "$?"

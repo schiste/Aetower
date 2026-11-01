@@ -110,6 +110,30 @@ sys.exit(9 if os.environ.get("FAIL_TEST_STAGE") == stage else 0)
             f"2 run --locked --manifest-path {self.root}/rust/Cargo.toml -p aetower-bench --release -- --verify-telemetry-loopback"
         ])
 
+    @unittest.skipUnless(hasattr(os, "wait4"), "requires waited-child CPU accounting")
+    def test_workspace_test_cpu_accounts_for_both_cargo_children(self):
+        self.executable("cargo", '''#!/usr/bin/env python3
+import time
+started = time.process_time()
+value = 0
+while time.process_time() - started < 0.1:
+    for index in range(1000):
+        value = (value + index) % 1000003
+print("CARGO_CHILD_CPU", time.process_time() - started, flush=True)
+''')
+        with (self.root / "child-cpu.log").open("w+") as log:
+            child = subprocess.Popen(["sh", str(self.root / "scripts/test-rust-workspace.sh")],
+                                     cwd=self.root / "rust", env=self.env,
+                                     stdout=log, stderr=subprocess.STDOUT)
+            _, status, usage = os.wait4(child.pid, 0)
+            child.returncode = os.waitstatus_to_exitcode(status)
+            self.assertEqual(child.returncode, 0)
+            log.seek(0)
+            own_cpu = [float(line.split()[1]) for line in log
+                       if line.startswith("CARGO_CHILD_CPU ")]
+        self.assertEqual(len(own_cpu), 2)
+        self.assertGreaterEqual(usage.ru_utime + usage.ru_stime, sum(own_cpu) * 0.95)
+
     def test_standalone_benchmark_uses_shared_compiler_budget(self):
         subprocess.run(["sh", str(self.root / "scripts/measure-overhead.sh"),
                         "--iterations", "4", "--enforce"], env=self.env, check=True)
