@@ -7,8 +7,8 @@ separate from measured app-wide improvements.
 
 ## Pass 18: reduce snapshot allocation traffic and hardware pressure
 
-The engine now transfers six owned host fields from the collector into its
-published snapshot. Remaining process/self/timing data stays available; refresh
+A candidate transferred six owned host fields from the collector into its
+published snapshot; it is now withdrawn as a precaution after the app captures. Remaining process/self/timing data stays available; refresh
 cadence and wake sources are unchanged. No cache or persistent state is added.
 The collector supplies exact-size arrays or clones of cached arrays, so the
 transfer retains the prior published capacities.
@@ -55,15 +55,34 @@ physical footprint **126.35 → 136.72 MiB (+8.21%)**, RSS **258.17 → 234.74 M
 are near zero and have no meaningful percentage comparison. Four windows per
 variant, shared host load and live settings/inputs limit interpretation; these
 are app-process counters and exclude children. Do not pool earlier Swift images.
+Baseline Rust was built in the earlier temporary worktree; candidate Rust in
+the new persistent checkout. This changes Rust build location as well as source,
+even though common Swift bytes match. Rebuild both library variants in one
+persistent checkout before attempting source-only attribution.
 
-**Hold the ownership-transfer candidate in the draft for review.** Physical
-footprint rose in both orders, so fewer allocations are not a whole-app memory
-win. No causal regression or general CPU/wakeup saving is established. Retain
-all unfavorable evidence; no merge, installation or release occurred. A balanced
-**two-one-one-two** normal-runtime rebuild comparison is now running to test
-compiler pressure with unchanged flags and products. No concurrency default is
-changed yet. Hosted quality on exact `4f0c03e` rejects dependency policy before
-Rust/Swift artifact restores and the full build gate; no policy is waived.
+**Withdraw the ownership-transfer candidate as a precaution.** Physical
+footprint rose in both orders, so fewer allocations are not an app memory win.
+No causal regression or general CPU/wakeup saving is established. Exact prior
+engine source is restored and all **70 normal core release cases** pass with
+exact native coverage and unchanged inputs; formatting passes. All candidate source,
+binaries and unfavorable evidence remain retained. No installed app, release
+or merge is changed.
+
+The **two-one-one-two** normal-runtime root rebuild comparison completes with
+four identical unit graphs (**four rebuilt units each**) and byte-identical
+CLI/MCP/FFI products. One job observes means **286.107s wall / 240.724
+CPU-seconds / 1408.22 MiB sampled peak tree RSS**; two jobs **212.888s /
+256.848 CPU-seconds / 1353.25 MiB**. Relative to two jobs, one job is **34.39%
+slower**, uses **6.28% fewer CPU-seconds**, and has **4.06% higher sampled peak
+RSS**. Within-variant wall spread is substantial (one job **233.448–338.766s**;
+two jobs **166.996–258.780s**) on the changing shared host. Keep default
+concurrency unchanged: this does not support lower peak memory, and is a
+partial-root rebuild comparison, excluding cold dependencies, Swift and whole
+CI. An owned MCP compilation was observed at **1272.16 MiB RSS** in one spot
+check, motivating a separate per-package codegen-partition experiment; that
+sample is not a per-unit peak measurement. Hosted quality on exact `4f0c03e`
+rejects dependency policy before Rust/Swift artifact restores and the full build
+gate; no policy is waived.
 
 ## Pass 17: stream scan publication; measure SQLite test-profile costs
 
