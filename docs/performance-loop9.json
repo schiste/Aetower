@@ -1,0 +1,371 @@
+{
+  "status": "focused checks and fixture comparisons complete; full Swift suite, packaging and app comparison pending",
+  "runtime_source_commit": "pending; generated source identified by SHA-256 in fixture",
+  "decoder_benchmark": {
+    "scope": "actual generated full entity sequence decoding plus equality checks; identical serialized payload; no app state or collection; no app-wide claim",
+    "rss_scope": "macOS wait4 maximum resident set size for each benchmark child, in bytes; not tree RSS or app footprint",
+    "status": "complete",
+    "builds": [
+      {
+        "variant": "legacy",
+        "command": [
+          "/usr/bin/swiftc",
+          "-O",
+          "-whole-module-optimization",
+          "-swift-version",
+          "6",
+          "-target",
+          "arm64-apple-macosx15.0",
+          "-module-name",
+          "Loop9Decoder",
+          "-module-cache-path",
+          "/private/tmp/aetower-build-performance/tmp/clang-module-cache",
+          "-I",
+          "/private/tmp/aetower-build-performance/macos/Sources/aetower_ffiFFI",
+          "-L",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/Aetower.app/Contents/Frameworks",
+          "-laetower_ffi",
+          "-Xlinker",
+          "-rpath",
+          "-Xlinker",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/Aetower.app/Contents/Frameworks",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop9-decoder-fixture/legacy.swift",
+          "-o",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop9-decoder-fixture/legacy"
+        ],
+        "wall_seconds": 16.876681125024334,
+        "source_sha256": "2fe44b443a1e43e5dbf96482dc565c6e22027fa95d1383807456d818c269fb95",
+        "binary_sha256": "5f16966bc2fcfdc5f4f2c03c39737e6fc346d0dd3c0f7b935cc65a45a596aa1a"
+      },
+      {
+        "variant": "candidate",
+        "command": [
+          "/usr/bin/swiftc",
+          "-O",
+          "-whole-module-optimization",
+          "-swift-version",
+          "6",
+          "-target",
+          "arm64-apple-macosx15.0",
+          "-module-name",
+          "Loop9Decoder",
+          "-module-cache-path",
+          "/private/tmp/aetower-build-performance/tmp/clang-module-cache",
+          "-I",
+          "/private/tmp/aetower-build-performance/macos/Sources/aetower_ffiFFI",
+          "-L",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/Aetower.app/Contents/Frameworks",
+          "-laetower_ffi",
+          "-Xlinker",
+          "-rpath",
+          "-Xlinker",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/Aetower.app/Contents/Frameworks",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop9-decoder-fixture/candidate.swift",
+          "-o",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop9-decoder-fixture/candidate"
+        ],
+        "wall_seconds": 19.167953625001246,
+        "source_sha256": "0b905b2ee7676f1f477f88398aea19092d1127cc9f1d7e21e17b6fdb193977fd",
+        "binary_sha256": "90240913d5380125204446eb60b0d7c914bc889840209df44f40ea364c1aa220"
+      }
+    ],
+    "runs": [
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 846828500,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 18071552,
+        "variant": "legacy",
+        "wall_seconds": 1.0928500409936532,
+        "user_cpu_seconds": 0.627809,
+        "system_cpu_seconds": 0.02165,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 613967875,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 19234816,
+        "variant": "candidate",
+        "wall_seconds": 0.7813951249991078,
+        "user_cpu_seconds": 0.52035,
+        "system_cpu_seconds": 0.013474,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 644743875,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 18907136,
+        "variant": "candidate",
+        "wall_seconds": 0.6564398750197142,
+        "user_cpu_seconds": 0.532153,
+        "system_cpu_seconds": 0.016078,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 789383792,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 18169856,
+        "variant": "legacy",
+        "wall_seconds": 0.8051681249926332,
+        "user_cpu_seconds": 0.6620429999999999,
+        "system_cpu_seconds": 0.021147,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 957526542,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 17498112,
+        "variant": "legacy",
+        "wall_seconds": 0.9704749579832423,
+        "user_cpu_seconds": 0.661952,
+        "system_cpu_seconds": 0.022385,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 831873292,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 18284544,
+        "variant": "candidate",
+        "wall_seconds": 0.8464880409883335,
+        "user_cpu_seconds": 0.539706,
+        "system_cpu_seconds": 0.018002999999999998,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 953154792,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 18137088,
+        "variant": "candidate",
+        "wall_seconds": 0.9674254999845289,
+        "user_cpu_seconds": 0.5557489999999999,
+        "system_cpu_seconds": 0.025344,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 1928545125,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 18251776,
+        "variant": "legacy",
+        "wall_seconds": 1.9420745829993393,
+        "user_cpu_seconds": 0.661828,
+        "system_cpu_seconds": 0.028593999999999998,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 1393163667,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 17481728,
+        "variant": "legacy",
+        "wall_seconds": 1.4053774999920279,
+        "user_cpu_seconds": 0.591116,
+        "system_cpu_seconds": 0.019702,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 1140002417,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 18923520,
+        "variant": "candidate",
+        "wall_seconds": 1.1518285000056494,
+        "user_cpu_seconds": 0.498702,
+        "system_cpu_seconds": 0.018941,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 940982917,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 18464768,
+        "variant": "candidate",
+        "wall_seconds": 0.9540952499955893,
+        "user_cpu_seconds": 0.48293899999999995,
+        "system_cpu_seconds": 0.016047,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      },
+      {
+        "iterations": 200,
+        "entity_count": 500,
+        "payload_bytes": 1266039,
+        "operation_nanoseconds": 986537875,
+        "checksum": 7283950551726678000,
+        "max_rss_bytes": 17743872,
+        "variant": "legacy",
+        "wall_seconds": 1.0029286659846548,
+        "user_cpu_seconds": 0.6238619999999999,
+        "system_cpu_seconds": 0.016041,
+        "decoded_sha256": "7674342763116ddeee834bb79727dccaf373cd3ef75b48911f5c50b728009f80"
+      }
+    ],
+    "baseline_scope": "pass 8 checked integer decoder plus original string byte-array reader; candidate changes only string reader; uncommitted candidate source hash retained",
+    "source_commit": "68d3f752fb8a24d72c799fbacaaebad99f977fef",
+    "generated_source_sha256": "ef9bef0300b0f7153cac17f3d7821782aaf7fe60e3cb120f1a1ecf7681d93cad",
+    "swift_version": "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0",
+    "common_rust_library_sha256": "1b6dc30f2a2c6fff00f8b870471873ff5510130f4c0d70bb0409f4425b8aa1dd",
+    "means": {
+      "legacy": {
+        "cpu_seconds": 0.6596881666666666,
+        "max_rss_bytes": 17869482.666666668,
+        "wall_seconds_median": 1.047889353489154
+      },
+      "candidate": {
+        "cpu_seconds": 0.539581,
+        "max_rss_bytes": 18658645.333333332,
+        "wall_seconds_median": 0.9002916454919614
+      }
+    },
+    "candidate_change_percent": {
+      "cpu_seconds": -18.20665774157436,
+      "max_rss_bytes": 4.41625916870414,
+      "wall_seconds_median": -14.085237864640664
+    }
+  },
+  "correctness_test_cache_comparison": {
+    "scope": "same three decoder correctness tests, same compiler, each process starts with empty temporary module caches; baseline uses separate cache per compiled harness, candidate shares one only within that process; not whole app build or hosted CI savings",
+    "source_commit": "68d3f752fb8a24d72c799fbacaaebad99f977fef",
+    "runs": [
+      {
+        "variant": "baseline",
+        "wall_seconds": 8.608472041989444,
+        "user_cpu_seconds": 6.180199,
+        "system_cpu_seconds": 1.122568,
+        "max_rss_bytes": 314916864
+      },
+      {
+        "variant": "candidate",
+        "wall_seconds": 7.062458583997795,
+        "user_cpu_seconds": 5.100701,
+        "system_cpu_seconds": 0.625,
+        "max_rss_bytes": 318177280
+      },
+      {
+        "variant": "candidate",
+        "wall_seconds": 14.127793541993015,
+        "user_cpu_seconds": 5.096376,
+        "system_cpu_seconds": 0.6950999999999999,
+        "max_rss_bytes": 303366144
+      },
+      {
+        "variant": "baseline",
+        "wall_seconds": 7.090651666017948,
+        "user_cpu_seconds": 5.656091,
+        "system_cpu_seconds": 0.704287,
+        "max_rss_bytes": 316997632
+      },
+      {
+        "variant": "baseline",
+        "wall_seconds": 11.031981832988095,
+        "user_cpu_seconds": 6.273898,
+        "system_cpu_seconds": 0.862101,
+        "max_rss_bytes": 317587456
+      },
+      {
+        "variant": "candidate",
+        "wall_seconds": 5.776754249993246,
+        "user_cpu_seconds": 4.631311,
+        "system_cpu_seconds": 0.55672,
+        "max_rss_bytes": 318668800
+      },
+      {
+        "variant": "candidate",
+        "wall_seconds": 5.051782208000077,
+        "user_cpu_seconds": 4.256592,
+        "system_cpu_seconds": 0.512702,
+        "max_rss_bytes": 317456384
+      },
+      {
+        "variant": "baseline",
+        "wall_seconds": 7.708003709005425,
+        "user_cpu_seconds": 6.08447,
+        "system_cpu_seconds": 0.843399,
+        "max_rss_bytes": 318013440
+      },
+      {
+        "variant": "baseline",
+        "wall_seconds": 8.021072542003822,
+        "user_cpu_seconds": 5.964808,
+        "system_cpu_seconds": 0.814291,
+        "max_rss_bytes": 307904512
+      },
+      {
+        "variant": "candidate",
+        "wall_seconds": 7.021765459008748,
+        "user_cpu_seconds": 4.9910689999999995,
+        "system_cpu_seconds": 0.6112099999999999,
+        "max_rss_bytes": 305594368
+      },
+      {
+        "variant": "candidate",
+        "wall_seconds": 6.303817415988306,
+        "user_cpu_seconds": 4.721714,
+        "system_cpu_seconds": 0.55337,
+        "max_rss_bytes": 318324736
+      },
+      {
+        "variant": "baseline",
+        "wall_seconds": 7.333348291984294,
+        "user_cpu_seconds": 5.777798,
+        "system_cpu_seconds": 0.7859229999999999,
+        "max_rss_bytes": 315473920
+      }
+    ],
+    "status": "complete",
+    "means": {
+      "baseline": {
+        "cpu_seconds": 6.8449721666666665,
+        "max_rss_bytes": 315148970.6666667,
+        "wall_seconds_median": 7.864538125504623
+      },
+      "candidate": {
+        "cpu_seconds": 5.3919775,
+        "max_rss_bytes": 313597952,
+        "wall_seconds_median": 6.662791437498527
+      }
+    },
+    "candidate_change_percent": {
+      "cpu_seconds": -21.227181517879558,
+      "max_rss_bytes": -0.49215412742287246,
+      "wall_seconds_median": -15.280575525584183
+    }
+  },
+  "thread_controls": {
+    "status": "three experiments rejected; no production thread flags or wrapper changed",
+    "finding": "actual SwiftBuild compile frontend uses ten threads under swift build -j 2; regular -Xswiftc flag and -Xfrontend bridge are overridden, SWIFT_EXEC wrapper handles no compilation calls with integrated driver",
+    "upstream_source": "https://github.com/swiftlang/swift-build/blob/main/Sources/SWBCore/SpecImplementations/Tools/SwiftCompiler.swift",
+    "claims": "No effective frontend thread cap or build-pressure improvement from these experiments"
+  },
+  "hosted_ci": {
+    "inspected_run": 41256165990,
+    "conclusion": "quality fails mandatory dependency-policy preflight before compilation; all CodeQL checks pass; no policy waived"
+  }
+}

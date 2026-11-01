@@ -30,7 +30,7 @@ class BuildPipelineTests(unittest.TestCase):
         self.executable("sysctl", "#!/bin/sh\ncase \"$2\" in hw.ncpu) echo 10;; hw.memsize) echo 17179869184;; esac\n")
         self.executable("otool", '#!/bin/sh\necho "$2"\ncat "$2"\n')
         self.executable("install_name_tool", '#!/bin/sh\nprintf "%s\\n" "$2" > "$3"\n')
-        (self.root / "reader-template").write_text(BINDINGS["INTEGER_COPY"])
+        (self.root / "reader-template").write_text(BINDINGS["INTEGER_COPY"] + "\n" + BINDINGS["STRING_BYTES"])
         self.executable("cargo", '''#!/usr/bin/env python3
 import os
 from pathlib import Path
@@ -170,7 +170,7 @@ sys.exit(int(os.environ.get("FAKE_DENY_EXIT", "0")))
         binding = self.root / "macos/Sources/AetowerBindings/aetower_ffi.swift"
         binding.write_text("stale binding")
         self.run_build()
-        self.assertEqual(binding.read_text(), "binding data\n" + BINDINGS["INTEGER_LOAD"] + "\n")
+        self.assertEqual(binding.read_text(), "binding data\n" + BINDINGS["INTEGER_LOAD"] + "\n" + BINDINGS["STRING_DIRECT"] + "\n")
 
     def test_invalid_profile_or_budget_fails_before_compiling(self):
         self.assertEqual(self.run_build("--profile", "invalid", check=False).returncode, 2)

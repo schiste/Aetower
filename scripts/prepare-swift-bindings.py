@@ -32,11 +32,30 @@ INTEGER_LOAD = INTEGER_COPY.replace(
     }""",
 )
 
+STRING_BYTES = """    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> String {
+        let len: Int32 = try readInt(&buf)
+        return String(bytes: try readBytes(&buf, count: Int(len)), encoding: String.Encoding.utf8)!
+    }"""
+STRING_DIRECT = """    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> String {
+        let len: Int32 = try readInt(&buf)
+        let range = buf.offset..<(buf.offset + Int(len))
+        guard buf.data.count >= range.upperBound else {
+            throw UniffiInternalError.bufferOverflow
+        }
+        buf.offset = range.upperBound
+        // String copies and validates UTF-8 directly; avoid a temporary byte array.
+        return buf.data.withUnsafeBytes { bytes in
+            String(bytes: bytes[range], encoding: String.Encoding.utf8)!
+        }
+    }"""
+
 
 def prepare_swift(source: str) -> str:
     if source.count(INTEGER_COPY) != 1:
         raise ValueError("UniFFI integer reader template changed; review the decoder transformation")
-    return source.replace(INTEGER_COPY, INTEGER_LOAD)
+    if source.count(STRING_BYTES) != 1:
+        raise ValueError("UniFFI string reader template changed; review the decoder transformation")
+    return source.replace(INTEGER_COPY, INTEGER_LOAD).replace(STRING_BYTES, STRING_DIRECT)
 
 
 def publish(staging: Path, sources: Path) -> None:
