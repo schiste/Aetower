@@ -84,6 +84,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
 
 - For diagnostic stack attribution, match the dSYM or linker map to the loaded
   image identity and retain it before another build replaces compiler outputs.
+  Launch profiled apps with an explicit environment allowlist that excludes
+  unrelated developer credentials. Inspect selected trace tables instead of
+  dumping metadata: trace headers can contain the target's environment. Publish
+  only sanitized exports.
   Validate linker-map addresses against exported symbols before naming unknown
   frames. Separate sleeping or I/O-wait stacks from active work; inclusive sample
   counts are not exclusive CPU time, and a diagnostic capture is not an A/B result.
