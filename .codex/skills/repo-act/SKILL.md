@@ -43,6 +43,11 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   tests can enable `@testable` imports while release packaging disables them,
   legitimately invalidating compiled modules. Retain actual build requests
   before claiming that an unchanged-source rebuild is a cache failure.
+  To establish that a repeat skipped compilation, retain machine-readable actions
+  or primary-output hashes and timestamps before and after the repeat inside the
+  controller. Discover the active backend's output paths instead of assuming a
+  conventional layout. Abbreviated progress logs alone are insufficient; if
+  outputs disappear before the audit, leave that historical claim unverified.
 - For compiler-pressure changes, inspect the actual compilation subprocess
   arguments, including duplicate flags and their effective order. Package job
   counts need not limit frontend threads; forwarded flags and compiler wrappers
