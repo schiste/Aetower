@@ -109,6 +109,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   mutable compiler-output directories; verify their hashes before later builds
   can overwrite them. Retest changed host load without recompilation, and
   alternate variants without builds running during sampling.
+  For a source-only library comparison, rebuild both variants in the same
+  persistent checkout with matched flags. Reusing a library built in another
+  worktree changes the build location as well as source; record that confounder
+  even when the surrounding compiled app payload matches.
   Gate the next resource workload on every current cohort, including follow-ups;
   an older completed receipt does not establish that the current capture ended.
   If a storage or visibility guard invalidates a window, retain the partial raw
