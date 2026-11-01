@@ -50,9 +50,29 @@ retained and corrected against native executed/ignored listings without rerunnin
 successful tests or performance windows. Temporary fixtures are removed and
 canonical input hashes verify.
 
-Whole-app CPU, physical footprint and wakeup comparison remains pending.
+Both **ABBA and BAAB** app cohorts now complete: 60-second settles, 90-second
+samples, verified hidden observations, loaded bundled images, PID identities and
+512 MiB disk reserves in every window. Both Rust variants were rebuilt in the
+same persistent checkout; common unsigned Swift and 112 other payloads match.
+ABBA observes CPU **-0.71%**, physical footprint
+**+0.47%**, interrupt wakeups **+9.45%**.
+BAAB observes CPU **-21.51%**, physical footprint
+**-6.85%**, interrupt wakeups **-30.33%**.
+Combined descriptive means: CPU **10.963 → 8.978%**,
+physical footprint **160.59 → 155.03 MiB**,
+RSS **240.58 → 203.20 MiB**,
+interrupt wakeups **14.965 → 10.777/s**.
+The activity level differs sharply between cohorts: mean CPU is about 3.6%
+in the first, versus 18.3% baseline / 14.4% candidate in the second; interrupt
+wakeups rise from about 2/s to 20–28/s. Visibility alone does not establish
+an equal background workload, so the combined percentages are descriptive.
+Four windows per variant on a shared live host with existing settings do not
+establish a general app-wide CPU, physical-footprint or wakeup saving. These
+are app-process counters, excluding children and interactive work; do not pool
+other Swift images or infer whole-app memory from constructor allocations.
+Retain the measured build/constructor changes without claiming general app gains.
 Pass 18's ownership candidate stays withdrawn. The inspected hosted check at
-head `709be2a` fails dependency-policy preflight before compilation; no passing
+head `f03d765` fails dependency-policy preflight before compilation; no passing
 whole-CI or hosted saving is claimed. Detailed scopes, receipt hashes, costs
 and limitations: [performance-loop19.json](performance-loop19.json).
 

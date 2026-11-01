@@ -1,5 +1,5 @@
 {
-  "status": "canonical_changes_validated_whole_app_comparison_pending",
+  "status": "canonical_changes_and_both_app_cohorts_validated_no_general_app_saving_claim",
   "baseline_commit": "709be2afb4d891d645633d3e3ce35992d3b56a96",
   "compiler_comparison": {
     "scope": "Partial-root rebuild of normal runtime pipeline, not cold dependency compilation, Swift, whole CI or app memory. Compiler partitioning hypothesis; no hard memory or CPU thread cap. Product code may differ across codegen variants, so ABI and runtime equivalence require separate checks. Sampled aggregate tree RSS, shared-host load uncontrolled.",
@@ -626,8 +626,8 @@
   },
   "hosted_ci": {
     "status": "failure_at_dependency_policy_preflight_before_compilation",
-    "head": "709be2afb4d891d645633d3e3ce35992d3b56a96",
-    "url": "https://github.com/schiste/Aetower/actions/runs/41314286119"
+    "head": "f03d76534f086e9234f968ef9fd3830900e97051",
+    "url": "https://github.com/schiste/Aetower/actions/runs/41318358835"
   },
   "limitations": [
     "Compiler comparison is a selected-root rebuild with dependencies retained, not empty-target or whole CI. Shared host load is uncontrolled.",
@@ -643,6 +643,142 @@
     "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-storage-profile-runtime-v1/results.json": "64f341f58a5bc7dadefdd86fd75ece7557c176b26577111f879fe7c905b34ba3",
     "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-network-lookup-validation-v1/results.json": "b313cb425b543a63a6c037c43f4d78e8ef9a9e83a7756a048b2b8e387737f6b4",
     "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-network-lookup-validation-v1/validation-recovery.json": "f9b71de5c74c874f07ee82e5ff30d5c7edf32e8ae8c2a43cff42c2671fc48f38",
-    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-canonical-release-v1/results.json": "b71290ad51e89df2ea15fbdeec7c3ad5af35fd0977e86cee90262e74ab4238ca"
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-canonical-release-v1/results.json": "b71290ad51e89df2ea15fbdeec7c3ad5af35fd0977e86cee90262e74ab4238ca",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-app-plan-v1/independent-verification.json": "03872ff4161c7bfc90fbe12295840231f1af3e7555b93ba381874d9a22d3e5eb",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-app-plan-v1/sequence-results.json": "751c6e708cc2dd94fe96595e797df56dddd8ea51c94ecf9baae57dfc91d4f36c",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-pair.json": "2bbe8e6588c5df2ff41edf339b95d197727b7562295d4666f8fdb074144be285"
+  },
+  "whole_app_comparison": {
+    "pair": {
+      "status": "complete",
+      "apps": [
+        {
+          "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-baseline/Aetower.app",
+          "source": "709be2afb4d891d645633d3e3ce35992d3b56a96; MCP codegen1; original network lookup; common pass17 compiled Swift",
+          "executable_sha256": "216129e16f9b33a7b423efd61b3d431d3e3406b50af2fae1ac6ceb0758b04139",
+          "rust_sha256": "dd7db2099fad856d8e36d471c7506d59c3ba95d8bd913a88abb6dffd9a2bf221",
+          "rust_uuid": "05CDD246-5B98-38D7-BCB8-A7EEC58DF0B5",
+          "variant": "baseline",
+          "swift_executable_uuid": "7C2620A6-4F95-3D3B-A482-96A3B3CA6127"
+        },
+        {
+          "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop19-candidate/Aetower.app",
+          "source": "f03d76534f086e9234f968ef9fd3830900e97051; MCP codegen4; borrowed network lookup; common pass17 compiled Swift",
+          "executable_sha256": "2764e562359158b3590972618cb5c204023152c6b45e78dd023cbd0658bd8703",
+          "rust_sha256": "58b6f1fa38694be86f79e85630f36a33cbcc9cd20e651f44751e1f8daa677531",
+          "rust_uuid": "1D84EEBF-E06F-3539-B698-F26E2CD0D0BF",
+          "variant": "candidate",
+          "swift_executable_uuid": "7C2620A6-4F95-3D3B-A482-96A3B3CA6127"
+        }
+      ],
+      "exported_symbols_equal": true,
+      "exported_symbol_count": 370,
+      "common_file_count": 112,
+      "common_files_sha256": "f1587df18a3b2d90072689abf5d94c6736721101430d0aefb72b954d1244026b",
+      "unsigned_swift_executable_equal": true,
+      "rust_build_location_equal": true,
+      "scope": "Both normal Rust runtime libraries built in the same persistent checkout with matched toolchain/features/jobs/flags except intentional MCP partition count and network lookup source. Common retained pass17 Swift and 112 other payload files. Only Rust/signatures differ. Measures combined pass19 changes, not separate attribution; no install, release or notarization."
+    },
+    "verification": {
+      "status": "complete",
+      "all_eight_windows_verified": true,
+      "cohorts": [
+        {
+          "configuration": {
+            "sequence": "ABBA",
+            "settle_seconds": 60,
+            "duration_seconds": 90,
+            "interval_seconds": 2,
+            "target_environment_keys": [
+              "HOME",
+              "LANG",
+              "LC_CTYPE",
+              "LOGNAME",
+              "PATH",
+              "TMPDIR",
+              "USER"
+            ],
+            "visibility": "retry startup hide within a bounded 30-second period until observed hidden; observe hidden status and zero normal onscreen windows every two seconds; invalidate on any observed change"
+          },
+          "means": {
+            "baseline": {
+              "average_cpu_percent": 3.589025027950366,
+              "average_phys_footprint_bytes": 155932598.0869565,
+              "interrupt_wakeups_per_second": 1.7657837560873744
+            },
+            "candidate": {
+              "average_cpu_percent": 3.5635001776970574,
+              "average_phys_footprint_bytes": 156661695.47826087,
+              "interrupt_wakeups_per_second": 1.9327037367982012
+            }
+          },
+          "candidate_change_percent": {
+            "average_cpu_percent": -0.7111917597266038,
+            "average_phys_footprint_bytes": 0.46757214350894305,
+            "interrupt_wakeups_per_second": 9.453025045415986
+          }
+        },
+        {
+          "configuration": {
+            "sequence": "BAAB",
+            "settle_seconds": 60,
+            "duration_seconds": 90,
+            "interval_seconds": 2,
+            "target_environment_keys": [
+              "HOME",
+              "LANG",
+              "LC_CTYPE",
+              "LOGNAME",
+              "PATH",
+              "TMPDIR",
+              "USER"
+            ],
+            "visibility": "retry startup hide within a bounded 30-second period until observed hidden; observe hidden status and zero normal onscreen windows every two seconds; invalidate on any observed change"
+          },
+          "means": {
+            "baseline": {
+              "average_cpu_percent": 18.337740077471587,
+              "average_phys_footprint_bytes": 180847167.2173913,
+              "interrupt_wakeups_per_second": 28.163377137583996
+            },
+            "candidate": {
+              "average_cpu_percent": 14.393134049498233,
+              "average_phys_footprint_bytes": 168465358.1101449,
+              "interrupt_wakeups_per_second": 19.621493725430653
+            }
+          },
+          "candidate_change_percent": {
+            "average_cpu_percent": -21.510862359857576,
+            "average_phys_footprint_bytes": -6.846559610393332,
+            "interrupt_wakeups_per_second": -30.32975544951322
+          }
+        }
+      ],
+      "combined_descriptive_means": {
+        "baseline": {
+          "average_cpu_percent": 10.963382552710977,
+          "average_phys_footprint_bytes": 168389882.6521739,
+          "average_resident_size_bytes": 252268276.86956522,
+          "interrupt_wakeups_per_second": 14.964580446835685,
+          "pkg_idle_wakeups_per_second": 0.03609570724649906
+        },
+        "candidate": {
+          "average_cpu_percent": 8.978317113597646,
+          "average_phys_footprint_bytes": 162563526.7942029,
+          "average_resident_size_bytes": 213068605.09371978,
+          "interrupt_wakeups_per_second": 10.777098731114428,
+          "pkg_idle_wakeups_per_second": 0.0277767230363472
+        }
+      },
+      "combined_descriptive_change_percent": {
+        "average_cpu_percent": -18.106322839409383,
+        "average_phys_footprint_bytes": -3.460039146179539,
+        "average_resident_size_bytes": -15.538882756991889,
+        "interrupt_wakeups_per_second": -27.982620231806866,
+        "pkg_idle_wakeups_per_second": -23.04701817681859
+      },
+      "limitations": "Four windows per variant across two orders on a shared live host; existing user settings and changing host inputs. App process only, children excluded. Signatures/retained images verified; common compiled Swift. Do not pool with earlier common Swift images or interpret allocation traffic as whole-app savings."
+    },
+    "decision": "Retain measured compiler and constructor improvements; app observations are descriptive only. No general CPU, physical footprint or wakeup improvement established. Shared live host/settings and four windows per variant remain limitations."
   }
 }
