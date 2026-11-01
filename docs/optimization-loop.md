@@ -33,8 +33,18 @@ MiB**. No helper memory saving is established. Production packaging passes at
 129.323s wall, 130.523 CPU seconds and 622.75 MiB sampled peak tree RSS using
 existing caches; these are absolute costs, not a build comparison. The retained
 app pair shares identical unsigned Swift code, metadata and 110 common payload
-files, with only Rust changed. A fresh hidden-idle ABBA app comparison is running;
-whether the new branch is active in that idle workload remains unverified.
+files, with only Rust changed. Four completed hidden-idle ABBA windows verify
+both loaded images and all 300 measurement-period visibility observations.
+Observed means are CPU **3.849% → 3.551% (-7.7%)**, physical footprint
+**122.55 → 120.40 MiB (-1.7%)**, and interrupt wakeups **5.205 → 4.661/s
+(-10.5%)**. CPU windows overlap; one candidate memory window is below both
+baselines and the other above both. Both candidate wakeup windows are below
+both baselines. Two windows per variant, uncontrolled host load and undriven app
+workloads limit attribution. Whether the new branch is active remains unverified;
+no causal or general app-wide saving is established. App-process counters exclude
+children, and no builds overlap capture. One failed startup attempt recorded no
+counter window and is retained separately. A bounded startup hide retry reached
+observed hidden state before settling and sampling in the completed cohort.
 
 A small real Swift probe finds **ten frontend threads** with both default and
 native backends at two package jobs. An explicit `-num-threads 2` is honored by
