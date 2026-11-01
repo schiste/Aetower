@@ -27,6 +27,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
 - For build-performance work, measure clean and unchanged repeat builds separately
   with the same toolchain, Cargo package/feature selection, profile, job count and compiler-cache settings. Record
   background load and distinguish an empty target directory from an uncached build.
+  Compare compiler flags and testability as well as the profile name: release
+  tests can enable `@testable` imports while release packaging disables them,
+  legitimately invalidating compiled modules. Retain actual build requests
+  before claiming that an unchanged-source rebuild is a cache failure.
 - Report wall time and CPU seconds alongside memory. Label memory as either
   largest-process RSS or sampled aggregate tree RSS; they are not interchangeable.
   Shared compiler-cache servers can execute outside the measured process tree:
