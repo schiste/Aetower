@@ -89,6 +89,8 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   mutable compiler-output directories; verify their hashes before later builds
   can overwrite them. Retest changed host load without recompilation, and
   alternate variants without builds running during sampling.
+  Gate the next resource workload on every current cohort, including follow-ups;
+  an older completed receipt does not establish that the current capture ended.
   Verify each launched app maps the expected library identity from its own bundle;
   a matching UUID in an external build directory is insufficient. Inspect actual
   Mach-O run paths rather than matching literal checkout paths: aliases and
