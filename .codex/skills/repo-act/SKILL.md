@@ -25,6 +25,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   reject null handles before constructing an owner.
 - Check likely entrypoints and impacted callers before finishing.
 - Re-run lint/build only after the focused validation passes.
+- Validate a release dylib with an owned native load/launch after final link,
+  relocation and signing. Successful compilation, exported-symbol inspection
+  and signature verification do not establish dyld compatibility. Reproduce a
+  loader failure in a tiny owned fixture before choosing a toolchain workaround.
 - Check free space on temporary and compiler-output volumes against application
   write reserves and build needs before interpreting failures. Changing `TMPDIR`
   does not relocate Cargo target artifacts. Preserve cache timestamps and verify
@@ -41,6 +45,8 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   Match that PID to the expected command and inspect its owned descendants and
   current logs before restarting or beginning another resource workload; save
   the final status separately from the launch receipt.
+  Disable Python bytecode generation when importing repository measurement
+  helpers so read-only captures do not create unowned source-tree cache files.
 - For build-performance work, measure clean and unchanged repeat builds separately
   with the same toolchain, Cargo package/feature selection, profile, job count and compiler-cache settings. Record
   background load and distinguish an empty target directory from an uncached build.
