@@ -1,0 +1,721 @@
+{
+  "status": "runtime_candidate_focused_validated_ci_profile_and_full_workspace_pending",
+  "runtime_change": {
+    "source": "rust/crates/aetower-mcp/src/reports/storage/state_store.rs",
+    "source_sha256": "7af9e01cebbc33bff515d89deb9d49808ff43e19a24e0a0a6bed6283a810b4cf",
+    "description": "Stream staged file rows in path order; prepare the previous-size query once per publication. Preserve transaction, parameter values, delta clamping, rollups and pruning. No persistent cache or polling task.",
+    "measured_candidate_matches_formatted_production_function_except_comments": true
+  },
+  "experiments": [
+    {
+      "candidate": "streaming_only",
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v3/results.json",
+      "receipt_sha256": "f82ccad85bc70f57286e26c5d8f3620bc5323cb54043e07ad37fcd5448369c82",
+      "configuration": {
+        "rows": 100000,
+        "sequence": "ABBABAAB",
+        "jobs": 2,
+        "profile": "release",
+        "rustc_wrapper": "",
+        "scope": "Retained native test executables; full generation staging, publication and streaming all-table state oracle; whole process wall/CPU and 1s sampled RSS. Compilation is reported separately; no whole-app or wakeup gain is implied."
+      },
+      "means": {
+        "baseline": {
+          "wall_seconds": 16.273,
+          "user_cpu_seconds": 2.44625,
+          "system_cpu_seconds": 2.67625,
+          "sampled_peak_tree_rss_bytes": 120725504,
+          "cpu_seconds": 5.1225000000000005
+        },
+        "candidate": {
+          "wall_seconds": 14.44775,
+          "user_cpu_seconds": 2.3672500000000003,
+          "system_cpu_seconds": 2.5372500000000002,
+          "sampled_peak_tree_rss_bytes": 90550272,
+          "cpu_seconds": 4.9045000000000005
+        }
+      },
+      "candidate_change_percent": {
+        "wall_seconds": -11.216432126835862,
+        "cpu_seconds": -4.25573450463641,
+        "sampled_peak_tree_rss_bytes": -24.994910768813195
+      },
+      "publication_oracle": {
+        "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8",
+        "publication_wall_seconds": 3.7441395,
+        "published": true,
+        "rows": 100000,
+        "table_rows": {
+          "sqlite_sequence": 2,
+          "storage_directory_rollup": 0,
+          "storage_dirty_path": 0,
+          "storage_domain": 1,
+          "storage_event_cursor": 0,
+          "storage_file_index": 100000,
+          "storage_growth_delta": 100000,
+          "storage_growth_rollup": 2,
+          "storage_index_meta": 2,
+          "storage_index_summary": 1,
+          "storage_measurement_job": 1,
+          "storage_ownership_boundary_rollup": 0,
+          "storage_ownership_generation": 0,
+          "storage_ownership_state": 0,
+          "storage_path": 100000,
+          "storage_path_fingerprint": 0,
+          "storage_repository_artifact": 0,
+          "storage_repository_inventory_cache": 0,
+          "storage_repository_workspace_rollup": 0,
+          "storage_repository_workspace_root": 0,
+          "storage_scan_generation": 1,
+          "storage_scan_generation_stage_file": 0,
+          "storage_scan_generation_stage_fingerprint": 0,
+          "storage_scan_generation_stage_size": 0,
+          "storage_scan_job_state": 0,
+          "storage_situation_snapshot": 0,
+          "storage_size_index": 0,
+          "storage_top_offender": 200,
+          "storage_unknown_gap": 0
+        }
+      },
+      "all_publication_states_identical": true,
+      "post_cleanup_verification": {
+        "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v3/final-database-verification.json",
+        "sha256": "ed7f9252c718ce14b76b41bba6f065a03a2be78df38954764030da5743ef73cc",
+        "all_final_database_states_identical": true,
+        "schema_sha256": "7fcf6b64b8ede3e12bb9211c94329fdcf69aac430d612a81a0f8976abd8b2750",
+        "table_rows": {
+          "sqlite_sequence": 2,
+          "sqlite_stat1": 36,
+          "sqlite_stat4": 0,
+          "storage_directory_rollup": 0,
+          "storage_dirty_path": 0,
+          "storage_domain": 1,
+          "storage_event_cursor": 0,
+          "storage_file_index": 100000,
+          "storage_growth_delta": 80000,
+          "storage_growth_rollup": 2,
+          "storage_index_meta": 2,
+          "storage_index_summary": 1,
+          "storage_measurement_job": 1,
+          "storage_ownership_boundary_rollup": 0,
+          "storage_ownership_generation": 0,
+          "storage_ownership_state": 0,
+          "storage_path": 100000,
+          "storage_path_fingerprint": 0,
+          "storage_repository_artifact": 0,
+          "storage_repository_inventory_cache": 0,
+          "storage_repository_workspace_rollup": 0,
+          "storage_repository_workspace_root": 0,
+          "storage_scan_generation": 1,
+          "storage_scan_generation_stage_file": 0,
+          "storage_scan_generation_stage_fingerprint": 0,
+          "storage_scan_generation_stage_size": 0,
+          "storage_scan_job_state": 0,
+          "storage_situation_snapshot": 0,
+          "storage_size_index": 0,
+          "storage_top_offender": 200,
+          "storage_unknown_gap": 0
+        }
+      },
+      "windows": [
+        {
+          "number": 1,
+          "variant": "baseline",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v3/baseline-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 11.014,
+            "user_cpu_seconds": 2.287,
+            "system_cpu_seconds": 2.551,
+            "average_cpu_percent": 43.9,
+            "sampled_peak_tree_rss_bytes": 119898112,
+            "rss_samples": 11,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 3.7441395,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 2,
+          "variant": "candidate",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v3/candidate-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 10.39,
+            "user_cpu_seconds": 2.313,
+            "system_cpu_seconds": 2.402,
+            "average_cpu_percent": 45.4,
+            "sampled_peak_tree_rss_bytes": 91701248,
+            "rss_samples": 11,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 3.304685625,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 3,
+          "variant": "candidate",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v3/candidate-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 10.218,
+            "user_cpu_seconds": 2.369,
+            "system_cpu_seconds": 2.449,
+            "average_cpu_percent": 47.2,
+            "sampled_peak_tree_rss_bytes": 88391680,
+            "rss_samples": 10,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 3.407615458,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 4,
+          "variant": "baseline",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v3/baseline-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 12.448,
+            "user_cpu_seconds": 3.029,
+            "system_cpu_seconds": 3.108,
+            "average_cpu_percent": 49.3,
+            "sampled_peak_tree_rss_bytes": 119767040,
+            "rss_samples": 13,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 5.467348875,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 5,
+          "variant": "candidate",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v3/candidate-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 15.844,
+            "user_cpu_seconds": 2.455,
+            "system_cpu_seconds": 2.707,
+            "average_cpu_percent": 32.6,
+            "sampled_peak_tree_rss_bytes": 90619904,
+            "rss_samples": 16,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 5.711713458,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 6,
+          "variant": "baseline",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v3/baseline-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 18.86,
+            "user_cpu_seconds": 2.207,
+            "system_cpu_seconds": 2.487,
+            "average_cpu_percent": 24.9,
+            "sampled_peak_tree_rss_bytes": 120078336,
+            "rss_samples": 19,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 3.092795042,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 7,
+          "variant": "baseline",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v3/baseline-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 22.77,
+            "user_cpu_seconds": 2.262,
+            "system_cpu_seconds": 2.559,
+            "average_cpu_percent": 21.2,
+            "sampled_peak_tree_rss_bytes": 123158528,
+            "rss_samples": 23,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 6.281670167,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 8,
+          "variant": "candidate",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v3/candidate-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 21.339,
+            "user_cpu_seconds": 2.332,
+            "system_cpu_seconds": 2.591,
+            "average_cpu_percent": 23.1,
+            "sampled_peak_tree_rss_bytes": 91488256,
+            "rss_samples": 21,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 6.83830325,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        }
+      ],
+      "compilation_scope": "Private release-test compilation is reported separately and excluded from runtime means. The combined experiment reuses a verified immutable baseline from the first complete experiment after matching source/fixture inputs and settings."
+    },
+    {
+      "candidate": "streaming_and_prepared_previous_size_lookup",
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v4/results.json",
+      "receipt_sha256": "2812b50aee8318c5e74fe2145c287dd743f3d769d8670f4240ab2127afdb95db",
+      "configuration": {
+        "rows": 100000,
+        "sequence": "ABBABAAB",
+        "jobs": 2,
+        "profile": "release",
+        "rustc_wrapper": "",
+        "scope": "Retained native test executables; full generation staging, publication and streaming all-table state oracle; whole process wall/CPU and 1s sampled RSS. Compilation is reported separately; no whole-app or wakeup gain is implied."
+      },
+      "means": {
+        "baseline": {
+          "wall_seconds": 31.9625,
+          "user_cpu_seconds": 2.743,
+          "system_cpu_seconds": 3.2225,
+          "sampled_peak_tree_rss_bytes": 109232128,
+          "cpu_seconds": 5.9655000000000005
+        },
+        "candidate": {
+          "wall_seconds": 25.97625,
+          "user_cpu_seconds": 2.68775,
+          "system_cpu_seconds": 3.2555,
+          "sampled_peak_tree_rss_bytes": 89034752,
+          "cpu_seconds": 5.94325
+        }
+      },
+      "candidate_change_percent": {
+        "wall_seconds": -18.728979272585057,
+        "cpu_seconds": -0.3729779565836977,
+        "sampled_peak_tree_rss_bytes": -18.49032548372581
+      },
+      "publication_oracle": {
+        "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8",
+        "publication_wall_seconds": 7.3023876659999996,
+        "published": true,
+        "rows": 100000,
+        "table_rows": {
+          "sqlite_sequence": 2,
+          "storage_directory_rollup": 0,
+          "storage_dirty_path": 0,
+          "storage_domain": 1,
+          "storage_event_cursor": 0,
+          "storage_file_index": 100000,
+          "storage_growth_delta": 100000,
+          "storage_growth_rollup": 2,
+          "storage_index_meta": 2,
+          "storage_index_summary": 1,
+          "storage_measurement_job": 1,
+          "storage_ownership_boundary_rollup": 0,
+          "storage_ownership_generation": 0,
+          "storage_ownership_state": 0,
+          "storage_path": 100000,
+          "storage_path_fingerprint": 0,
+          "storage_repository_artifact": 0,
+          "storage_repository_inventory_cache": 0,
+          "storage_repository_workspace_rollup": 0,
+          "storage_repository_workspace_root": 0,
+          "storage_scan_generation": 1,
+          "storage_scan_generation_stage_file": 0,
+          "storage_scan_generation_stage_fingerprint": 0,
+          "storage_scan_generation_stage_size": 0,
+          "storage_scan_job_state": 0,
+          "storage_situation_snapshot": 0,
+          "storage_size_index": 0,
+          "storage_top_offender": 200,
+          "storage_unknown_gap": 0
+        }
+      },
+      "all_publication_states_identical": true,
+      "post_cleanup_verification": {
+        "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v4/final-database-verification.json",
+        "sha256": "51e4d591ad21f9b961d648b54a92507fe1ae31a69e3f84ff4337b707dbe0c4cf",
+        "all_final_database_states_identical": true,
+        "schema_sha256": "7fcf6b64b8ede3e12bb9211c94329fdcf69aac430d612a81a0f8976abd8b2750",
+        "table_rows": {
+          "sqlite_sequence": 2,
+          "sqlite_stat1": 36,
+          "sqlite_stat4": 0,
+          "storage_directory_rollup": 0,
+          "storage_dirty_path": 0,
+          "storage_domain": 1,
+          "storage_event_cursor": 0,
+          "storage_file_index": 100000,
+          "storage_growth_delta": 80000,
+          "storage_growth_rollup": 2,
+          "storage_index_meta": 2,
+          "storage_index_summary": 1,
+          "storage_measurement_job": 1,
+          "storage_ownership_boundary_rollup": 0,
+          "storage_ownership_generation": 0,
+          "storage_ownership_state": 0,
+          "storage_path": 100000,
+          "storage_path_fingerprint": 0,
+          "storage_repository_artifact": 0,
+          "storage_repository_inventory_cache": 0,
+          "storage_repository_workspace_rollup": 0,
+          "storage_repository_workspace_root": 0,
+          "storage_scan_generation": 1,
+          "storage_scan_generation_stage_file": 0,
+          "storage_scan_generation_stage_fingerprint": 0,
+          "storage_scan_generation_stage_size": 0,
+          "storage_scan_job_state": 0,
+          "storage_situation_snapshot": 0,
+          "storage_size_index": 0,
+          "storage_top_offender": 200,
+          "storage_unknown_gap": 0
+        }
+      },
+      "windows": [
+        {
+          "number": 1,
+          "variant": "baseline",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v4/baseline-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 23.053,
+            "user_cpu_seconds": 2.717,
+            "system_cpu_seconds": 3.012,
+            "average_cpu_percent": 24.9,
+            "sampled_peak_tree_rss_bytes": 91947008,
+            "rss_samples": 23,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 7.3023876659999996,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 2,
+          "variant": "candidate",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v4/candidate-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 24.02,
+            "user_cpu_seconds": 2.534,
+            "system_cpu_seconds": 3.034,
+            "average_cpu_percent": 23.2,
+            "sampled_peak_tree_rss_bytes": 92061696,
+            "rss_samples": 24,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 6.285482875,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 3,
+          "variant": "candidate",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v4/candidate-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 25.324,
+            "user_cpu_seconds": 2.851,
+            "system_cpu_seconds": 3.351,
+            "average_cpu_percent": 24.5,
+            "sampled_peak_tree_rss_bytes": 87556096,
+            "rss_samples": 25,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 7.95980075,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 4,
+          "variant": "baseline",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v4/baseline-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 25.173,
+            "user_cpu_seconds": 2.67,
+            "system_cpu_seconds": 3.23,
+            "average_cpu_percent": 23.4,
+            "sampled_peak_tree_rss_bytes": 116064256,
+            "rss_samples": 25,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 6.335319541,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 5,
+          "variant": "candidate",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v4/candidate-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 29.886,
+            "user_cpu_seconds": 2.604,
+            "system_cpu_seconds": 3.189,
+            "average_cpu_percent": 19.4,
+            "sampled_peak_tree_rss_bytes": 88883200,
+            "rss_samples": 30,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 9.459640457999999,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 6,
+          "variant": "baseline",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v4/baseline-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 53.994,
+            "user_cpu_seconds": 2.999,
+            "system_cpu_seconds": 3.659,
+            "average_cpu_percent": 12.3,
+            "sampled_peak_tree_rss_bytes": 107823104,
+            "rss_samples": 53,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 7.28184325,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 7,
+          "variant": "baseline",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v4/baseline-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 25.63,
+            "user_cpu_seconds": 2.586,
+            "system_cpu_seconds": 2.989,
+            "average_cpu_percent": 21.7,
+            "sampled_peak_tree_rss_bytes": 121094144,
+            "rss_samples": 26,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 5.981631375,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        },
+        {
+          "number": 8,
+          "variant": "candidate",
+          "cost": {
+            "command": [
+              "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v4/candidate-generation-tests",
+              "--ignored",
+              "--exact",
+              "reports::storage::tests::generation_publication_memory_benchmark",
+              "--nocapture",
+              "--test-threads=1"
+            ],
+            "cwd": "/private/tmp/aetower-build-performance",
+            "exit_status": 0,
+            "wall_seconds": 24.675,
+            "user_cpu_seconds": 2.762,
+            "system_cpu_seconds": 3.448,
+            "average_cpu_percent": 25.2,
+            "sampled_peak_tree_rss_bytes": 87638016,
+            "rss_samples": 24,
+            "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+          },
+          "publication_wall_seconds": 7.994271167,
+          "database_sha256": "7c41b38f6b0ee11b9ab46038a6548c0d35ff67b248bf6e411aa34060d5b05af8"
+        }
+      ],
+      "compilation_scope": "Private release-test compilation is reported separately and excluded from runtime means. The combined experiment reuses a verified immutable baseline from the first complete experiment after matching source/fixture inputs and settings."
+    }
+  ],
+  "all_16_post_cleanup_database_states_identical": true,
+  "interpretation": "Both complete experiments observe lower sampled native-process peak RSS. Latest combined CPU is essentially flat; wall time varies with shared-host/I/O conditions. Do not pool experiments or infer a whole-app CPU, physical-footprint or wakeup gain. Each cohort has four samples per variant. The fixture includes staging, publication, streamed state export and cleanup; excludes GUI/live collector.",
+  "validation": {
+    "focused_generation_cases": 2,
+    "focused_result_markers": [
+      "test reports::storage::tests::storage_scan_generation_keeps_last_publication_until_complete ... ok",
+      "test reports::storage::tests::storage_scan_generation_decode_failure_rolls_back_prior_growth_rows ... ok",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 275 filtered out; finished in 0.17s"
+    ],
+    "focused_cost": {
+      "command": [
+        "/Users/christophehenner/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "-p",
+        "aetower-mcp",
+        "--lib",
+        "--",
+        "storage_scan_generation"
+      ],
+      "cwd": "/private/tmp/aetower-build-performance",
+      "exit_status": 0,
+      "wall_seconds": 30.505,
+      "user_cpu_seconds": 36.855,
+      "system_cpu_seconds": 3.236,
+      "average_cpu_percent": 131.4,
+      "sampled_peak_tree_rss_bytes": 1093943296,
+      "rss_samples": 30,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    },
+    "strict_all_target_clippy": {
+      "exit_status": 0,
+      "log": "logs/loop17-mcp-clippy.log",
+      "sha256": "b5809424f84dfee7fde084958250e2957ea8d9dcfaf9dada58f3450d55499d0d"
+    },
+    "large_index_regression": {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-large-index-sqlite-baseline-v1/results.json",
+      "sha256": "f3879b8e4c8e7190429ee1b78cf02018cab82eb18a85d49cb50cd70f8deaf321",
+      "status": "complete",
+      "exact_case_executed": true,
+      "canonical_inputs_unchanged": true,
+      "cost": {
+        "command": [
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-large-index-sqlite-baseline-v1/baseline-large-index-tests",
+          "--exact",
+          "reports::storage::tests::indexed_report_build_is_fast_on_large_synthetic_index",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "cwd": "/private/tmp/aetower-build-performance",
+        "exit_status": 0,
+        "wall_seconds": 87.97,
+        "user_cpu_seconds": 32.484,
+        "system_cpu_seconds": 11.075,
+        "average_cpu_percent": 49.5,
+        "sampled_peak_tree_rss_bytes": 22921216,
+        "rss_samples": 86,
+        "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+      },
+      "requirements": "Checked tail flush, no write error, exactly 100000 physical index rows; original five-second first/repeat report budgets unchanged. Absolute current-debug validation cost, not a balanced performance or cold compilation comparison."
+    },
+    "full_workspace": "pending"
+  },
+  "build_ci_candidate": {
+    "status": "planned_not_adopted",
+    "proposal": "Measure libsqlite3-sys-specific development/test optimization, initially level 1, preserving workspace debug info, assertions, overflow checks, selectors, dataset size and report budgets. Include compilation and cold/repeat costs before adoption or CI claims.",
+    "reference": "https://doc.rust-lang.org/cargo/reference/profiles.html",
+    "hosted_scope": "Existing mandatory dependency-policy preflight still fails; no successful hosted build/cache saving established."
+  },
+  "excluded_setup_attempts": [
+    {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v1/results.json",
+      "reason": "Test-only digest formatting failed compilation; zero runtime windows."
+    },
+    {
+      "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-generation-publication-comparison-v2/results.json",
+      "reason": "Mixed-log parser did not guard against standalone JSON strings; zero runtime windows."
+    }
+  ],
+  "delivery": "Product draft PR 21; canonical procedure changes remain separate in PR 22."
+}

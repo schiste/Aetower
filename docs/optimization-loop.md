@@ -5,6 +5,33 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 17: stream scan publication; measure SQLite test-profile costs
+
+Publishing a large scan used to retain every decoded file row before recording
+growth. The new path streams those ordered rows and prepares the previous-size
+query once, preserving transactions, values, rollups and pruning. No persistent
+cache or timer is added.
+
+Two complete eight-process native release experiments retain exact publication
+output and identical schema/table values after handle cleanup. Streaming alone
+observes mean sampled peak tree RSS **115.13 → 86.36 MiB (-25.0%)**, CPU
+**5.123 → 4.905s**, wall **16.273 → 14.448s**. Streaming plus query reuse observes
+**104.17 → 84.91 MiB (-18.5%)**, CPU **5.966 → 5.943s (essentially flat)**,
+wall **31.963 → 25.976s**. Do not pool cohorts: shared-host/I/O conditions changed
+substantially. These are complete 100000-row native fixture costs, including
+staging, state export and cleanup; they do not establish whole-app CPU, physical
+footprint or wakeup savings.
+
+Both focused generation tests pass, including a decoding error after an earlier
+valid row; prior publication and growth remain intact. Strict all-target Clippy
+passes. The large-index test now checks tail-flush success and actual 100000-row
+cardinality before its unchanged five-second query budgets; the strengthened
+case passes at **87.970s wall** under current debug SQLite (absolute validation
+cost). Full workspace validation remains pending. The build/CI candidate is a
+dependency-specific debug SQLite optimization; no manifest setting is adopted
+yet and compile cost must be included. See
+[`performance-loop17.json`](performance-loop17.json).
+
 ## Pass 16: reject compiler/pruning candidates; validate network allocation reuse
 
 The first changed-membership bitset proposal passes 26 history release cases and

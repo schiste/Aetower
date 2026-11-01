@@ -7430,8 +7430,18 @@ fn indexed_report_build_is_fast_on_large_synthetic_index() {
                 &mut metrics,
             );
         }
-        // Dropping the handle flushes the tail chunk and refreshes planner
-        // statistics via PRAGMA optimize, matching the end-of-scan lifecycle.
+        storage_index
+            .flush_pending_rows_checked()
+            .expect("flush all synthetic indexed rows");
+        assert_eq!(metrics.storage_index_writes, 100_000);
+        assert_eq!(
+            storage_index.count_indexed_rows_with_prefix(&format!("{}/", synthetic_root.display())),
+            100_000,
+            "the timed report must see the complete synthetic index"
+        );
+        assert_eq!(storage_index.storage_write_error(), None);
+        // Dropping the handle refreshes planner statistics via PRAGMA optimize,
+        // matching the end-of-scan lifecycle after the checked tail flush.
     }
 
     let build_budget = Duration::from_secs(5);
@@ -10434,4 +10444,69 @@ fn storage_hygiene_items_page_admits_large_directory_rows() {
     assert_eq!(large_item["recommendation_score"], 0.0);
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn storage_scan_generation_decode_failure_rolls_back_prior_growth_rows() {
+    let root = test_root("generation-decode-rollback");
+    let directory = test_root("generation-decode-rollback-index");
+    let roots = vec![root.clone()];
+    let index = StorageSizeIndex::open_in_directory_for_test(&directory);
+    let mut metrics = StorageScanMetrics::default();
+    let original = batched_flush_row(&root, "baseline.bin", 1_000, "rebuildable", 10);
+    let first = index
+        .begin_storage_scan_generation(&roots, "deep", 10)
+        .expect("begin original generation");
+    index.store_indexed_row(&original, &mut metrics);
+    let previous = index
+        .finish_storage_scan_generation(first.generation_id, true, false, None, 10)
+        .expect("publish original generation");
+    let prefix = format!("{}/", root.display());
+    let previous_growth = index.growth_deltas_with_prefix(&prefix);
+    assert_eq!(previous_growth.len(), 1);
+
+    let generation = index
+        .begin_storage_scan_generation(&roots, "deep", 20)
+        .expect("begin replacement generation");
+    let valid = batched_flush_row(&root, "a-valid.bin", 2_000, "rebuildable", 20);
+    let invalid = batched_flush_row(&root, "z-invalid.bin", 3_000, "rebuildable", 20);
+    index.store_indexed_row(&valid, &mut metrics);
+    index.store_indexed_row(&invalid, &mut metrics);
+    index
+        .flush_pending_rows_checked()
+        .expect("stage replacement generation");
+    let connection = rusqlite::Connection::open(directory.join(STORAGE_INDEX_FILE_NAME))
+        .expect("open fixture database");
+    assert_eq!(connection.execute(
+        "UPDATE storage_scan_generation_stage_file SET device = 'invalid-integer' WHERE generation_id = ?1 AND path = ?2",
+        rusqlite::params![generation.generation_id, &invalid.path],
+    ).expect("inject decoding failure after the valid ordered row"), 1);
+    drop(connection);
+
+    let error = index
+        .finish_storage_scan_generation(generation.generation_id, true, false, None, 20)
+        .expect_err("invalid staged row must prevent publication");
+    assert!(
+        error.contains("record_generation_growth"),
+        "unexpected failure: {error}"
+    );
+    assert_eq!(index.count_indexed_rows_with_prefix(&prefix), 1);
+    assert_eq!(index.growth_deltas_with_prefix(&prefix), previous_growth);
+    assert_eq!(
+        index
+            .indexed_row_tier_snapshot(&original.path)
+            .map(|row| row.0),
+        Some(1_000)
+    );
+    assert!(index.indexed_row_tier_snapshot(&valid.path).is_none());
+    assert!(index.indexed_row_tier_snapshot(&invalid.path).is_none());
+    assert_eq!(
+        index
+            .latest_published_storage_scan_generation(&roots)
+            .expect("previous publication remains available")
+            .generation_id,
+        previous.generation_id
+    );
+    drop(index);
+    let _ = fs::remove_dir_all(directory);
 }
