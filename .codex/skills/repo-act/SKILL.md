@@ -104,6 +104,10 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   If a storage or visibility guard invalidates a window, retain the partial raw
   capture and repeat the full planned variant order in a fresh output directory.
   Do not derive balanced means from surviving windows or overwrite the failed run.
+  Inspect completed reversed-order follow-ups before claiming app-wide savings.
+  Retain unfavorable observations alongside helper gains; if orders disagree,
+  withhold a general gain claim. Distinguish precautionary withdrawal from a
+  demonstrated causal regression.
   Verify each launched app maps the expected library identity from its own bundle;
   a matching UUID in an external build directory is insufficient. Inspect actual
   Mach-O run paths rather than matching literal checkout paths: aliases and
