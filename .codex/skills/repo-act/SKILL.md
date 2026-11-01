@@ -45,6 +45,9 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   limit on a small real build before applying it to the app or claiming a cap.
   For compiler-command replay, retain temporary response files and output maps
   while the driver is alive; captured arguments may reference expired files.
+  Retain original timestamps for canonical inputs temporarily edited by a private
+  replay; restore metadata only after verifying the original bytes are restored.
+  Never backdate changed inputs or keep production outputs from temporary sources.
   If reconstructing or omitting output-only inputs for a diagnostic, record
   that transformation, redirect outputs privately and verify source/import
   hashes before and after. A partial diagnostic is not a full-build comparison.
