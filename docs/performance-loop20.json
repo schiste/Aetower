@@ -1,9 +1,10 @@
 {
-  "status": "streaming_reader_validated_compiler_eight_candidate_under_review",
+  "status": "streaming_reader_and_eight_unit_release_compiler_validated",
   "baseline_commit": "8ab6e25d9e4e318be201c038dd26573dad0e1033",
   "source_sha256": {
     "rust/crates/aetower-core/src/engine.rs": "caa2ed7c078f3fb8edaeabe16a71418935365580780281c4c0742e44cb0748e1",
-    "rust/crates/aetower-persistence/src/lib.rs": "214c3252e3d9e4ade52c000a123b649f2dd0ec72417447b49b1c2f8d2458506a"
+    "rust/crates/aetower-persistence/src/lib.rs": "214c3252e3d9e4ade52c000a123b649f2dd0ec72417447b49b1c2f8d2458506a",
+    "rust/Cargo.toml": "8a8b3ebfaedc46e10992e6549d644be1a13d175c3f3f6aaf7145b550b6e731cd"
   },
   "runtime_change": "Regression history reads decode the same latest 500 rows but retain only the winning snapshot per payload-hour. Ordering, cap behavior, all row decoding/quarantine, valid-row diagnostic counts and worker cadence are preserved. Public load_range/load_range_page still return the complete normal page through the same visitor. No persistent cache, dependency or timer is added.",
   "runtime_native_comparison": {
@@ -129,7 +130,7 @@
     "canonical_inputs_unchanged": true
   },
   "compiler_candidate": {
-    "status": "not_adopted_release_manifest_still_four",
+    "status": "adopted_release_manifest_eight",
     "configuration": {
       "sequence": "codegen 4-8-8-4",
       "cargo_jobs": 2,
@@ -205,7 +206,7 @@
       ],
       "scope": "Actual ordered rustc -C options agree except intentional MCP partition count and artifact identity. Bytes on disk are not runtime footprint; shared-host partial-root rebuild only."
     },
-    "tradeoff": "Eight adds 149968 library bytes (about 146 KiB, +1.29%) versus four. Mean sampled RSS is only about 3% lower with substantial variation; no robust further memory saving or hard CPU/memory cap established. Runtime validation must precede adoption."
+    "tradeoff": "Eight adds 149968 library bytes (about 146 KiB, +1.29%) versus four in the matched pre-reader source comparison. It reduces mean total compiler CPU by 11.11% and elapsed time by 25.60%; shorter builds can use more instantaneous CPU. Mean sampled RSS is only about 3% lower with substantial variation, so no robust further memory saving or hard CPU/thread/memory cap is established. The setting affects only release MCP; other crates, optimization/LTO, stripping, panic behavior and job budgets are unchanged."
   },
   "limitations": [
     "Native benchmark is fixed synthetic history data, not a whole-app measurement. Actual benefit depends on history payloads and distinct-hour count.",
@@ -219,6 +220,159 @@
     "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-hourly-resources-v1/results.json": "9ac04012b2d834a2ef3e6e092eec5fd71d36bab722945902d6f8c5df6ab80a8b",
     "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-hourly-resources-v2/results.json": "fb50f70fe6ff1bf8d8066a2c9df5a2e31131702f28f88f57debf709589dd95b4",
     "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-hourly-focused-validation-v1/results.json": "4391539bb16fab32f6369eff63b44b8a8e263febbe5ed996af1599aabf07476f",
-    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-hourly-normal-validation-v1/results.json": "e9b0dc0adcb4bf1ef81f6dc30b3d6c62f53ed9708acbeea857916f47179df24f"
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-hourly-normal-validation-v1/results.json": "e9b0dc0adcb4bf1ef81f6dc30b3d6c62f53ed9708acbeea857916f47179df24f",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-mcp-release-validation-v1/results.json": "bc192845debf7f6666a40f7ea70fca297bf769fa58d095bcad22245acaac269a",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-canonical-release-v1/results.json": "8fc9f2165b644f41dd86b485f096fa5406180ae1524d47b4f99a0db810b96e35",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-app-smoke-v1/results.json": "07e59fbbd7b8a9946f6e3870a29a533653bbd19cefae605d03b5907d45c9c6ca"
+  },
+  "mcp_eight_unit_release_validation": {
+    "status": "complete",
+    "source_commit": "291f428d2a8a41a31e63e95046968dc317166814",
+    "scope": "All normal aetower-mcp release unit/integration/doc tests with candidate per-package codegen-units=8; one Cargo job and retained target cache. Exact emitted native case coverage; preserve normal ignored cases. Absolute validation cost, not A/B or whole workspace.",
+    "passed": 277,
+    "total": 278,
+    "expected_native_cases": 278,
+    "exact_native_case_coverage": true,
+    "canonical_inputs_unchanged": true,
+    "cost": {
+      "command": [
+        "/Users/christophehenner/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--message-format=json",
+        "--manifest-path",
+        "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/rust/Cargo.toml",
+        "-p",
+        "aetower-mcp",
+        "--config",
+        "profile.release.package.aetower-mcp.codegen-units=8",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+      "exit_status": 0,
+      "wall_seconds": 436.432,
+      "user_cpu_seconds": 281.766,
+      "system_cpu_seconds": 33.281,
+      "average_cpu_percent": 72.2,
+      "sampled_peak_tree_rss_bytes": 1024278528,
+      "rss_samples": 397,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    }
+  },
+  "canonical_eight_unit_release": {
+    "status": "complete",
+    "scope": "Canonical release manifest; normal batched Rust runtime roots, debug host bindgen and published bindings, followed by strict MCP release all-target Clippy and fmt. Warm retained dependencies. Absolute validation cost, not matched comparison or whole app measurement. Cargo observation shim adds verbosity/JSON only; no profile override.",
+    "steps": [
+      {
+        "name": "build",
+        "status": "complete",
+        "cost": {
+          "command": [
+            "/bin/sh",
+            "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/scripts/build-rust.sh",
+            "--profile",
+            "release"
+          ],
+          "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+          "exit_status": 0,
+          "wall_seconds": 139.62,
+          "user_cpu_seconds": 247.86,
+          "system_cpu_seconds": 5.457,
+          "average_cpu_percent": 181.4,
+          "sampled_peak_tree_rss_bytes": 1398341632,
+          "rss_samples": 127,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        }
+      },
+      {
+        "name": "clippy",
+        "status": "complete"
+      },
+      {
+        "name": "format",
+        "status": "complete"
+      }
+    ],
+    "effective_release_flags": [
+      {
+        "crate": "aetower_mcp",
+        "effective_codegen_units": 8
+      },
+      {
+        "crate": "aetower_persistence",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower_core",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower_ffi",
+        "effective_codegen_units": 1
+      },
+      {
+        "crate": "aetower_mcp",
+        "effective_codegen_units": 8
+      }
+    ],
+    "products": {
+      "libaetower_ffi.dylib": {
+        "sha256": "c649b5f9966f39e561ca9e79981c4ead333fa84c4ec996ea0785447cc3163b25",
+        "bytes": 11808184
+      },
+      "aetower": {
+        "sha256": "39cd972a1a765fa7c0de0897f69b884f4618318e901d0489f4e36586d9bb363c",
+        "bytes": 1194128
+      },
+      "aetower-mcp": {
+        "sha256": "1123a78eb1b44b8c289d73b41231638d44ba5276f159bf12b9cab578bf889774",
+        "bytes": 443616
+      }
+    },
+    "exports_equal": true,
+    "canonical_inputs_unchanged_after_candidate_application": true
+  },
+  "app_smoke": {
+    "status": "complete",
+    "scope": "One retained candidate app smoke: 30 seconds hidden settle then 30 seconds counters. Common compiled Swift and resources; new canonical Rust library. Existing local app settings/live input; startup only, no interaction, no A/B or whole-app saving claim. No builds during capture; no install/release.",
+    "identity": {
+      "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-app-smoke-v1/Aetower.app",
+      "source": "291f428d2a8a41a31e63e95046968dc317166814; canonical MCP codegen8 and streaming regression history reader; retained pass17 Swift",
+      "executable_sha256": "1ed7698fd20eebac5b1e169d477b56d29ea4a69fb8589aa938c8b24c1f5b395f",
+      "rust_sha256": "c60e9140d5718f83e87e0a0e99b03e1be7289cb24ddf7f08c5a478c4cd2d8bae",
+      "rust_uuid": "9BD0513A-ADCA-36A0-9615-A61C1DC90B06"
+    },
+    "swift_uuid": "7C2620A6-4F95-3D3B-A482-96A3B3CA6127",
+    "exports": 370,
+    "common_files": 112,
+    "unsigned_swift_equal": true,
+    "usage": {
+      "wall_seconds": 30.144086999999992,
+      "samples": 16,
+      "user_time_seconds": 0.617475958,
+      "system_time_seconds": 0.713000917,
+      "average_cpu_percent": 4.413724240511913,
+      "pkg_idle_wakeups": 0,
+      "pkg_idle_wakeups_per_second": 0.0,
+      "interrupt_wakeups": 61,
+      "interrupt_wakeups_per_second": 2.0236141170903608,
+      "average_resident_size_bytes": 147119104,
+      "peak_resident_size_bytes": 181518336,
+      "average_phys_footprint_bytes": 110607368,
+      "peak_phys_footprint_bytes": 118375432
+    },
+    "hidden_samples": 28,
+    "loaded_rust_verified": true,
+    "loaded_swift_verified": true,
+    "app_stopped": true,
+    "monitor_stopped": true,
+    "canonical_inputs_unchanged": true,
+    "limitation": "Single startup-only candidate run with existing settings/live data; no balanced A/B, driven interaction or whole-app performance gain is established."
   }
 }

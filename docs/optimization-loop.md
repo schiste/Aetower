@@ -44,9 +44,28 @@ normal runtime roots, retained dependencies and two Cargo jobs. Means are
 options except partition count/identity, binding inputs and 370 exports match;
 products repeat within each variant. Eight adds **149968 library bytes**
 (about **146 KiB / 1.29%**). The roughly 3% RSS difference varies substantially;
-no robust further memory reduction is established. Keep the adopted four-unit
-manifest while separate runtime validation evaluates this candidate. This is a
-partial-root rebuild comparison, excluding Swift, cold dependencies and whole CI.
+no robust further memory reduction is established. Eight is adopted after all
+**277 active MCP release tests** pass with exact native coverage; the one normal
+ignored live-database test remains ignored. Total compiler CPU falls **11.11%**
+and elapsed time **25.60%** in this partial-root comparison; instantaneous CPU
+can be higher during the shorter build. Other release settings and job budgets
+are unchanged. Swift, cold dependencies and whole CI are outside this comparison.
+
+The canonical runtime/binding pipeline verifies the manifest's eight-unit MCP
+flags, the other crates' one-unit flags, unchanged binding inputs and all
+**370 exports**. Strict all-target MCP Clippy and workspace formatting pass.
+Its absolute warm-cache cost is **139.620s wall / 253.317
+CPU-seconds / 1333.56 MiB sampled peak
+tree RSS**; this cost includes the new reader and is not another matched gain.
+
+A retained signed app combines that Rust library with the verified common
+compiled Swift/resources. It stays alive through 30 seconds of observed hidden
+settling and a 30-second startup-only counter sample; mapped Swift and Rust
+image identities match, and the owned app/observer exit afterward. Absolute
+sample: **4.41% CPU, 105.48 MiB
+mean physical footprint, 2.02 interrupt
+wakeups/s**. Existing live inputs/settings and the short startup window make
+this a smoke observation, not an app-wide gain or equal-work A/B comparison.
 
 No whole-app percentage or causal explanation of pass19's activity changes is
 claimed. No install, release or merge changes. Evidence and limitations:

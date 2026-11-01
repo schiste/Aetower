@@ -60,4 +60,4 @@ strip = "symbols"
 # Split the large MCP crate to reduce measured release compiler memory and CPU.
 # Other release crates retain the workspace default of one codegen unit.
 [profile.release.package.aetower-mcp]
-codegen-units = 4
+codegen-units = 8
