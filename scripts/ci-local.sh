@@ -503,7 +503,7 @@ run_precommit_semgrep() {
 
 run_workspace_tests() {
     # Preserve crate-specific --include/--skip selections. The unfiltered
-    # full gate uses one feature graph and keeps every test serial.
+    # full gate isolates generator features and keeps every test serial.
     for label in "cargo test (workspace)" "cargo test (aetower-mcp)" "cargo test (aetower-helper)"; do
         if filter_contains "$INCLUDE_FILTER" "$label" || filter_contains "$SKIP_FILTER" "$label"; then
             run "cargo test (workspace)" "$CARGO_BIN" test --locked --manifest-path "$ROOT/rust/Cargo.toml" --workspace --exclude aetower-helper --exclude aetower-mcp

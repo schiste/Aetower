@@ -79,12 +79,28 @@ else:
         self.assertEqual(calls[1], "2 build --locked -p uniffi-bindgen-swift")
         self.assertFalse((self.root / "rust/target/release").exists())
 
-    def test_workspace_tests_use_one_serial_graph_without_excluding_crates(self):
-        subprocess.run(["sh", str(self.root / "scripts/test-rust-workspace.sh")],
-                       cwd=self.root / "rust", env=self.env, check=True)
-        self.assertEqual(self.calls(), [
-            f"2 test --locked --manifest-path {self.root}/rust/Cargo.toml --workspace -- --test-threads=1"
-        ])
+    def test_workspace_tests_isolate_generator_and_preserve_failures(self):
+        self.executable("cargo", '''#!/usr/bin/env python3
+import os, sys
+from pathlib import Path
+args = sys.argv[1:]
+with open("cargo-calls", "a") as log:
+    log.write(os.environ["CARGO_BUILD_JOBS"] + " " + " ".join(args) + "\\n")
+stage = "runtime" if "--workspace" in args else "generator"
+sys.exit(9 if os.environ.get("FAIL_TEST_STAGE") == stage else 0)
+''')
+        expected = [
+            f"2 test --locked --manifest-path {self.root}/rust/Cargo.toml --workspace --exclude uniffi-bindgen-swift -- --test-threads=1",
+            f"2 test --locked --manifest-path {self.root}/rust/Cargo.toml -p uniffi-bindgen-swift -- --test-threads=1",
+        ]
+        for failure in ("", "runtime", "generator"):
+            with self.subTest(failure=failure):
+                (self.root / "rust/cargo-calls").unlink(missing_ok=True)
+                self.env["FAIL_TEST_STAGE"] = failure
+                result = subprocess.run(["sh", str(self.root / "scripts/test-rust-workspace.sh")],
+                                        cwd=self.root / "rust", env=self.env)
+                self.assertEqual(result.returncode, 9 if failure else 0)
+                self.assertEqual(self.calls(), expected[:1] if failure == "runtime" else expected)
 
     def test_telemetry_smoke_resolves_cargo_from_path(self):
         self.env.pop("CARGO_BIN")
