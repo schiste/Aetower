@@ -31,6 +31,11 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   and rerun the unchanged suite; retain original failures rather than weakening
   storage guards or deadlines.
 - Document any override-based maintainer note that affected the change plan.
+- Before long resource experiments, persist the controller PID and progress in a
+  durable receipt. Missing or truncated tool output does not prove termination.
+  Match that PID to the expected command and inspect its owned descendants and
+  current logs before restarting or beginning another resource workload; save
+  the final status separately from the launch receipt.
 - For build-performance work, measure clean and unchanged repeat builds separately
   with the same toolchain, Cargo package/feature selection, profile, job count and compiler-cache settings. Record
   background load and distinguish an empty target directory from an uncached build.
