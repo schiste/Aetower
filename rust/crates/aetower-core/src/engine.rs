@@ -632,6 +632,32 @@ struct UnifiedLogEntry {
 }
 
 impl EngineState {
+    fn collection_tick_context(
+        &self,
+    ) -> (
+        RuntimeCollectionConfig,
+        RuntimeLagMetrics,
+        Option<&'static str>,
+    ) {
+        // The pressure check reads only scalar host fields. Borrow the current
+        // snapshot under the existing lock instead of cloning its device data.
+        let defer_reason = self
+            .runtime_config
+            .adaptive_cadence
+            .then(|| {
+                collector_expensive_sampling_defer_reason(
+                    &self.runtime_lag_metrics,
+                    &self.latest_snapshot.host,
+                )
+            })
+            .flatten();
+        (
+            self.runtime_config.clone(),
+            self.runtime_lag_metrics.clone(),
+            defer_reason,
+        )
+    }
+
     fn publish_mutation(&mut self) {
         self.sequence = self.sequence.saturating_add(1);
         Arc::make_mut(&mut self.latest_snapshot).sequence = self.sequence;
@@ -780,23 +806,8 @@ impl Engine {
             while running.load(Ordering::SeqCst) {
                 let tick_started = Instant::now();
                 let captured_at_millis = aet_time::now_millis();
-                let (runtime_config, previous_runtime_metrics, previous_host) = {
-                    let guard = state.lock();
-                    (
-                        guard.runtime_config.clone(),
-                        guard.runtime_lag_metrics.clone(),
-                        guard.latest_snapshot.host.clone(),
-                    )
-                };
-                let collector_defer_reason = runtime_config
-                    .adaptive_cadence
-                    .then(|| {
-                        collector_expensive_sampling_defer_reason(
-                            &previous_runtime_metrics,
-                            &previous_host,
-                        )
-                    })
-                    .flatten();
+                let (runtime_config, previous_runtime_metrics, collector_defer_reason) =
+                    state.lock().collection_tick_context();
                 collector
                     .configure(runtime_config.collector_config(collector_defer_reason.is_some()));
                 if let Some(reason) = collector_defer_reason {

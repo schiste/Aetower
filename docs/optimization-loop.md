@@ -5,6 +5,31 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 21: borrow the previous host for the per-tick pressure check
+
+Each engine tick previously cloned the full previous host, including device
+vectors and strings, only to read scalar pressure fields. The unchanged
+predicate now borrows the current snapshot under the existing state lock;
+collection starts after that lock is released. Config/metric copies, reason
+precedence, adaptive gating, diagnostic values and cadence remain unchanged.
+
+A source-extracted diagnostic with real model/mutex types matches all **264**
+complete config/metric/reason outputs and unchanged snapshot bytes. Synthetic
+2/16/64-device checks remove **19/89/329 allocations** and
+**781/6195/24867 requested bytes** each. These are requested allocations, not
+app physical footprint. Eight native windows, separate from allocation
+instrumentation, measure **2.696 → 0.027 microseconds CPU per call** over two
+million calls each. This isolates a very small operation; it is not a 99%
+app-wide CPU saving and establishes no new wakeup or app-memory percentage.
+
+The first standalone LTO link fails because retained archives have no embedded
+bitcode. That failure is retained; both private executables reuse the same
+archives with LTO off. The production profile is unchanged, and all **70 normal
+core release cases** pass with exact native coverage, strict all-target Clippy
+and formatting. The full runtime/bundle check is batched with the next small
+transport fix to avoid another redundant app rebuild. Evidence and limitations:
+[performance-loop21.json](performance-loop21.json).
+
 ## Pass 20: stream regression-history selection to reduce working memory
 
 The regression worker previously retained up to 500 full decoded snapshots
