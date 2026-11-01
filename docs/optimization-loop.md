@@ -5,6 +5,53 @@ schemas, displayed fields, refresh cadence and quality gates. Use focused
 correctness checks and measured comparisons; keep theoretical work reductions
 separate from measured app-wide improvements.
 
+## Pass 20: stream regression-history selection to reduce working memory
+
+The regression worker previously retained up to 500 full decoded snapshots
+before choosing its hourly representatives. It now uses the same latest-500 SQL
+query and decoding loop, retaining only the winning snapshot per payload-hour.
+All rows still pass through decoding and corruption quarantine. Normal page
+reads reuse that visitor and keep their original full output. Hourly order,
+cap behavior, valid-row diagnostics, the 120-second startup delay and six-hour
+worker interval are unchanged. No dependency, persistent cache or timer is added.
+
+Eight serial native processes in **ABBA/BAAB** order each seed the same isolated
+610-row database with 64 entities per snapshot, then perform eight reads. Every
+phase returns the same two complete snapshots; all **64 serialized outputs**
+and all eight logical database states, including payload bytes, match exactly.
+Mean native kernel peak RSS falls **146.92 → 9.16 MiB (-93.76%)**; total CPU
+for eight read/downsample calls falls **0.434832 → 0.333921s (-23.21%)**.
+These are bounded real-reader fixture measurements, not app-wide memory or CPU
+percentages. Kernel largest-process peak RSS captures short peaks and differs
+from sampled process-tree RSS. Actual benefit depends on payload/hour density.
+
+Two permanent contract tests compare complete output against the old algorithm
+across ranges/caps, metadata ties, unordered payload times, the latest-500 cutoff,
+all three persistence formats, corrupt/missing rows and quarantine effects.
+All **99 normal core/persistence release cases** pass with exact native coverage;
+strict all-target Clippy and formatting pass. Absolute normal validation costs
+**262.460s wall / 174.404 CPU-seconds / 545.98 MiB sampled peak tree RSS**.
+The first diagnostic audit failed to open the completed SQLite fixture in
+read-only mode. Its native run and failure are retained; immutable mode is used
+only after all writer processes exit and no uncheckpointed WAL remains, with
+primary-file hashes checked before/after. A fresh full balanced comparison
+reuses the same compiled executable; the partial first run is excluded.
+
+Build research compares release MCP **4–8–8–4** codegen units with identical
+normal runtime roots, retained dependencies and two Cargo jobs. Means are
+**176.485 → 131.296s wall**, **263.503 → 234.234 CPU-seconds**, and
+**1380.70 → 1342.35 MiB sampled peak tree RSS**. Unit graphs, actual codegen
+options except partition count/identity, binding inputs and 370 exports match;
+products repeat within each variant. Eight adds **149968 library bytes**
+(about **146 KiB / 1.29%**). The roughly 3% RSS difference varies substantially;
+no robust further memory reduction is established. Keep the adopted four-unit
+manifest while separate runtime validation evaluates this candidate. This is a
+partial-root rebuild comparison, excluding Swift, cold dependencies and whole CI.
+
+No whole-app percentage or causal explanation of pass19's activity changes is
+claimed. No install, release or merge changes. Evidence and limitations:
+[performance-loop20.json](performance-loop20.json).
+
 ## Pass 19: reduce compiler pressure and per-tick network work
 
 Release MCP now uses four codegen units; other release crates keep one. The

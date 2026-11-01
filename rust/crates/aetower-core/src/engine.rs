@@ -1678,14 +1678,17 @@ impl Engine {
                 let now = aet_time::now_millis();
                 let window_start = now.saturating_sub(REGRESSION_WINDOW_MILLIS);
                 // Load without blocking ticks; skip this cycle if the store is busy.
-                let snapshots = match persistence.try_lock() {
+                let downsampled = match persistence.try_lock() {
                     Some(guard) => guard
                         .as_ref()
-                        .and_then(|store| store.load_range(window_start, now).ok())
+                        .and_then(|store| {
+                            store
+                                .load_hourly_range(window_start, now, REGRESSION_MAX_SNAPSHOTS)
+                                .ok()
+                        })
                         .unwrap_or_default(),
                     None => Vec::new(),
                 };
-                let downsampled = downsample_hourly(snapshots, REGRESSION_MAX_SNAPSHOTS);
                 if !downsampled.is_empty() {
                     let findings = aetower_regression::detect_regressions(&downsampled, now);
                     if !findings.is_empty() {
@@ -2561,23 +2564,6 @@ fn telemetry_config_from_env() -> OtlpConfig {
         config.enabled = matches!(enabled.as_str(), "1" | "true" | "TRUE" | "yes" | "YES");
     }
     config
-}
-
-/// Keep at most one snapshot per hour bucket (and cap the total) so the
-/// regression detector reads a bounded series regardless of persistence cadence.
-fn downsample_hourly(snapshots: Vec<SystemSnapshot>, cap: usize) -> Vec<SystemSnapshot> {
-    const HOUR_MILLIS: u64 = 3_600_000;
-    let mut seen_hours = std::collections::HashSet::new();
-    let mut kept: Vec<SystemSnapshot> = snapshots
-        .into_iter()
-        .filter(|snapshot| seen_hours.insert(snapshot.captured_at_millis / HOUR_MILLIS))
-        .collect();
-    // If still over the cap, keep the most recent `cap` hourly samples.
-    if kept.len() > cap {
-        let drop = kept.len() - cap;
-        kept.drain(0..drop);
-    }
-    kept
 }
 
 fn sleep_with_stop(running: &AtomicBool, duration: Duration) {

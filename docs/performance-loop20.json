@@ -1,0 +1,224 @@
+{
+  "status": "streaming_reader_validated_compiler_eight_candidate_under_review",
+  "baseline_commit": "8ab6e25d9e4e318be201c038dd26573dad0e1033",
+  "source_sha256": {
+    "rust/crates/aetower-core/src/engine.rs": "caa2ed7c078f3fb8edaeabe16a71418935365580780281c4c0742e44cb0748e1",
+    "rust/crates/aetower-persistence/src/lib.rs": "214c3252e3d9e4ade52c000a123b649f2dd0ec72417447b49b1c2f8d2458506a"
+  },
+  "runtime_change": "Regression history reads decode the same latest 500 rows but retain only the winning snapshot per payload-hour. Ordering, cap behavior, all row decoding/quarantine, valid-row diagnostic counts and worker cadence are preserved. Public load_range/load_range_page still return the complete normal page through the same visitor. No persistent cache, dependency or timer is added.",
+  "runtime_native_comparison": {
+    "scope": "Real HistoryStore native fixture with 610 fixed synthetic rows, 64 entities per snapshot, normal latest-500 selection and eight read/downsampling phases per process. Four baseline and four candidate processes in ABBA/BAAB order; same executable, database table values including payload bytes and full JSON outputs verified. Native kernel largest-process peak RSS is separate from sampled tree RSS. Phase CPU is native CLOCK_PROCESS_CPUTIME_ID, including native threads; whole-fixture costs also include identical seeding/export/cleanup. No app-wide or general regression-worker attribution claim.",
+    "means": {
+      "baseline": {
+        "phase_cpu_seconds": 0.434832,
+        "phase_wall_seconds": 0.552676104,
+        "native_peak_rss_bytes": 154058752
+      },
+      "candidate": {
+        "phase_cpu_seconds": 0.3339205,
+        "phase_wall_seconds": 0.39098275025,
+        "native_peak_rss_bytes": 9609216
+      }
+    },
+    "percent_change": {
+      "phase_cpu_seconds": -23.207008683813513,
+      "phase_wall_seconds": -29.25644017892982,
+      "native_peak_rss_bytes": -93.76262894820802
+    },
+    "sequence": [
+      "baseline",
+      "candidate",
+      "candidate",
+      "baseline",
+      "candidate",
+      "baseline",
+      "baseline",
+      "candidate"
+    ],
+    "work": "610 rows, 64 entities and two components per snapshot, eight identical reads per native process; exactly two full snapshots returned in every phase.",
+    "output_sha256": "d0200cf646b8a069f8dea35d736998948f56318dc7031ec106074c0465d02b7a",
+    "database_state": {
+      "sha256": "88511505dc47adc3c22e345bf4583399c1f96e4b40d18f6c13e2fd918ee16093",
+      "tables": {
+        "history_rollups": 0,
+        "snapshot_quarantine": 0,
+        "snapshots": 610,
+        "sqlite_sequence": 1
+      }
+    },
+    "all_64_full_output_oracles_match": true,
+    "all_eight_logical_database_states_match": true,
+    "original_audit_failure_retained": true,
+    "recovery": {
+      "original_receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-hourly-resources-v1/results.json",
+      "compiled_executable_reused": true,
+      "original_partial_run_excluded_from_means": true,
+      "oracle": "Offline immutable read mode only after native process exit and absent/empty WAL; primary DB bytes verified before/after each audit."
+    },
+    "canonical_inputs_unchanged": true,
+    "fixture_removed": true,
+    "memory": "Native macOS getrusage(RUSAGE_SELF) peak RSS in bytes, including fixture initialization/exports; mean across four processes per variant. Separate from the one-second sampled tree RSS. CPU phases use CLOCK_PROCESS_CPUTIME_ID over the read/downsample call, including native threads. No app physical-footprint percentage inferred."
+  },
+  "contract_tests": {
+    "passed": 2,
+    "cases": "Full serialized output against old algorithm over ranges/caps including 0, 1, 4, 400 and usize::MAX; 610 rows/latest-500 cutoff, metadata ties and nonmonotonic payload times; JSON, legacy bincode and envelope formats. Separate stores verify corrupt/missing payload handling and all snapshot/quarantine values, excluding only actual quarantine wall-clock timestamp."
+  },
+  "normal_validation": {
+    "status": "complete",
+    "normal_tests": {
+      "passed": 99,
+      "ignored": 0,
+      "expected_native_cases": 99,
+      "exact_native_case_coverage": true,
+      "ignored_cases": {},
+      "executables": [
+        {
+          "path": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/rust-production-target/release/deps/pipeline_fixtures-de12704857bb381e",
+          "sha256": "b2c6e83dfb16e675ebb05797b739567a12e62eb99848944f307deed23d86802d"
+        },
+        {
+          "path": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/rust-production-target/release/deps/aetower_core-442c4c575adec5c0",
+          "sha256": "3c7efdb34bbd9c5a3cce4d5c57a9a53db232fe041f8309088f576b7e2a6ce015"
+        },
+        {
+          "path": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/rust-production-target/release/deps/aetower_persistence-e22698f288054146",
+          "sha256": "d135533f5745e9fdcd11cc024a05f09d53b18e22241c16b0c4124c06d7e9e8f8"
+        }
+      ]
+    },
+    "steps": [
+      {
+        "name": "tests",
+        "status": "complete",
+        "cost": {
+          "command": [
+            "/Users/christophehenner/.cargo/bin/cargo",
+            "test",
+            "--locked",
+            "--release",
+            "--message-format=json",
+            "--manifest-path",
+            "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/rust/Cargo.toml",
+            "-p",
+            "aetower-core",
+            "-p",
+            "aetower-persistence",
+            "--",
+            "--test-threads=1"
+          ],
+          "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+          "exit_status": 0,
+          "wall_seconds": 262.46,
+          "user_cpu_seconds": 167.653,
+          "system_cpu_seconds": 6.751,
+          "average_cpu_percent": 66.5,
+          "sampled_peak_tree_rss_bytes": 572506112,
+          "rss_samples": 242,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        }
+      },
+      {
+        "name": "clippy",
+        "status": "complete"
+      },
+      {
+        "name": "format",
+        "status": "complete"
+      }
+    ],
+    "canonical_inputs_unchanged": true
+  },
+  "compiler_candidate": {
+    "status": "not_adopted_release_manifest_still_four",
+    "configuration": {
+      "sequence": "codegen 4-8-8-4",
+      "cargo_jobs": 2,
+      "root_clean_packages": [
+        "aetower-mcp",
+        "aetower-core",
+        "aetower-cli",
+        "aetower-ffi"
+      ],
+      "profile": "release",
+      "compiler_wrappers": "disabled",
+      "cache": "retained dependencies; selected runtime roots cleaned before each sample",
+      "diagnostic_transformation": "CARGO_BIN shim adds -vv --message-format=json and a per-package release codegen-units override for aetower-mcp. The same pinned Cargo, jobs=2, all normal batched runtime roots, host bindgen and binding publication are retained. Other compiler settings must remain unchanged."
+    },
+    "scope": "Partial-root rebuild of normal runtime pipeline, not cold dependency compilation, Swift, whole CI or app memory. Compiler partitioning hypothesis; no hard memory or CPU thread cap. Product code may differ across codegen variants, so ABI and runtime equivalence require separate checks. Sampled aggregate tree RSS, shared-host load uncontrolled.",
+    "means": {
+      "4": {
+        "wall_seconds": 176.4845,
+        "user_cpu_seconds": 255.883,
+        "system_cpu_seconds": 7.6195,
+        "sampled_peak_tree_rss_bytes": 1447772160
+      },
+      "8": {
+        "wall_seconds": 131.296,
+        "user_cpu_seconds": 229.4425,
+        "system_cpu_seconds": 4.791,
+        "sampled_peak_tree_rss_bytes": 1407557632
+      }
+    },
+    "runtime_unit_graph_equal": true,
+    "products_equal_within_variant": true,
+    "exported_symbols_equal": true,
+    "effective_options_and_size_audit": {
+      "status": "complete",
+      "effective_codegen_options_equal_except_mcp_partition_count": true,
+      "product_sizes": [
+        {
+          "index": 1,
+          "codegen_units": 4,
+          "bytes": {
+            "libaetower_ffi.dylib": 11658200,
+            "aetower": 1194112,
+            "aetower-mcp": 443440
+          }
+        },
+        {
+          "index": 2,
+          "codegen_units": 8,
+          "bytes": {
+            "libaetower_ffi.dylib": 11808168,
+            "aetower": 1194128,
+            "aetower-mcp": 443616
+          }
+        },
+        {
+          "index": 3,
+          "codegen_units": 8,
+          "bytes": {
+            "libaetower_ffi.dylib": 11808168,
+            "aetower": 1194128,
+            "aetower-mcp": 443616
+          }
+        },
+        {
+          "index": 4,
+          "codegen_units": 4,
+          "bytes": {
+            "libaetower_ffi.dylib": 11658200,
+            "aetower": 1194112,
+            "aetower-mcp": 443440
+          }
+        }
+      ],
+      "scope": "Actual ordered rustc -C options agree except intentional MCP partition count and artifact identity. Bytes on disk are not runtime footprint; shared-host partial-root rebuild only."
+    },
+    "tradeoff": "Eight adds 149968 library bytes (about 146 KiB, +1.29%) versus four. Mean sampled RSS is only about 3% lower with substantial variation; no robust further memory saving or hard CPU/memory cap established. Runtime validation must precede adoption."
+  },
+  "limitations": [
+    "Native benchmark is fixed synthetic history data, not a whole-app measurement. Actual benefit depends on history payloads and distinct-hour count.",
+    "All 500 selected rows are still decoded; corruption quarantine and normal diagnostics are preserved rather than skipped for speed.",
+    "Pass19 app cohorts showed changing background activity; hidden state alone did not establish an equal workload. No causal attribution of that activity to the regression worker is established.",
+    "No installed app, release or merge changed. Hosted dependency-policy preflight remains failing; no passing hosted job or CI performance percentage claimed."
+  ],
+  "retained_receipt_sha256": {
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-compiler-pressure-plan-v1/results.json": "dd5973173576e912491a592aec74e882df5ef0a3db0b50a2c691ad91473b5d1d",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-compiler-pressure-plan-v1/compiler-options-and-size-audit.json": "4805e37a4c6bc151432204906f40702e00c990fbcf9e964811217869b7da8fb8",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-hourly-resources-v1/results.json": "9ac04012b2d834a2ef3e6e092eec5fd71d36bab722945902d6f8c5df6ab80a8b",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-hourly-resources-v2/results.json": "fb50f70fe6ff1bf8d8066a2c9df5a2e31131702f28f88f57debf709589dd95b4",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-hourly-focused-validation-v1/results.json": "4391539bb16fab32f6369eff63b44b8a8e263febbe5ed996af1599aabf07476f",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop20-hourly-normal-validation-v1/results.json": "e9b0dc0adcb4bf1ef81f6dc30b3d6c62f53ed9708acbeea857916f47179df24f"
+  }
+}
