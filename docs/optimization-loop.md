@@ -25,8 +25,18 @@ graphs, with 50 operations in each process. Every variant emits the same
 sparse CPU is **0.078302 → 0.056861s (-27.4%)**. Mean maximum-process RSS
 is 9.16 → 9.11 MiB for dense graphs and 4.87 → 4.73 MiB for sparse graphs,
 but includes shared setup and validation of both algorithms. It cannot isolate
-helper memory savings. Production app comparison remains pending; these fixture
-results establish no app-wide CPU, physical-footprint or wakeup improvement.
+helper memory savings. Production packaging passes in 117.434s wall with
+132.278 CPU seconds and 742 MiB sampled peak tree RSS using existing caches;
+these are absolute costs, not a build comparison. The retained pair shares
+identical unsigned Swift code, metadata and 110 common payload files.
+Four hidden-idle ABBA app windows verify both loaded images and all 300
+measurement-period visibility observations. Observed means are CPU **4.384% →
+4.253% (-3.0%)**, physical footprint **127.68 → 121.84 MiB (-4.6%)**, and
+interrupt wakeups **5.044 → 4.977/s (-1.3%)**. Both candidate CPU readings are
+close to the first baseline; baseline memory varies widely and candidate wakeups
+straddle the baselines. Individual windows overlap. This small shared-host
+cohort establishes no consistent or causal app-wide saving. App-process counters
+exclude child processes, and no builds run during capture.
 
 The compiler-only generator-feature cohort completed and its candidate separately
 passed exactly the original **518 cases: 511 passed, seven ignored**. Every
@@ -37,8 +47,8 @@ An independent probe reproduces this with and without the sampler: two children
 reporting 0.3 CPU seconds each produce roughly 0.33s after `exec`, versus 0.66s
 with explicit waits. The cohort and wall/RSS observations remain retained;
 cold timings have wide spread, and unchanged candidate repeats are slower.
-A corrected comparison is prepared using matched explicit waits in both retained
-benchmark scripts. Production orchestration is unchanged. This remains a local
+A corrected comparison is running using matched explicit waits in both retained
+benchmark scripts, disabled compiler wrappers and recorded toolchain identities. Production orchestration is unchanged. This remains a local
 compiler comparison, excluding execution, Clippy, Swift and cache transfers.
 Detailed evidence is in [`performance-loop13.json`](performance-loop13.json).
 
