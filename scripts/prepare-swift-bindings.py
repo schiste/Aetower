@@ -5,7 +5,14 @@ Keep this transformation next to generation rather than hand-editing bindings.
 Fail on template drift so an upstream generator change needs explicit review.
 """
 from pathlib import Path
+import fcntl
+import hashlib
+import json
+import os
+import signal
+import subprocess
 import sys
+import tempfile
 
 
 INTEGER_COPY = """fileprivate func readInt<T: FixedWidthInteger>(_ reader: inout (data: Data, offset: Data.Index)) throws -> T {
@@ -77,5 +84,87 @@ def publish(staging: Path, sources: Path) -> None:
             target.write_text(cleaned)
 
 
+def content_hash(path: Path):
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def generate(generator: Path, dylib: Path, sources: Path, cache: Path) -> bool:
+    """Skip generation only when inputs and all three published outputs match."""
+    if not generator.is_file() or not dylib.is_file():
+        raise FileNotFoundError("binding generator and dylib must both exist")
+    cache.mkdir(parents=True, exist_ok=True)
+    outputs = ("AetowerBindings/aetower_ffi.swift", "aetower_ffiFFI/aetower_ffiFFI.h",
+               "aetower_ffiFFI/module.modulemap")
+    workspace = Path.cwd()
+
+    def inputs():
+        # library_mode also consults Cargo metadata and optional UniFFI config.
+        paths = {"generator": generator, "dylib": dylib, "prepare": Path(__file__),
+                 "Cargo.toml": workspace / "Cargo.toml", "Cargo.lock": workspace / "Cargo.lock",
+                 "uniffi.toml": workspace / "uniffi.toml"}
+        for pattern in ("crates/*/Cargo.toml", "crates/**/uniffi.toml", "crates/**/*.udl"):
+            for path in workspace.glob(pattern):
+                paths[str(path.relative_to(workspace))] = path
+        return {"cwd": str(workspace.resolve()),
+                "sha256": {name: content_hash(path) for name, path in paths.items()}}
+
+    def published():
+        return {name: content_hash(sources / name) for name in outputs}
+
+    # Serialize publication and cache updates within this checkout. Python keeps
+    # this descriptor non-inheritable, so a child cannot retain the lock.
+    with (cache / "bindings.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        before = inputs()
+        current = published()
+        stamp = cache / "bindings.json"
+        expected = {"version": 1, "inputs": before, "outputs": current}
+        try:
+            previous = json.loads(stamp.read_text())
+        except (OSError, ValueError):
+            previous = None
+        if all(current.values()) and previous == expected:
+            print("Swift bindings unchanged (verified content cache)")
+            return True
+        with tempfile.TemporaryDirectory(prefix="bindings.", dir=cache) as directory:
+            staging = Path(directory)
+            subprocess.run([str(generator), "--swift-sources", "--headers", "--modulemap",
+                            "--module-name", "aetower_ffiFFI", "--modulemap-filename",
+                            "module.modulemap", str(dylib), str(staging)], check=True)
+            if inputs() != before:
+                raise RuntimeError("binding generation inputs changed during execution")
+            if {path.name for path in staging.iterdir() if path.is_file()} != {Path(name).name for name in outputs}:
+                raise RuntimeError("binding generator output set changed; review before publication")
+            publish(staging, sources)
+        result = published()
+        if not all(result.values()):
+            raise RuntimeError("binding generation did not publish every required output")
+        expected["outputs"] = result
+        name = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=cache, prefix="stamp.", delete=False) as temporary:
+                name = Path(temporary.name)
+                json.dump(expected, temporary, sort_keys=True)
+                temporary.write("\n")
+            os.replace(name, stamp)
+        finally:
+            if name is not None:
+                name.unlink(missing_ok=True)
+        return False
+
+
 if __name__ == "__main__":
-    publish(*map(Path, sys.argv[1:]))
+    if sys.argv[1:2] == ["--generate"]:
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+        try:
+            generate(*map(Path, sys.argv[2:]))
+        except subprocess.CalledProcessError as error:
+            sys.exit(error.returncode if error.returncode >= 0 else 128 - error.returncode)
+    else:
+        publish(*map(Path, sys.argv[1:]))

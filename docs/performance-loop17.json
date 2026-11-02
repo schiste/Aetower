@@ -1125,5 +1125,90 @@
       "reason": "Mixed-log parser did not guard against standalone JSON strings; zero runtime windows."
     }
   ],
-  "delivery": "Product draft PR 21; canonical procedure changes remain separate in PR 22."
+  "delivery": "Product draft PR 21; canonical procedure changes remain separate in PR 22.",
+  "package_validation": {
+    "status": "complete",
+    "source_commit": "aab2d15c2a4a6a1c55f6bb63ebfa7a4785e351c5",
+    "configuration": {
+      "CARGO_BUILD_JOBS": "2",
+      "AETOWER_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/rust-production-target",
+      "SWIFT_BUILD_DIR": "/private/tmp/aetower-build-performance/macos/.build",
+      "CLANG_MODULE_CACHE_PATH": "/private/tmp/aetower-build-performance/tmp/clang-module-cache",
+      "AETOWER_SIGN_IDENTITY": "-",
+      "AETOWER_NOTARIZE": "0",
+      "AETOWER_STAPLE": "0",
+      "AETOWER_INCLUDE_PRIVILEGED_HELPER": "0",
+      "AETOWER_VERSION": "0.9.0",
+      "AETOWER_BUILD_NUMBER": "1087"
+    },
+    "runs": [
+      {
+        "label": "current",
+        "exit_status": 0,
+        "cost": {
+          "command": [
+            "sh",
+            "/private/tmp/aetower-build-performance/scripts/package-macos.sh"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 271.684,
+          "user_cpu_seconds": 337.484,
+          "system_cpu_seconds": 19.555,
+          "average_cpu_percent": 131.4,
+          "sampled_peak_tree_rss_bytes": 2370404352,
+          "rss_samples": 264,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "smoke_exit_status": 0,
+        "inputs_unchanged": true,
+        "source_compilation_lines": [
+          "   Compiling aetower-mcp v0.1.0 (/private/tmp/aetower-build-performance/rust/crates/aetower-mcp)",
+          "   Compiling aetower-history v0.1.0 (/private/tmp/aetower-build-performance/rust/crates/aetower-history)",
+          "   Compiling aetower-core v0.1.0 (/private/tmp/aetower-build-performance/rust/crates/aetower-core)",
+          "   Compiling aetower-cli v0.1.0 (/private/tmp/aetower-build-performance/rust/crates/aetower-cli)",
+          "   Compiling aetower-ffi v0.1.0 (/private/tmp/aetower-build-performance/rust/crates/aetower-ffi)"
+        ]
+      },
+      {
+        "label": "unchanged-repeat",
+        "exit_status": 0,
+        "cost": {
+          "command": [
+            "sh",
+            "/private/tmp/aetower-build-performance/scripts/package-macos.sh"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 7.251,
+          "user_cpu_seconds": 4.433,
+          "system_cpu_seconds": 1.576,
+          "average_cpu_percent": 82.9,
+          "sampled_peak_tree_rss_bytes": 372948992,
+          "rss_samples": 8,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "smoke_exit_status": 0,
+        "inputs_unchanged": true,
+        "source_compilation_lines": []
+      }
+    ],
+    "scope": "Actual current release macOS package and unchanged repeat with existing production Rust/Swift caches, two package jobs, no compiler wrapper and ad-hoc signing. Absolute cache-state costs, not A/B or cold comparisons. Package commands include signature verification and archive creation; separate smoke costs are excluded. No notarization, installation or release. No app-runtime saving claimed.",
+    "retained_app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-production-package-v1/Aetower.app",
+    "bundle_file_count": 115,
+    "bundle_manifest_sha256": "3f31061a648c2bb870c3d2e255cef5d38488f8f44b5e50ed686bd09ccc67770b",
+    "swift_image_uuid": "UUID: 7C2620A6-4F95-3D3B-A482-96A3B3CA6127 (arm64) /Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-production-package-v1/Aetower.app/Contents/MacOS/Aetower",
+    "rust_image_uuid": "UUID: C3C15E29-5980-3E31-BC1C-CA2702EB672D (arm64) /Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-production-package-v1/Aetower.app/Contents/Frameworks/libaetower_ffi.dylib",
+    "retained_signature_exit_status": 0,
+    "inputs_unchanged": true,
+    "receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-production-package-v1/results.json",
+    "role": "Immutable pass-17 app at aab2d15, before pass-18 ownership transfer; suitable as that subsequent runtime baseline.",
+    "repeat_compilation_audit": {
+      "status": "unverified_primary_outputs_removed",
+      "source_commit": "aab2d15c2a4a6a1c55f6bb63ebfa7a4785e351c5",
+      "reason": "The temporary checkout and its Swift compiler-output tree disappeared before the independent timestamp audit could complete. Both package/smoke/signature runs and the retained bundle remain verified. Repeat logs have no source-compilation labels, but cannot alone prove no compilation under abbreviated progress output. No replacement build was run solely to reconstruct the missing audit.",
+      "retained_package_receipt": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop17-production-package-v1/results.json"
+    }
+  }
 }

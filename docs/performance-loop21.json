@@ -1,0 +1,190 @@
+{
+  "status": "context_clone_removed_full_runtime_and_retained_app_validated",
+  "baseline_commit": "e7d6d5d420b90b0d2a5dc0f4c742b45a18e59928",
+  "source_sha256": {
+    "rust/crates/aetower-core/src/engine.rs": "dfe636b2d1a906403dd71e372ff02221eb5d8badad6364957a06ff3d96685940"
+  },
+  "change": "Compute the same scalar pressure predicate from the borrowed current snapshot under the existing state lock. Return the same configuration and metric copies and static reason. Remove the full previous-host clone, preserving pressure order, adaptive gating, diagnostic values and refresh cadence. No persistent cache, dependency or timer.",
+  "diagnostic_scope": "Source-extracted exact pressure/context bodies and real locked model/mutex types; standalone diagnostic, not whole-engine/app compilation. Separate default-allocator native executable for CPU, instrumented executable for requested allocations. Every fixture preserves full config/metric/reason values and input snapshot bytes. Standalone opt-level=3/codegen-units=1 with LTO off: cached archives lack embedded bitcode for a separate whole-program LTO link. This diagnostic is not a production-profile comparison.",
+  "oracles": {
+    "cases": 88,
+    "repetitions": 3,
+    "full_outputs": 264,
+    "config_metric_reason_values_equal": true,
+    "input_snapshot_bytes_unchanged": true
+  },
+  "allocation_by_synthetic_device_count": {
+    "0": {
+      "baseline_allocations": [
+        1
+      ],
+      "baseline_requested_bytes": [
+        11
+      ],
+      "candidate_allocations": [
+        0
+      ],
+      "candidate_requested_bytes": [
+        0
+      ]
+    },
+    "2": {
+      "baseline_allocations": [
+        19
+      ],
+      "baseline_requested_bytes": [
+        781
+      ],
+      "candidate_allocations": [
+        0
+      ],
+      "candidate_requested_bytes": [
+        0
+      ]
+    },
+    "16": {
+      "baseline_allocations": [
+        89
+      ],
+      "baseline_requested_bytes": [
+        6195
+      ],
+      "candidate_allocations": [
+        0
+      ],
+      "candidate_requested_bytes": [
+        0
+      ]
+    },
+    "64": {
+      "baseline_allocations": [
+        329
+      ],
+      "baseline_requested_bytes": [
+        24867
+      ],
+      "candidate_allocations": [
+        0
+      ],
+      "candidate_requested_bytes": [
+        0
+      ]
+    }
+  },
+  "native_context_means": {
+    "baseline": {
+      "phase_cpu_seconds": 5.39276675,
+      "phase_wall_seconds": 5.459580094
+    },
+    "candidate": {
+      "phase_cpu_seconds": 0.0537375,
+      "phase_wall_seconds": 0.0542138855
+    }
+  },
+  "native_context_percent_change": {
+    "phase_cpu_seconds": -99.00352634387534,
+    "phase_wall_seconds": -99.00699532625997
+  },
+  "native_context_cpu_microseconds_per_call": {
+    "baseline": 2.696383375,
+    "candidate": 0.02686875
+  },
+  "native_sequence": [
+    "baseline",
+    "candidate",
+    "candidate",
+    "baseline",
+    "candidate",
+    "baseline",
+    "baseline",
+    "candidate"
+  ],
+  "native_iterations_per_process": 2000000,
+  "normal_validation": {
+    "status": "complete",
+    "scope": "All normal core release unit/integration/doc tests after borrowing the pressure-check host snapshot. Production release profile unchanged (MCP8, other crates1); no private fixture in canonical source. Exact emitted native cases and normal ignored cases verified; strict all-target Clippy and formatting. One Cargo job; absolute validation cost, not performance comparison.",
+    "normal_tests": {
+      "passed": 70,
+      "ignored": 0,
+      "expected_native_cases": 70,
+      "exact_native_case_coverage": true,
+      "ignored_cases": {},
+      "executables": [
+        {
+          "path": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/rust-production-target/release/deps/pipeline_fixtures-de12704857bb381e",
+          "sha256": "b2c6e83dfb16e675ebb05797b739567a12e62eb99848944f307deed23d86802d"
+        },
+        {
+          "path": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/rust-production-target/release/deps/aetower_core-442c4c575adec5c0",
+          "sha256": "5acf814e65bf0be5b3fdc21f3dfa430275581fadaa07cfd404c1d0d0723cd6ae"
+        }
+      ]
+    },
+    "steps": [
+      {
+        "name": "tests",
+        "status": "complete",
+        "cost": {
+          "command": [
+            "/Users/christophehenner/.cargo/bin/cargo",
+            "test",
+            "--locked",
+            "--release",
+            "--message-format=json",
+            "--manifest-path",
+            "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint/rust/Cargo.toml",
+            "-p",
+            "aetower-core",
+            "--",
+            "--test-threads=1"
+          ],
+          "cwd": "/Volumes/T7-repositories/Application Support/Aethyme/worktrees/aetower-c94f68c3dac575bc/hardware-footprint",
+          "exit_status": 0,
+          "wall_seconds": 81.755,
+          "user_cpu_seconds": 73.009,
+          "system_cpu_seconds": 2.527,
+          "average_cpu_percent": 92.4,
+          "sampled_peak_tree_rss_bytes": 606420992,
+          "rss_samples": 77,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        }
+      },
+      {
+        "name": "clippy",
+        "status": "complete"
+      },
+      {
+        "name": "format",
+        "status": "complete"
+      }
+    ],
+    "canonical_inputs_unchanged": true
+  },
+  "recovery": "Standalone LTO link first failed because retained archives lack embedded bitcode. The original failed receipt is retained; both private diagnostic executables use LTO off and the same exact dependency archives. Production release LTO and flags are unchanged. Normal core release tests validate the actual profile.",
+  "limitations": [
+    "A source-extracted helper diagnostic with real model/mutex types is not the complete engine/app binary or a production-profile performance comparison.",
+    "Allocation counts and requested bytes are not RSS or physical footprint. No measured app-wide CPU, memory or wakeup improvement is inferred.",
+    "Only a few microseconds per synthetic check are removed. Whole-app profiling is needed to prioritize larger costs.",
+    "The pressure predicate now runs inside the existing lock; it reads only scalar fields and performs constant-time arithmetic, replacing the larger clone formerly performed while locked."
+  ],
+  "retained_receipt_sha256": {
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop21-pressure-context-validation-v1/results.json": "78d22ebe8cd2dd42a257f1f42e702ebed1335367a28d18e69af0706d11bcacaf",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop21-pressure-context-validation-v2/results.json": "d0ca64aa1f9c2784fec9eb412aaff41d71bc9473af5580687e0e493d9f3fd0f4",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop21-core-normal-validation-v1/results.json": "0377aaaefa9dc7da93620b11848a52376573ddf49e2600377642f4b412cac7bd",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-runtime-normal-validation-v1/results.json": "8e68522931da75dec7b9821c6ac21ba2c23b8f225f3c3b2593226020d47f2e52",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-canonical-release-v1/results.json": "8970ae982cf288e6192f0ae30a947bf2e7d86f34b4ec47ffdc2b290d26a22662",
+    "/Volumes/T7-repositories/Aetower-build-performance-cache/session-10/retained/loop22-app-smoke-v1/results.json": "ace58d079075d8a2254d3891a8b5476318921082578c31231b75b07baae1850c"
+  },
+  "batched_full_runtime_validation": {
+    "evidence": "performance-loop22.json",
+    "active_release_cases": 373,
+    "normal_ignored_cases": 4,
+    "strict_all_target_clippy": true,
+    "formatting": true,
+    "exports_equal": true,
+    "exported_symbol_count": 370,
+    "retained_app_loaded_rust_and_swift_verified": true,
+    "canonical_inputs_unchanged": true,
+    "scope": "Passes21/22 share one normal release/runtime/binding pipeline and retained app launch check; this establishes correctness/identity, not whole-app performance improvement."
+  }
+}

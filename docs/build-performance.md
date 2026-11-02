@@ -53,6 +53,16 @@ shared budget through `-j`. A job budget limits compiler concurrency, not
 CPU percentage or memory allocation; a compiler can itself use threads.
 Direct Cargo and Swift commands outside these scripts retain their own defaults.
 
+Release MCP uses eight codegen units; other release crates retain one. The
+matched four-to-eight partial-root rebuild uses 11.1% less total compiler CPU
+and 25.6% less wall time, at the cost of about 146 KiB more bridge-library space.
+The small sampled RSS difference is variable and establishes no further robust
+memory saving or hard concurrency cap. The earlier one-to-four comparison
+reduced sampled compiler-tree RSS by 23% with about 358 KiB extra library space;
+these are separate cohorts, and their percentages must not be compounded.
+See [pass 20](performance-loop20.json) and [pass 19](performance-loop19.json).
+Neither comparison establishes lower app physical footprint.
+
 ## Preserve caches between builds
 
 Packaging and local CI preserve SwiftPM's build directory and packaging's
@@ -63,8 +73,9 @@ always assembled afresh. Packaging asks SwiftPM for the product directory
 instead of assuming a toolchain-specific layout, and embeds the UI resource
 bundle so the app can resolve its resources outside the build tree.
 
-Release LTO, code generation, optimization, stripping and panic behavior
-remain unchanged. This work changes build orchestration and cache reuse.
+Release LTO, optimization, stripping and panic behavior remain unchanged.
+Only the large MCP crate's release codegen partition count is tuned; the build
+scripts also improve orchestration and cache reuse.
 
 | Work per invocation | Previous script | Development now | Packaging now |
 | --- | --- | --- | --- |
