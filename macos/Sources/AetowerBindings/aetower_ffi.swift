@@ -89,8 +89,10 @@ fileprivate func readInt<T: FixedWidthInteger>(_ reader: inout (data: Data, offs
         reader.offset += 1
         return value as! T
     }
-    var value: T = 0
-    let _ = withUnsafeMutableBytes(of: &value, { reader.data.copyBytes(to: $0, from: range)})
+    // Bounds checked above; UniFFI integers need not be naturally aligned.
+    let value: T = reader.data.withUnsafeBytes { bytes in
+        bytes.loadUnaligned(fromByteOffset: reader.offset, as: T.self)
+    }
     reader.offset = range.upperBound
     return value.bigEndian
 }
@@ -548,7 +550,15 @@ fileprivate struct FfiConverterString: FfiConverter {
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> String {
         let len: Int32 = try readInt(&buf)
-        return String(bytes: try readBytes(&buf, count: Int(len)), encoding: String.Encoding.utf8)!
+        let range = buf.offset..<(buf.offset + Int(len))
+        guard buf.data.count >= range.upperBound else {
+            throw UniffiInternalError.bufferOverflow
+        }
+        buf.offset = range.upperBound
+        // String copies and validates UTF-8 directly; avoid a temporary byte array.
+        return buf.data.withUnsafeBytes { bytes in
+            String(bytes: bytes[range], encoding: String.Encoding.utf8)!
+        }
     }
 
     public static func write(_ value: String, into buf: inout [UInt8]) {

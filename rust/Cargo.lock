@@ -67,6 +67,7 @@ dependencies = [
  "aetower-sensors",
  "aetower-telemetry",
  "aetower-time",
+ "core-foundation-sys",
  "dirs",
  "parking_lot",
  "serde",

@@ -1,0 +1,605 @@
+{
+  "schema_version": 1,
+  "measured_on": "2026-11-01 Europe/Paris",
+  "parent_commit": "32e0799e507227eeb22bbdbea7dbe5d95da152bd",
+  "candidate_source_sha256": {
+    "rust/crates/aetower-ffi/src/lib.rs": "c83eb1fb42dfc559e5822b4b673ae3dc481f340072dd73d36285f57030cd9a77",
+    "scripts/ci-local.sh": "8b83e4d629cb5178a69a5d710c8942280af0d24e4c95a00f4cfb65630d399be6"
+  },
+  "toolchain": {
+    "swift": "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0",
+    "rust": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+    "compiler_jobs": 2
+  },
+  "retained_test_binary": {
+    "path": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-test-binary/aetower_ffi-tests",
+    "sha256": "ef989ea42947cbad898ef78ec40d72f2435e51cc152087c201d87def53552f88",
+    "uuid": "780F63EC-D228-3E8D-BB46-D71D072FC03A"
+  },
+  "cache_benchmark": {
+    "scope": "500-row current-snapshot construction plus base lookup and bounded cache insertion; delta computation omitted equally; fixture only",
+    "equivalence": "16 release unit tests pass; original cache values and replacement/lookup/eviction behavior match across keys and sequences; held readers remain valid",
+    "sequence": [
+      "legacy",
+      "candidate",
+      "candidate",
+      "legacy",
+      "legacy",
+      "candidate",
+      "candidate",
+      "legacy",
+      "legacy",
+      "candidate",
+      "candidate",
+      "legacy"
+    ],
+    "process_means": {
+      "legacy": {
+        "total_cpu_seconds": 2.48751,
+        "mean_max_process_rss_bytes": 13773482.666666666
+      },
+      "candidate": {
+        "total_cpu_seconds": 0.889272,
+        "mean_max_process_rss_bytes": 12571989.333333334
+      }
+    },
+    "raw_process_runs": [
+      {
+        "index": 0,
+        "implementation": "legacy",
+        "wall_seconds": 0.5982902079995256,
+        "cpu_seconds": 0.40010999999999997,
+        "peak_process_rss_bytes": 14794752,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 1,
+        "implementation": "candidate",
+        "wall_seconds": 0.2831716249929741,
+        "cpu_seconds": 0.150405,
+        "peak_process_rss_bytes": 12582912,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 2,
+        "implementation": "candidate",
+        "wall_seconds": 0.3430419170181267,
+        "cpu_seconds": 0.139985,
+        "peak_process_rss_bytes": 12517376,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 3,
+        "implementation": "legacy",
+        "wall_seconds": 1.1503547090105712,
+        "cpu_seconds": 0.41771,
+        "peak_process_rss_bytes": 13008896,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 4,
+        "implementation": "legacy",
+        "wall_seconds": 0.7074758340022527,
+        "cpu_seconds": 0.42314199999999996,
+        "peak_process_rss_bytes": 14958592,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 5,
+        "implementation": "candidate",
+        "wall_seconds": 0.18197083298582584,
+        "cpu_seconds": 0.149113,
+        "peak_process_rss_bytes": 12582912,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 6,
+        "implementation": "candidate",
+        "wall_seconds": 0.19764212498557754,
+        "cpu_seconds": 0.157086,
+        "peak_process_rss_bytes": 12615680,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 7,
+        "implementation": "legacy",
+        "wall_seconds": 0.5571977499930654,
+        "cpu_seconds": 0.453771,
+        "peak_process_rss_bytes": 13238272,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 8,
+        "implementation": "legacy",
+        "wall_seconds": 1.0270235000061803,
+        "cpu_seconds": 0.388364,
+        "peak_process_rss_bytes": 13369344,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 9,
+        "implementation": "candidate",
+        "wall_seconds": 0.6794031249883119,
+        "cpu_seconds": 0.14615499999999998,
+        "peak_process_rss_bytes": 12599296,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 10,
+        "implementation": "candidate",
+        "wall_seconds": 0.38120020800852217,
+        "cpu_seconds": 0.146528,
+        "peak_process_rss_bytes": 12533760,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      },
+      {
+        "index": 11,
+        "implementation": "legacy",
+        "wall_seconds": 0.9178507080068812,
+        "cpu_seconds": 0.404413,
+        "peak_process_rss_bytes": 13271040,
+        "rss_scope": "macOS wait4 maximum RSS of this benchmark child; not sampled aggregate tree RSS"
+      }
+    ],
+    "operation_trials": [
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 0,
+        "implementation": "legacy",
+        "elapsed_us": 97845
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 0,
+        "implementation": "candidate",
+        "elapsed_us": 27715
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 1,
+        "implementation": "candidate",
+        "elapsed_us": 22918
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 1,
+        "implementation": "legacy",
+        "elapsed_us": 90796
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 2,
+        "implementation": "legacy",
+        "elapsed_us": 94492
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 2,
+        "implementation": "candidate",
+        "elapsed_us": 33217
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 3,
+        "implementation": "candidate",
+        "elapsed_us": 37677
+      },
+      {
+        "rows": 500,
+        "iterations": 1000,
+        "trial": 3,
+        "implementation": "legacy",
+        "elapsed_us": 86444
+      }
+    ],
+    "interpretation": "lower fixture CPU and maximum process RSS; does not establish app-wide CPU, physical footprint or wakeup improvement"
+  },
+  "swift_cache_fixture": {
+    "scope": "one real Swift package; actual ci-local full gate explicitly selecting swift build; external scratch path contains spaces; legacy source at 8b70493a513a; same package output for all runs",
+    "measurements": [
+      {
+        "case": "warm-external",
+        "wrapper_wall_seconds": 8.911650166992331,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/scripts/ci-local.sh",
+            "--mode",
+            "full",
+            "--include",
+            "swift build"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 8.857,
+          "user_cpu_seconds": 2.328,
+          "system_cpu_seconds": 2.888,
+          "average_cpu_percent": 58.9,
+          "sampled_peak_tree_rss_bytes": 207421440,
+          "rss_samples": 9,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scratch_path": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/retained cache with spaces",
+        "compile_steps": [],
+        "output": "retained cache fixture",
+        "task_steps": [
+          "[Planning deferred tasks]",
+          "[19\u2009/\u200924]",
+          "[20\u2009/\u200925] Fixture-product",
+          "[22\u2009/\u200929]",
+          "[24\u2009/\u200929] Fixture-product",
+          "[25\u2009/\u200929] Fixture-product",
+          "[27\u2009/\u200929] Fixture-product"
+        ]
+      },
+      {
+        "case": "legacy-ignores-external",
+        "wrapper_wall_seconds": 5.930411290988559,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/scripts/ci-local.sh",
+            "--mode",
+            "full",
+            "--include",
+            "swift build"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 5.777,
+          "user_cpu_seconds": 2.185,
+          "system_cpu_seconds": 1.839,
+          "average_cpu_percent": 69.7,
+          "sampled_peak_tree_rss_bytes": 130760704,
+          "rss_samples": 6,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scratch_path": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/macos/.build",
+        "compile_steps": [],
+        "output": "retained cache fixture",
+        "task_steps": [
+          "[Planning deferred tasks]",
+          "[19\u2009/\u200924]",
+          "[22\u2009/\u200929]",
+          "[24\u2009/\u200929] Fixture-product",
+          "[25\u2009/\u200929] Fixture-product",
+          "[27\u2009/\u200929] Fixture-product"
+        ]
+      },
+      {
+        "case": "candidate-reuses-external",
+        "wrapper_wall_seconds": 2.034019166982034,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/scripts/ci-local.sh",
+            "--mode",
+            "full",
+            "--include",
+            "swift build"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 1.954,
+          "user_cpu_seconds": 0.918,
+          "system_cpu_seconds": 0.363,
+          "average_cpu_percent": 65.6,
+          "sampled_peak_tree_rss_bytes": 70189056,
+          "rss_samples": 2,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scratch_path": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/retained cache with spaces",
+        "compile_steps": [],
+        "output": "retained cache fixture",
+        "task_steps": [
+          "[1\u2009/\u20091]"
+        ]
+      },
+      {
+        "case": "legacy-repeat",
+        "wrapper_wall_seconds": 2.6330237080110237,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/scripts/ci-local.sh",
+            "--mode",
+            "full",
+            "--include",
+            "swift build"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 2.533,
+          "user_cpu_seconds": 0.996,
+          "system_cpu_seconds": 0.395,
+          "average_cpu_percent": 55.0,
+          "sampled_peak_tree_rss_bytes": 89210880,
+          "rss_samples": 3,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scratch_path": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/macos/.build",
+        "compile_steps": [],
+        "output": "retained cache fixture",
+        "task_steps": [
+          "[1\u2009/\u20091]"
+        ]
+      },
+      {
+        "case": "candidate-repeat",
+        "wrapper_wall_seconds": 2.0328122079954483,
+        "measurement": {
+          "command": [
+            "/bin/sh",
+            "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/scripts/ci-local.sh",
+            "--mode",
+            "full",
+            "--include",
+            "swift build"
+          ],
+          "cwd": "/private/tmp/aetower-build-performance",
+          "exit_status": 0,
+          "wall_seconds": 1.93,
+          "user_cpu_seconds": 1.015,
+          "system_cpu_seconds": 0.409,
+          "average_cpu_percent": 73.8,
+          "sampled_peak_tree_rss_bytes": 54870016,
+          "rss_samples": 2,
+          "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+        },
+        "scratch_path": "/private/tmp/aetower-build-performance/tmp/loop7-swift-cache-fixture/retained cache with spaces",
+        "compile_steps": [],
+        "output": "retained cache fixture",
+        "task_steps": [
+          "[1\u2009/\u20091]"
+        ]
+      }
+    ],
+    "interpretation": "legacy ignores already-warmed requested cache and creates a separate default cache; candidate uses requested cache; warm-repeat CPU similar; no whole-app or hosted-CI speedup claimed"
+  },
+  "app_comparison": {
+    "status": "complete; fixture gain not confirmed app-wide; candidate CPU and wakeup means higher",
+    "pair": [
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-baseline/Aetower.app",
+        "source": "9fdd2ddb2b6b FFI; common Swift/dependencies f41e21c11211; production MCP/CLI/FFI roots",
+        "executable_sha256": "9fe9aecb7f25e1986c7cb96b62c734659fc465e5872911b34d98deb209942b29",
+        "rust_sha256": "9a637d8a2e1a30779ecf245c3a0d5616ef1ca0c697594f9f416e973d97b751e2",
+        "rust_uuid": "A2104D6A-2F1F-3983-9330-586B4084A9C0",
+        "swift_executable_uuid": "1759DE74-CDF5-343C-B2A7-86BFBB776387",
+        "loaded_bundled_rust_verified": true
+      },
+      {
+        "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-candidate/Aetower.app",
+        "source": "f41e21c11211 FFI; common Swift/dependencies f41e21c11211; production MCP/CLI/FFI roots",
+        "executable_sha256": "99afc7a2b56c177e21f1365fb13438bec096be8f884d78e0792809f0a8f0cdad",
+        "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+        "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+        "swift_executable_uuid": "1759DE74-CDF5-343C-B2A7-86BFBB776387",
+        "loaded_bundled_rust_verified": true
+      }
+    ],
+    "construction": "same candidate app copied; baseline replaces only Rust dylib and reseals it and outer app; common compiled Swift UUID, production Cargo roots and release settings",
+    "abba": {
+      "status": "complete",
+      "controller_pid": 61034,
+      "apps": [
+        {
+          "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-baseline/Aetower.app",
+          "source": "9fdd2ddb2b6b FFI; common Swift/dependencies f41e21c11211; production MCP/CLI/FFI roots; relocated d9d6ff8675ad",
+          "executable_sha256": "9fe9aecb7f25e1986c7cb96b62c734659fc465e5872911b34d98deb209942b29",
+          "rust_sha256": "9a637d8a2e1a30779ecf245c3a0d5616ef1ca0c697594f9f416e973d97b751e2",
+          "rust_uuid": "A2104D6A-2F1F-3983-9330-586B4084A9C0",
+          "variant": "baseline"
+        },
+        {
+          "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop7-candidate/Aetower.app",
+          "source": "f41e21c11211 FFI; common Swift/dependencies f41e21c11211; production MCP/CLI/FFI roots; relocated d9d6ff8675ad",
+          "executable_sha256": "99afc7a2b56c177e21f1365fb13438bec096be8f884d78e0792809f0a8f0cdad",
+          "rust_sha256": "14b396e17c0ed8876124b82de16a0dbd08d784d47891779a3f5336d587fe9994",
+          "rust_uuid": "0FE499BC-E656-34C1-8F2E-442E28B54A39",
+          "variant": "candidate"
+        }
+      ],
+      "configuration": {
+        "sequence": "ABBA",
+        "settle_seconds": 60.0,
+        "duration_seconds": 90.0,
+        "interval_seconds": 2.0
+      },
+      "scope": "app-process counters; existing settings; no driven interaction; image inspection after sampling",
+      "windows": [
+        {
+          "label": "A1",
+          "variant": "baseline",
+          "status": "complete",
+          "pid": 61626,
+          "host_processes_start": 765,
+          "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+          "host_load_start": [
+            14.33642578125,
+            16.1669921875,
+            19.6640625
+          ],
+          "host_load_end": [
+            12.22900390625,
+            14.708984375,
+            18.73193359375
+          ],
+          "wall_seconds": 90.00436437499593,
+          "samples": 46,
+          "user_time_seconds": 2.666655833,
+          "system_time_seconds": 1.02387,
+          "average_cpu_percent": 4.100385418671168,
+          "pkg_idle_wakeups": 0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "interrupt_wakeups": 396,
+          "interrupt_wakeups_per_second": 4.399786640902189,
+          "average_resident_size_bytes": 191075550.60869566,
+          "peak_resident_size_bytes": 240041984,
+          "average_phys_footprint_bytes": 141164546.08695653,
+          "peak_phys_footprint_bytes": 178046032,
+          "host_processes_end": 791,
+          "loaded_rust_image_verified": true
+        },
+        {
+          "label": "B1",
+          "variant": "candidate",
+          "status": "complete",
+          "pid": 99107,
+          "host_processes_start": 764,
+          "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+          "host_load_start": [
+            21.8125,
+            16.87548828125,
+            19.236328125
+          ],
+          "host_load_end": [
+            18.12548828125,
+            16.8779296875,
+            18.994140625
+          ],
+          "wall_seconds": 90.00869533300283,
+          "samples": 46,
+          "user_time_seconds": 3.38471525,
+          "system_time_seconds": 1.415806083,
+          "average_cpu_percent": 5.333397307048655,
+          "pkg_idle_wakeups": 1,
+          "pkg_idle_wakeups_per_second": 0.011110037716915305,
+          "interrupt_wakeups": 458,
+          "interrupt_wakeups_per_second": 5.0883972743472095,
+          "average_resident_size_bytes": 140305808.6956522,
+          "peak_resident_size_bytes": 198492160,
+          "average_phys_footprint_bytes": 123750823.30434783,
+          "peak_phys_footprint_bytes": 155354168,
+          "host_processes_end": 741,
+          "loaded_rust_image_verified": true
+        },
+        {
+          "label": "B2",
+          "variant": "candidate",
+          "status": "complete",
+          "pid": 32652,
+          "host_processes_start": 735,
+          "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+          "host_load_start": [
+            15.08154296875,
+            16.40234375,
+            18.66845703125
+          ],
+          "host_load_end": [
+            12.861328125,
+            15.23486328125,
+            17.9814453125
+          ],
+          "wall_seconds": 90.003639750008,
+          "samples": 46,
+          "user_time_seconds": 2.911800209,
+          "system_time_seconds": 1.224753875,
+          "average_cpu_percent": 4.595985335137107,
+          "pkg_idle_wakeups": 0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "interrupt_wakeups": 429,
+          "interrupt_wakeups_per_second": 4.766473902517502,
+          "average_resident_size_bytes": 129184990.60869566,
+          "peak_resident_size_bytes": 211746816,
+          "average_phys_footprint_bytes": 116615948.52173913,
+          "peak_phys_footprint_bytes": 142672952,
+          "host_processes_end": 734,
+          "loaded_rust_image_verified": true
+        },
+        {
+          "label": "A2",
+          "variant": "baseline",
+          "status": "complete",
+          "pid": 69515,
+          "host_processes_start": 750,
+          "cpu_time_unit": "nanoseconds (converted from Mach ticks)",
+          "host_load_start": [
+            16.2509765625,
+            15.7685546875,
+            17.9921875
+          ],
+          "host_load_end": [
+            18.11474609375,
+            16.58056640625,
+            18.0859375
+          ],
+          "wall_seconds": 90.00480625001364,
+          "samples": 46,
+          "user_time_seconds": 2.347804625,
+          "system_time_seconds": 1.024138291,
+          "average_cpu_percent": 3.7464031716633897,
+          "pkg_idle_wakeups": 0,
+          "pkg_idle_wakeups_per_second": 0.0,
+          "interrupt_wakeups": 380,
+          "interrupt_wakeups_per_second": 4.22199675586705,
+          "average_resident_size_bytes": 111328211.47826087,
+          "peak_resident_size_bytes": 208355328,
+          "average_phys_footprint_bytes": 116142245.04347827,
+          "peak_phys_footprint_bytes": 146031696,
+          "host_processes_end": 738,
+          "loaded_rust_image_verified": true
+        }
+      ],
+      "window_means": {
+        "baseline": {
+          "average_cpu_percent": 3.923394295167279,
+          "average_phys_footprint_bytes": 128653395.5652174,
+          "interrupt_wakeups_per_second": 4.310891698384619
+        },
+        "candidate": {
+          "average_cpu_percent": 4.9646913210928805,
+          "average_phys_footprint_bytes": 120183385.91304347,
+          "interrupt_wakeups_per_second": 4.927435588432356
+        }
+      },
+      "interpretation": "candidate CPU +26.5%, physical footprint -6.6%, interrupt wakeups +14.3%; baseline physical memory drifts 134.63 to 110.76 MiB; shared host load and process counts vary; no causal app-wide improvement established; higher CPU/wakeup readings unresolved; draft only"
+    }
+  },
+  "package_build": {
+    "configuration": "two jobs; production MCP/CLI/FFI Cargo roots; RUSTC_WRAPPER empty; current FFI rebuilt with reused dependencies and external Swift scratch; ad-hoc signing; no notarization",
+    "measurement": {
+      "command": [
+        "sh",
+        "scripts/package-macos.sh"
+      ],
+      "cwd": "/private/tmp/aetower-build-performance",
+      "exit_status": 0,
+      "wall_seconds": 98.528,
+      "user_cpu_seconds": 100.782,
+      "system_cpu_seconds": 6.162,
+      "average_cpu_percent": 108.5,
+      "sampled_peak_tree_rss_bytes": 926777344,
+      "rss_samples": 96,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    },
+    "verification": "strict deep signature, bundle-path smoke and loaded UUID plus bundled mapping preflights; committed FFI bindings unchanged",
+    "comparison_note": "absolute rebuild cost, not matched build speedup"
+  },
+  "package_repeat": {
+    "configuration": "immediate unchanged repeat with identical source and settings",
+    "measurement": {
+      "command": [
+        "sh",
+        "scripts/package-macos.sh"
+      ],
+      "cwd": "/private/tmp/aetower-build-performance",
+      "exit_status": 0,
+      "wall_seconds": 15.509,
+      "user_cpu_seconds": 6.463,
+      "system_cpu_seconds": 3.177,
+      "average_cpu_percent": 62.2,
+      "sampled_peak_tree_rss_bytes": 516472832,
+      "rss_samples": 15,
+      "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+    },
+    "comparison_note": "absolute repeat cost; no improvement ratio inferred against older passes"
+  }
+}

@@ -632,6 +632,32 @@ struct UnifiedLogEntry {
 }
 
 impl EngineState {
+    fn collection_tick_context(
+        &self,
+    ) -> (
+        RuntimeCollectionConfig,
+        RuntimeLagMetrics,
+        Option<&'static str>,
+    ) {
+        // The pressure check reads only scalar host fields. Borrow the current
+        // snapshot under the existing lock instead of cloning its device data.
+        let defer_reason = self
+            .runtime_config
+            .adaptive_cadence
+            .then(|| {
+                collector_expensive_sampling_defer_reason(
+                    &self.runtime_lag_metrics,
+                    &self.latest_snapshot.host,
+                )
+            })
+            .flatten();
+        (
+            self.runtime_config.clone(),
+            self.runtime_lag_metrics.clone(),
+            defer_reason,
+        )
+    }
+
     fn publish_mutation(&mut self) {
         self.sequence = self.sequence.saturating_add(1);
         Arc::make_mut(&mut self.latest_snapshot).sequence = self.sequence;
@@ -780,23 +806,8 @@ impl Engine {
             while running.load(Ordering::SeqCst) {
                 let tick_started = Instant::now();
                 let captured_at_millis = aet_time::now_millis();
-                let (runtime_config, previous_runtime_metrics, previous_host) = {
-                    let guard = state.lock();
-                    (
-                        guard.runtime_config.clone(),
-                        guard.runtime_lag_metrics.clone(),
-                        guard.latest_snapshot.host.clone(),
-                    )
-                };
-                let collector_defer_reason = runtime_config
-                    .adaptive_cadence
-                    .then(|| {
-                        collector_expensive_sampling_defer_reason(
-                            &previous_runtime_metrics,
-                            &previous_host,
-                        )
-                    })
-                    .flatten();
+                let (runtime_config, previous_runtime_metrics, collector_defer_reason) =
+                    state.lock().collection_tick_context();
                 collector
                     .configure(runtime_config.collector_config(collector_defer_reason.is_some()));
                 if let Some(reason) = collector_defer_reason {
@@ -1678,14 +1689,17 @@ impl Engine {
                 let now = aet_time::now_millis();
                 let window_start = now.saturating_sub(REGRESSION_WINDOW_MILLIS);
                 // Load without blocking ticks; skip this cycle if the store is busy.
-                let snapshots = match persistence.try_lock() {
+                let downsampled = match persistence.try_lock() {
                     Some(guard) => guard
                         .as_ref()
-                        .and_then(|store| store.load_range(window_start, now).ok())
+                        .and_then(|store| {
+                            store
+                                .load_hourly_range(window_start, now, REGRESSION_MAX_SNAPSHOTS)
+                                .ok()
+                        })
                         .unwrap_or_default(),
                     None => Vec::new(),
                 };
-                let downsampled = downsample_hourly(snapshots, REGRESSION_MAX_SNAPSHOTS);
                 if !downsampled.is_empty() {
                     let findings = aetower_regression::detect_regressions(&downsampled, now);
                     if !findings.is_empty() {
@@ -1723,6 +1737,21 @@ impl Engine {
         self.history_maintenance_cancel
             .store(true, Ordering::SeqCst);
         self.system_marker_generation.fetch_add(1, Ordering::SeqCst);
+        // Wake every sleeping worker before joining any of them. The stop flag
+        // is set first, so an unpark that races with entering sleep is safe:
+        // either the worker sees the flag or consumes the pending wake token.
+        for worker in [
+            self.worker.as_ref(),
+            self.adapter_worker.as_ref(),
+            self.telemetry_worker.as_ref(),
+            self.history_maintenance_worker.as_ref(),
+            self.regression_worker.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            worker.thread().unpark();
+        }
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -2548,28 +2577,13 @@ fn telemetry_config_from_env() -> OtlpConfig {
     config
 }
 
-/// Keep at most one snapshot per hour bucket (and cap the total) so the
-/// regression detector reads a bounded series regardless of persistence cadence.
-fn downsample_hourly(snapshots: Vec<SystemSnapshot>, cap: usize) -> Vec<SystemSnapshot> {
-    const HOUR_MILLIS: u64 = 3_600_000;
-    let mut seen_hours = std::collections::HashSet::new();
-    let mut kept: Vec<SystemSnapshot> = snapshots
-        .into_iter()
-        .filter(|snapshot| seen_hours.insert(snapshot.captured_at_millis / HOUR_MILLIS))
-        .collect();
-    // If still over the cap, keep the most recent `cap` hourly samples.
-    if kept.len() > cap {
-        let drop = kept.len() - cap;
-        kept.drain(0..drop);
-    }
-    kept
-}
-
 fn sleep_with_stop(running: &AtomicBool, duration: Duration) {
     let started_at = Instant::now();
     while running.load(Ordering::SeqCst) && started_at.elapsed() < duration {
         let remaining = duration.saturating_sub(started_at.elapsed());
-        thread::sleep(remaining.min(Duration::from_millis(250)));
+        // Park until work is due; stop() unparks this worker immediately.
+        // Recheck the deadline after spurious wakes without advancing cadence.
+        thread::park_timeout(remaining);
     }
 }
 
@@ -3215,6 +3229,78 @@ fn format_bps(bytes_per_second: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopped_worker_does_not_wait_for_its_deadline() {
+        sleep_with_stop(&AtomicBool::new(false), Duration::MAX);
+        sleep_with_stop(&AtomicBool::new(true), Duration::ZERO);
+    }
+
+    #[test]
+    fn parked_worker_wakes_on_stop_even_before_it_parks() {
+        let running = Arc::new(AtomicBool::new(true));
+        let worker_running = Arc::clone(&running);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            ready_tx.send(thread::current()).unwrap();
+            sleep_with_stop(&worker_running, Duration::from_secs(60));
+            done_tx.send(()).unwrap();
+        });
+        let parked = ready_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        running.store(false, Ordering::SeqCst);
+        parked.unpark();
+        done_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn spurious_unpark_does_not_advance_the_work_deadline() {
+        let worker = thread::spawn(|| {
+            // Seed a wake token before parking. The first park returns early,
+            // but sleep_with_stop must still wait for the original deadline.
+            thread::current().unpark();
+            let duration = Duration::from_millis(20);
+            let started = Instant::now();
+            sleep_with_stop(&AtomicBool::new(true), duration);
+            assert!(started.elapsed() >= duration);
+        });
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn engine_stop_unparks_every_scheduled_worker() {
+        let mut engine = engine_with_test_capability();
+        engine.running.store(true, Ordering::SeqCst);
+        let running = Arc::clone(&engine.running);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        for slot in [
+            &mut engine.worker,
+            &mut engine.adapter_worker,
+            &mut engine.telemetry_worker,
+            &mut engine.history_maintenance_worker,
+            &mut engine.regression_worker,
+        ] {
+            let ready = ready_tx.clone();
+            let running = Arc::clone(&running);
+            *slot = Some(thread::spawn(move || {
+                ready.send(()).unwrap();
+                sleep_with_stop(&running, Duration::from_secs(60));
+            }));
+        }
+        for _ in 0..5 {
+            ready_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let stopping = thread::spawn(move || {
+            engine.stop();
+            done_tx.send(()).unwrap();
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("stop must wake every worker rather than wait for its deadline");
+        stopping.join().unwrap();
+    }
 
     #[test]
     fn resource_cost_rollups_aggregate_machine_entity_repo_and_session() {

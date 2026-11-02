@@ -24,7 +24,7 @@ use aetower_model as model;
 
 uniffi::setup_scaffolding!();
 
-#[derive(Clone, Debug, uniffi::Enum)]
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum EntityKind {
     App,
     Browser,
@@ -1070,7 +1070,7 @@ pub struct HistoryMaintenanceReport {
 pub struct MonitorEngine {
     inner: Arc<std::sync::Mutex<Engine>>,
     mcp_server: std::sync::Mutex<Option<LocalMcpServerHandle>>,
-    ui_snapshot_cache: std::sync::Mutex<Vec<UiSnapshotCacheEntry>>,
+    ui_snapshot_cache: std::sync::Mutex<UiSnapshotCache>,
 }
 
 #[uniffi::export]
@@ -1082,7 +1082,7 @@ impl MonitorEngine {
         Arc::new(Self {
             inner: Arc::new(std::sync::Mutex::new(engine)),
             mcp_server: std::sync::Mutex::new(None),
-            ui_snapshot_cache: std::sync::Mutex::new(Vec::new()),
+            ui_snapshot_cache: std::sync::Mutex::new(UiSnapshotCache::default()),
         })
     }
 
@@ -1125,7 +1125,7 @@ impl MonitorEngine {
         );
         self.remember_ui_snapshot(
             ui_snapshot_cache_key(process_limit, trend_points, selected_entity_id.as_deref()),
-            &ui_snapshot,
+            Arc::new(ui_snapshot.clone()),
         );
         ui_snapshot
     }
@@ -1149,7 +1149,7 @@ impl MonitorEngine {
         );
         self.remember_ui_snapshot(
             ui_snapshot_cache_key(process_limit, trend_points, selected_entity_id.as_deref()),
-            &ui_snapshot,
+            Arc::new(ui_snapshot.clone()),
         );
         Some(ui_snapshot)
     }
@@ -1185,9 +1185,11 @@ impl MonitorEngine {
             last_sequence,
             &key,
             &ui_snapshot,
-            base_snapshot.as_ref(),
+            base_snapshot.as_deref(),
         );
-        self.remember_ui_snapshot(key, &ui_snapshot);
+        // The delta owns its changed fields. Move the full current snapshot
+        // into the bounded cache instead of cloning it a second time.
+        self.remember_ui_snapshot(key, Arc::new(ui_snapshot));
         delta
     }
 
@@ -2013,36 +2015,50 @@ struct UiSnapshotCacheKey {
 #[derive(Clone, Debug)]
 struct UiSnapshotCacheEntry {
     key: UiSnapshotCacheKey,
-    snapshot: UiSnapshot,
+    snapshot: Arc<UiSnapshot>,
 }
 
 const UI_SNAPSHOT_CACHE_LIMIT: usize = 12;
 
-impl MonitorEngine {
-    fn remember_ui_snapshot(&self, key: UiSnapshotCacheKey, snapshot: &UiSnapshot) {
-        let Ok(mut cache) = self.ui_snapshot_cache.lock() else {
-            return;
-        };
-        cache.retain(|entry| entry.snapshot.sequence != snapshot.sequence || entry.key != key);
-        cache.push(UiSnapshotCacheEntry {
-            key,
-            snapshot: snapshot.clone(),
-        });
-        let overflow = cache.len().saturating_sub(UI_SNAPSHOT_CACHE_LIMIT);
+#[derive(Default)]
+struct UiSnapshotCache {
+    entries: Vec<UiSnapshotCacheEntry>,
+}
+
+impl UiSnapshotCache {
+    fn remember(&mut self, key: UiSnapshotCacheKey, snapshot: Arc<UiSnapshot>) {
+        self.entries
+            .retain(|entry| entry.snapshot.sequence != snapshot.sequence || entry.key != key);
+        self.entries.push(UiSnapshotCacheEntry { key, snapshot });
+        let overflow = self.entries.len().saturating_sub(UI_SNAPSHOT_CACHE_LIMIT);
         if overflow > 0 {
-            cache.drain(0..overflow);
+            self.entries.drain(0..overflow);
         }
     }
 
-    fn cached_ui_snapshot(&self, sequence: u64, key: &UiSnapshotCacheKey) -> Option<UiSnapshot> {
-        let Ok(cache) = self.ui_snapshot_cache.lock() else {
-            return None;
-        };
-        cache
+    fn find(&self, sequence: u64, key: &UiSnapshotCacheKey) -> Option<Arc<UiSnapshot>> {
+        self.entries
             .iter()
             .rev()
             .find(|entry| entry.snapshot.sequence == sequence && &entry.key == key)
-            .map(|entry| entry.snapshot.clone())
+            .map(|entry| Arc::clone(&entry.snapshot))
+    }
+}
+
+impl MonitorEngine {
+    fn remember_ui_snapshot(&self, key: UiSnapshotCacheKey, snapshot: Arc<UiSnapshot>) {
+        let Ok(mut cache) = self.ui_snapshot_cache.lock() else {
+            return;
+        };
+        cache.remember(key, snapshot);
+    }
+
+    fn cached_ui_snapshot(
+        &self,
+        sequence: u64,
+        key: &UiSnapshotCacheKey,
+    ) -> Option<Arc<UiSnapshot>> {
+        self.ui_snapshot_cache.lock().ok()?.find(sequence, key)
     }
 }
 
@@ -2347,12 +2363,7 @@ fn ui_snapshot_delta_from_current(
         _ => Some(current.host.clone()),
     };
     let host_trend = match base {
-        Some(base)
-            if ui_host_trend_signature(&base.host_trend)
-                == ui_host_trend_signature(&current.host_trend) =>
-        {
-            None
-        }
+        Some(base) if ui_host_trends_match(&base.host_trend, &current.host_trend) => None,
         _ => Some(current.host_trend.clone()),
     };
     let changed_metric_cards = changed_metric_cards(current, base);
@@ -2388,10 +2399,10 @@ fn changed_metric_cards(current: &UiSnapshot, base: Option<&UiSnapshot>) -> Vec<
     let Some(base) = base else {
         return current.metric_cards.clone();
     };
-    let base_by_id: BTreeMap<&str, String> = base
+    let base_by_id: BTreeMap<&str, &UiMetricCard> = base
         .metric_cards
         .iter()
-        .map(|card| (card.id.as_str(), ui_metric_card_signature(card)))
+        .map(|card| (card.id.as_str(), card))
         .collect();
     current
         .metric_cards
@@ -2399,7 +2410,7 @@ fn changed_metric_cards(current: &UiSnapshot, base: Option<&UiSnapshot>) -> Vec<
         .filter(|card| {
             base_by_id
                 .get(card.id.as_str())
-                .map(|signature| signature != &ui_metric_card_signature(card))
+                .map(|previous| !ui_metric_cards_match(previous, card))
                 .unwrap_or(true)
         })
         .cloned()
@@ -2413,10 +2424,10 @@ fn changed_process_rows(
     let Some(base) = base else {
         return (current.process_rows.clone(), Vec::new());
     };
-    let base_by_id: BTreeMap<&str, String> = base
+    let base_by_id: BTreeMap<&str, &UiProcessRow> = base
         .process_rows
         .iter()
-        .map(|row| (row.entity_id.as_str(), ui_process_row_signature(row)))
+        .map(|row| (row.entity_id.as_str(), row))
         .collect();
     let current_ids: BTreeSet<&str> = current
         .process_rows
@@ -2429,7 +2440,7 @@ fn changed_process_rows(
         .filter(|row| {
             base_by_id
                 .get(row.entity_id.as_str())
-                .map(|signature| signature != &ui_process_row_signature(row))
+                .map(|base_row| !ui_process_rows_match(base_row, row))
                 .unwrap_or(true)
         })
         .cloned()
@@ -2467,16 +2478,95 @@ fn ui_host_summary_signature(value: &UiHostSummary) -> String {
     format!("{value:?}")
 }
 
-fn ui_host_trend_signature(value: &UiHostTrend) -> String {
-    format!("{value:?}")
+fn ui_host_trends_match(left: &UiHostTrend, right: &UiHostTrend) -> bool {
+    macro_rules! fields_match {
+        ($($field:ident),* $(,)?) => {{
+            let UiHostTrend { $($field: _,)* } = left;
+            $(ui_float_slices_match(&left.$field, &right.$field) &&)* true
+        }};
+    }
+    fields_match!(
+        machine_friction,
+        cpu_percent,
+        memory_used_bytes,
+        memory_pressure_score,
+        disk_activity_bps,
+        network_activity_bps,
+        wakeups_per_second,
+        gpu_percent,
+        gpu_memory_bytes,
+        max_cpu_temperature
+    )
 }
 
-fn ui_metric_card_signature(value: &UiMetricCard) -> String {
-    format!("{value:?}")
+fn ui_metric_cards_match(left: &UiMetricCard, right: &UiMetricCard) -> bool {
+    let severity_tag = |value: &UiMetricSeverity| match value {
+        UiMetricSeverity::Normal => 0,
+        UiMetricSeverity::Warning => 1,
+        UiMetricSeverity::Critical => 2,
+    };
+    let UiMetricCard {
+        id: _,
+        title: _,
+        value: _,
+        unit: _,
+        display_value: _,
+        detail: _,
+        severity: _,
+        samples: _,
+        fixed_ceiling: _,
+    } = left;
+    left.id == right.id
+        && left.title == right.title
+        && ui_float_matches(left.value, right.value)
+        && left.unit == right.unit
+        && left.display_value == right.display_value
+        && left.detail == right.detail
+        && severity_tag(&left.severity) == severity_tag(&right.severity)
+        && ui_float_slices_match(&left.samples, &right.samples)
+        && match (left.fixed_ceiling, right.fixed_ceiling) {
+            (Some(left), Some(right)) => ui_float_matches(left, right),
+            (None, None) => true,
+            _ => false,
+        }
 }
 
-fn ui_process_row_signature(value: &UiProcessRow) -> String {
-    format!("{value:?}")
+fn ui_float_slices_match(left: &[f64], right: &[f64]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(&left, &right)| ui_float_matches(left, right))
+}
+
+fn ui_process_rows_match(left: &UiProcessRow, right: &UiProcessRow) -> bool {
+    // Exhaustive destructuring makes adding a field require updating this
+    // comparison. Compare borrowed fields instead of allocating two Debug
+    // strings per row on every delta request.
+    macro_rules! fields_match {
+        (values: [$($value:ident),*], floats: [$($float:ident),*]) => {{
+            let UiProcessRow { $($value: _,)* $($float: _,)* } = left;
+            $(left.$value == right.$value &&)*
+            $(ui_float_matches(f64::from(left.$float), f64::from(right.$float)) &&)*
+            true
+        }};
+    }
+    fields_match!(
+        values: [entity_id, display_name, entity_kind, bundle_id, executable_path,
+                 primary_pid, process_count, thread_count, memory_resident_bytes,
+                 memory_physical_footprint_bytes, disk_read_bps, disk_write_bps,
+                 network_receive_bps, network_send_bps, is_foreground,
+                 anomaly_detected, active_window_title, recent_change_summary,
+                 signing_classification, is_adhoc, app_version],
+        floats: [cpu_percent, wakeups_per_second, energy_nj_per_s,
+                 estimated_gpu_percent, friction_score]
+    )
+}
+
+fn ui_float_matches(left: f64, right: f64) -> bool {
+    // Preserve Debug comparison semantics: signed zero differs, while NaN
+    // payloads and signs all print as NaN. f32 -> f64 is lossless here.
+    left.to_bits() == right.to_bits() || (left.is_nan() && right.is_nan())
 }
 
 fn ui_selected_entity_signature(value: &UiSelectedEntity) -> String {
@@ -2880,6 +2970,646 @@ mod ui_snapshot_tests {
                 ..model::AggregateMetrics::default()
             },
             ..model::EntitySnapshot::default()
+        }
+    }
+
+    #[test]
+    fn ui_snapshot_cache_preserves_replacement_lookup_and_eviction() {
+        let mut cache = UiSnapshotCache::default();
+        let mut legacy: Vec<(UiSnapshotCacheKey, UiSnapshot)> = Vec::new();
+        let first = Arc::new(ui_snapshot_from(
+            &model::SystemSnapshot::default(),
+            10,
+            16,
+            None,
+        ));
+        let first_key = ui_snapshot_cache_key(10, 16, None);
+        cache.remember(first_key.clone(), Arc::clone(&first));
+        legacy.push((first_key.clone(), first.as_ref().clone()));
+        let held = cache.find(0, &first_key).unwrap();
+        assert!(Arc::ptr_eq(&first, &held));
+        for step in 0..60 {
+            let key = ui_snapshot_cache_key(10 + step % 2, 16, None);
+            let snapshot = Arc::new(ui_snapshot_from(
+                &model::SystemSnapshot {
+                    sequence: u64::from(step / 3),
+                    entities: vec![test_entity(&format!("entity-{step}"), step as f32)],
+                    ..model::SystemSnapshot::default()
+                },
+                key.process_limit,
+                key.trend_points,
+                None,
+            ));
+            legacy.retain(|(old_key, old)| old.sequence != snapshot.sequence || old_key != &key);
+            legacy.push((key.clone(), snapshot.as_ref().clone()));
+            let overflow = legacy.len().saturating_sub(UI_SNAPSHOT_CACHE_LIMIT);
+            legacy.drain(0..overflow);
+            cache.remember(key.clone(), Arc::clone(&snapshot));
+            assert!(Arc::ptr_eq(
+                &snapshot,
+                &cache.find(snapshot.sequence, &key).unwrap()
+            ));
+            assert_eq!(cache.entries.len(), legacy.len());
+            for sequence in 0..=20 {
+                for limit in [10, 11, 12] {
+                    let lookup = ui_snapshot_cache_key(limit, 16, None);
+                    let old = legacy
+                        .iter()
+                        .rev()
+                        .find(|(k, v)| k == &lookup && v.sequence == sequence)
+                        .map(|(_, v)| v);
+                    let new = cache.find(sequence, &lookup);
+                    assert_eq!(format!("{old:?}"), format!("{:?}", new.as_deref()));
+                }
+            }
+        }
+        assert_eq!(cache.entries.len(), UI_SNAPSHOT_CACHE_LIMIT);
+        assert!(cache.find(0, &first_key).is_none());
+        // A reader remains valid after its entry is replaced or evicted.
+        assert!(Arc::ptr_eq(&first, &held));
+        assert!(held.process_rows.is_empty());
+    }
+
+    #[test]
+    #[ignore = "manual cache ownership comparison; no timing threshold"]
+    fn ui_snapshot_cache_benchmark() {
+        use std::{hint::black_box, time::Instant};
+        let implementation = std::env::var("AETOWER_UI_CACHE_BENCH_IMPLEMENTATION").ok();
+        assert!(matches!(
+            implementation.as_deref(),
+            None | Some("legacy" | "candidate")
+        ));
+        let key = ui_snapshot_cache_key(500, 60, Some("entity-0-long process label 日本語"));
+        let fixture = ui_snapshot_from(
+            &model::SystemSnapshot {
+                entities: (0..500)
+                    .map(|index| {
+                        test_entity(
+                            &format!("entity-{index}-long process label 日本語"),
+                            index as f32,
+                        )
+                    })
+                    .collect(),
+                ..model::SystemSnapshot::default()
+            },
+            key.process_limit,
+            key.trend_points,
+            key.selected_entity_id.as_deref(),
+        );
+        for trial in 0..4 {
+            for legacy in if trial % 2 == 0 {
+                [true, false]
+            } else {
+                [false, true]
+            } {
+                if implementation
+                    .as_deref()
+                    .is_some_and(|value| (value == "legacy") != legacy)
+                {
+                    continue;
+                }
+                let mut old_cache = vec![(key.clone(), fixture.clone())];
+                let mut cache = UiSnapshotCache::default();
+                cache.remember(key.clone(), Arc::new(fixture.clone()));
+                let started = Instant::now();
+                for sequence in 1..=1_000 {
+                    // Same current-snapshot construction in both modes. The
+                    // delta computation is omitted equally; measure ownership.
+                    let mut current = black_box(&fixture).clone();
+                    current.sequence = sequence;
+                    if legacy {
+                        let base = old_cache
+                            .iter()
+                            .rev()
+                            .find(|(k, v)| k == &key && v.sequence == sequence - 1)
+                            .map(|(_, v)| v.clone());
+                        black_box(base.as_ref());
+                        old_cache.retain(|(k, v)| v.sequence != current.sequence || k != &key);
+                        old_cache.push((key.clone(), current.clone()));
+                        let overflow = old_cache.len().saturating_sub(UI_SNAPSHOT_CACHE_LIMIT);
+                        old_cache.drain(0..overflow);
+                    } else {
+                        let base = cache.find(sequence - 1, &key);
+                        black_box(base.as_deref());
+                        cache.remember(key.clone(), Arc::new(current));
+                    }
+                }
+                eprintln!(
+                    "rows=500 iterations=1000 trial={trial} legacy={legacy} elapsed_us={}",
+                    started.elapsed().as_micros()
+                );
+                let old = old_cache.last().map(|(_, v)| v);
+                let new = cache.find(1_000, &key);
+                if legacy {
+                    assert_eq!(old.unwrap().sequence, 1_000);
+                } else {
+                    assert_eq!(new.unwrap().sequence, 1_000);
+                }
+            }
+        }
+    }
+
+    // Original Debug-based implementation retained as the complete delta oracle.
+    fn legacy_ui_snapshot_delta_from_current(
+        base_sequence: u64,
+        key: &UiSnapshotCacheKey,
+        current: &UiSnapshot,
+        base: Option<&UiSnapshot>,
+    ) -> UiSnapshotDelta {
+        let base_available = base.is_some();
+        let host = match base {
+            Some(base)
+                if ui_host_summary_signature(&base.host)
+                    == ui_host_summary_signature(&current.host) =>
+            {
+                None
+            }
+            _ => Some(current.host.clone()),
+        };
+        let host_trend = match base {
+            Some(base)
+                if ui_host_trend_signature(&base.host_trend)
+                    == ui_host_trend_signature(&current.host_trend) =>
+            {
+                None
+            }
+            _ => Some(current.host_trend.clone()),
+        };
+        let changed_metric_cards = legacy_changed_metric_cards(current, base);
+        let (changed_process_rows, removed_entity_ids) = changed_process_rows(current, base);
+        let (selected_entity, selected_entity_changed, selected_entity_removed) =
+            changed_selected_entity(current, base);
+
+        UiSnapshotDelta {
+            updated: true,
+            sequence: current.sequence,
+            base_sequence,
+            captured_at_millis: current.captured_at_millis,
+            process_limit: key.process_limit,
+            trend_points: key.trend_points,
+            base_available,
+            host,
+            host_trend,
+            changed_metric_cards,
+            changed_process_rows,
+            removed_entity_ids,
+            selected_entity,
+            selected_entity_changed,
+            selected_entity_removed,
+            total_entity_count: current.total_entity_count,
+            returned_entity_count: current.returned_entity_count,
+            total_process_count: current.total_process_count,
+            timeline_warning_count: current.timeline_warning_count,
+            timeline_critical_count: current.timeline_critical_count,
+        }
+    }
+
+    fn legacy_changed_metric_cards(
+        current: &UiSnapshot,
+        base: Option<&UiSnapshot>,
+    ) -> Vec<UiMetricCard> {
+        let Some(base) = base else {
+            return current.metric_cards.clone();
+        };
+        let base_by_id: BTreeMap<&str, String> = base
+            .metric_cards
+            .iter()
+            .map(|card| (card.id.as_str(), ui_metric_card_signature(card)))
+            .collect();
+        current
+            .metric_cards
+            .iter()
+            .filter(|card| {
+                base_by_id
+                    .get(card.id.as_str())
+                    .map(|signature| signature != &ui_metric_card_signature(card))
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn ui_host_trend_signature(value: &UiHostTrend) -> String {
+        format!("{value:?}")
+    }
+    fn ui_metric_card_signature(value: &UiMetricCard) -> String {
+        format!("{value:?}")
+    }
+
+    #[test]
+    fn ui_metric_and_host_trend_comparisons_preserve_debug_floats() {
+        let fixture = ui_snapshot_from(&model::SystemSnapshot::default(), 500, 60, None);
+        let values = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            f64::from_bits(0xfff8_0000_0000_0001),
+        ];
+        for left in values {
+            for right in values {
+                let mut a = fixture.metric_cards[0].clone();
+                let mut b = a.clone();
+                a.value = left;
+                b.value = right;
+                assert_eq!(
+                    ui_metric_cards_match(&a, &b),
+                    format!("{a:?}") == format!("{b:?}")
+                );
+                a.value = 0.0;
+                b.value = 0.0;
+                a.samples = vec![left];
+                b.samples = vec![right];
+                assert_eq!(
+                    ui_metric_cards_match(&a, &b),
+                    format!("{a:?}") == format!("{b:?}")
+                );
+                a.samples.clear();
+                b.samples.clear();
+                a.fixed_ceiling = Some(left);
+                b.fixed_ceiling = Some(right);
+                assert_eq!(
+                    ui_metric_cards_match(&a, &b),
+                    format!("{a:?}") == format!("{b:?}")
+                );
+                let mut a = fixture.host_trend.clone();
+                let mut b = a.clone();
+                a.cpu_percent = vec![left];
+                b.cpu_percent = vec![right];
+                assert_eq!(
+                    ui_host_trends_match(&a, &b),
+                    format!("{a:?}") == format!("{b:?}")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ui_metric_and_host_trend_comparisons_detect_each_field() {
+        let fixture = ui_snapshot_from(&model::SystemSnapshot::default(), 500, 60, None);
+        let original = &fixture.metric_cards[0];
+        macro_rules! card_changes {
+            ($($field:ident = $value:expr;)*) => {$(
+                let mut changed = original.clone(); changed.$field = $value;
+                assert!(!ui_metric_cards_match(original, &changed), stringify!($field));
+            )*};
+        }
+        card_changes! {
+            id = "other".into(); title = "quoted\"\\\n日本語".into(); value = -0.0;
+            unit = "other".into(); display_value = "other".into(); detail = "other".into();
+            severity = UiMetricSeverity::Critical; samples = vec![0.0]; fixed_ceiling = Some(f64::NAN);
+        }
+        let mut missing = original.clone();
+        missing.fixed_ceiling = None;
+        let mut present = missing.clone();
+        present.fixed_ceiling = Some(0.0);
+        assert!(!ui_metric_cards_match(&missing, &present));
+        assert!(!ui_float_slices_match(&[1.0], &[1.0, 2.0]));
+        macro_rules! trend_changes {
+            ($($field:ident),* $(,)?) => {$(
+                let mut changed = fixture.host_trend.clone(); changed.$field.push(0.0);
+                assert!(!ui_host_trends_match(&fixture.host_trend, &changed), stringify!($field));
+            )*};
+        }
+        trend_changes!(
+            machine_friction,
+            cpu_percent,
+            memory_used_bytes,
+            memory_pressure_score,
+            disk_activity_bps,
+            network_activity_bps,
+            wakeups_per_second,
+            gpu_percent,
+            gpu_memory_bytes,
+            max_cpu_temperature
+        );
+    }
+
+    #[test]
+    fn ui_trend_and_card_delta_matches_legacy_for_duplicates_and_missing_base() {
+        let mut base = ui_snapshot_from(&model::SystemSnapshot::default(), 500, 60, None);
+        base.metric_cards[1].id = base.metric_cards[0].id.clone();
+        base.host_trend.cpu_percent = vec![0.0, f64::NAN, f64::INFINITY];
+        for changed in [false, true] {
+            let mut current = base.clone();
+            current.host_trend.cpu_percent[1] = f64::from_bits(0xfff8_0000_0000_0001);
+            if changed {
+                current.host_trend.cpu_percent[0] = -0.0;
+                current.metric_cards.remove(2);
+                current.metric_cards[0].value = -0.0;
+                let mut card = current.metric_cards[0].clone();
+                card.id = "new\0日本語".into();
+                card.samples = vec![f64::NAN];
+                current.metric_cards.push(card);
+                current.metric_cards.reverse();
+            }
+            let key = ui_snapshot_cache_key(500, 60, None);
+            for previous in [None, Some(&base)] {
+                let actual =
+                    ui_snapshot_delta_from_current(base.sequence, &key, &current, previous);
+                let expected =
+                    legacy_ui_snapshot_delta_from_current(base.sequence, &key, &current, previous);
+                assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+                if !changed && previous.is_some() {
+                    assert!(actual.host_trend.is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual retained-binary comparison; no concurrent builds"]
+    fn ui_trend_and_card_delta_benchmark() {
+        use std::{hint::black_box, time::Instant};
+        let variant =
+            std::env::var("AETOWER_UI_TREND_BENCH_VARIANT").unwrap_or_else(|_| "candidate".into());
+        assert!(matches!(variant.as_str(), "legacy" | "candidate"));
+        let fixture = model::SystemSnapshot {
+            entities: (0..500)
+                .map(|index| test_entity(&format!("entity-{index}"), index as f32 / 10.0))
+                .collect(),
+            ..model::SystemSnapshot::default()
+        };
+        let mut output = String::new();
+        let mut cases = Vec::new();
+        for points in [16, 60] {
+            let mut base = ui_snapshot_from(&fixture, 500, points, None);
+            macro_rules! fill_trends {
+                ($($field:ident),* $(,)?) => {$(base.host_trend.$field = (0..points).map(|index| f64::from(index) / 3.5).collect();)*};
+            }
+            fill_trends!(
+                machine_friction,
+                cpu_percent,
+                memory_used_bytes,
+                memory_pressure_score,
+                disk_activity_bps,
+                network_activity_bps,
+                wakeups_per_second,
+                gpu_percent,
+                gpu_memory_bytes,
+                max_cpu_temperature
+            );
+            for card in &mut base.metric_cards {
+                card.samples = base.host_trend.cpu_percent.clone();
+            }
+            for changed in [false, true] {
+                let mut current = base.clone();
+                current.sequence += 1;
+                current.captured_at_millis += 2_000;
+                if changed {
+                    current.host_trend.cpu_percent[0] += 0.5;
+                    current.metric_cards[1].value += 0.5;
+                    current.process_rows[1].cpu_percent += 0.5;
+                }
+                let key = ui_snapshot_cache_key(500, points, None);
+                let old = legacy_ui_snapshot_delta_from_current(
+                    base.sequence,
+                    &key,
+                    &current,
+                    Some(&base),
+                );
+                let new =
+                    ui_snapshot_delta_from_current(base.sequence, &key, &current, Some(&base));
+                assert_eq!(format!("{old:?}"), format!("{new:?}"));
+                output.push_str(&format!("points={points} changed={changed} {new:?}\n"));
+                cases.push((base.clone(), current, key));
+            }
+        }
+        if let Ok(path) = std::env::var("AETOWER_UI_TREND_BENCH_OUTPUT") {
+            std::fs::write(path, output).unwrap();
+        }
+        let iterations = 500;
+        let started = Instant::now();
+        let mut checksum = 0;
+        for (base, current, key) in &cases {
+            for _ in 0..iterations {
+                let delta = if variant == "legacy" {
+                    legacy_ui_snapshot_delta_from_current(
+                        base.sequence,
+                        key,
+                        black_box(current),
+                        Some(black_box(base)),
+                    )
+                } else {
+                    ui_snapshot_delta_from_current(
+                        base.sequence,
+                        key,
+                        black_box(current),
+                        Some(black_box(base)),
+                    )
+                };
+                checksum += delta.changed_metric_cards.len() + delta.changed_process_rows.len();
+                black_box(delta);
+            }
+        }
+        println!(
+            "UI_TREND_DELTA_BENCH {{\"variant\":\"{variant}\",\"iterations_per_case\":{iterations},\"cases\":{},\"checksum\":{checksum},\"operation_nanoseconds\":{}}}",
+            cases.len(),
+            started.elapsed().as_nanos()
+        );
+    }
+
+    // Retain the original implementation as an output oracle and a manual
+    // benchmark baseline; production never allocates these signatures.
+    fn legacy_changed_process_rows(
+        current: &UiSnapshot,
+        base: Option<&UiSnapshot>,
+    ) -> (Vec<UiProcessRow>, Vec<String>) {
+        let Some(base) = base else {
+            return (current.process_rows.clone(), Vec::new());
+        };
+        let base_by_id: BTreeMap<&str, String> = base
+            .process_rows
+            .iter()
+            .map(|row| (row.entity_id.as_str(), format!("{row:?}")))
+            .collect();
+        let current_ids: BTreeSet<&str> = current
+            .process_rows
+            .iter()
+            .map(|row| row.entity_id.as_str())
+            .collect();
+        let changed = current
+            .process_rows
+            .iter()
+            .filter(|row| {
+                base_by_id
+                    .get(row.entity_id.as_str())
+                    .is_none_or(|signature| signature != &format!("{row:?}"))
+            })
+            .cloned()
+            .collect();
+        let removed = base
+            .process_rows
+            .iter()
+            .filter(|row| !current_ids.contains(row.entity_id.as_str()))
+            .map(|row| row.entity_id.clone())
+            .collect();
+        (changed, removed)
+    }
+
+    #[test]
+    fn ui_row_comparison_preserves_debug_float_semantics() {
+        let row = ui_process_row_from_entity(&test_entity("quoted\"\\\n日本語", 1.0));
+        let values = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            f64::from_bits(0xfff8_0000_0000_0001),
+        ];
+        for left in values {
+            for right in values {
+                let mut a = row.clone();
+                let mut b = row.clone();
+                a.energy_nj_per_s = left;
+                b.energy_nj_per_s = right;
+                assert_eq!(
+                    ui_process_rows_match(&a, &b),
+                    format!("{a:?}") == format!("{b:?}")
+                );
+                a.energy_nj_per_s = 0.0;
+                b.energy_nj_per_s = 0.0;
+                a.cpu_percent = left as f32;
+                b.cpu_percent = right as f32;
+                assert_eq!(
+                    ui_process_rows_match(&a, &b),
+                    format!("{a:?}") == format!("{b:?}")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ui_row_comparison_detects_each_field() {
+        let original = ui_process_row_from_entity(&test_entity("entity", 1.0));
+        macro_rules! changes {
+            ($($field:ident = $value:expr;)*) => {$(
+                let mut changed = original.clone();
+                changed.$field = $value;
+                assert!(!ui_process_rows_match(&original, &changed), stringify!($field));
+            )*};
+        }
+        changes! {
+            entity_id = "other".into(); display_name = "new".into();
+            entity_kind = EntityKind::AiAgent; bundle_id = Some("bundle".into());
+            executable_path = Some("/new".into()); primary_pid = Some(99);
+            process_count = 9; thread_count = 9; cpu_percent = -0.0;
+            memory_resident_bytes = 9; memory_physical_footprint_bytes = 9;
+            disk_read_bps = 9; disk_write_bps = 9; network_receive_bps = 9;
+            network_send_bps = 9; wakeups_per_second = -0.0; energy_nj_per_s = -0.0;
+            estimated_gpu_percent = -0.0; friction_score = -0.0;
+            is_foreground = true; anomaly_detected = true;
+            active_window_title = Some("window".into());
+            recent_change_summary = Some("change".into());
+            signing_classification = "signed".into(); is_adhoc = true;
+            app_version = Some("1".into());
+        }
+    }
+
+    #[test]
+    fn ui_row_delta_matches_legacy_for_duplicate_ids_and_removals() {
+        let snapshot = model::SystemSnapshot {
+            entities: vec![
+                test_entity("duplicate", 1.0),
+                test_entity("removed", 2.0),
+                test_entity("duplicate", 3.0),
+            ],
+            ..model::SystemSnapshot::default()
+        };
+        let base = ui_snapshot_from(&snapshot, 500, 60, None);
+        let mut current = base.clone();
+        current.process_rows.remove(1);
+        current.process_rows[0].cpu_percent = -0.0;
+        current
+            .process_rows
+            .push(ui_process_row_from_entity(&test_entity("added", f32::NAN)));
+        for base in [None, Some(&base)] {
+            assert_eq!(
+                format!("{:?}", changed_process_rows(&current, base)),
+                format!("{:?}", legacy_changed_process_rows(&current, base))
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual comparison; no timing threshold"]
+    fn ui_row_delta_benchmark() {
+        use std::{hint::black_box, time::Instant};
+        // Select one implementation for per-process CPU/RSS measurements.
+        // Default to alternating both in one process for operation timings.
+        let implementation = std::env::var("AETOWER_UI_ROW_BENCH_IMPLEMENTATION").ok();
+        assert!(matches!(
+            implementation.as_deref(),
+            None | Some("legacy" | "candidate")
+        ));
+        let snapshot = model::SystemSnapshot {
+            entities: (0..500)
+                .map(|index| test_entity(&format!("entity-{index}"), index as f32 / 10.0))
+                .collect(),
+            ..model::SystemSnapshot::default()
+        };
+        let base = ui_snapshot_from(&snapshot, 500, 60, None);
+        for changed_every in [0, 10, 1] {
+            let mut current = base.clone();
+            for (index, row) in current.process_rows.iter_mut().enumerate() {
+                row.display_name = "A process with a long display name 日本語".into();
+                if changed_every != 0 && index % changed_every == 0 {
+                    row.cpu_percent += 0.125;
+                }
+            }
+            let mut base = base.clone();
+            for row in &mut base.process_rows {
+                row.display_name = "A process with a long display name 日本語".into();
+            }
+            let signature_bytes = base
+                .process_rows
+                .iter()
+                .chain(&current.process_rows)
+                .map(|row| format!("{row:?}").len())
+                .sum::<usize>();
+            eprintln!(
+                "rows=500 changed_every={changed_every} legacy_signature_payload_bytes_per_diff={signature_bytes} candidate_signature_payload_bytes_per_diff=0"
+            );
+            assert_eq!(
+                format!("{:?}", changed_process_rows(&current, Some(&base))),
+                format!("{:?}", legacy_changed_process_rows(&current, Some(&base)))
+            );
+            for trial in 0..4 {
+                for legacy in if trial % 2 == 0 {
+                    [true, false]
+                } else {
+                    [false, true]
+                } {
+                    if implementation
+                        .as_deref()
+                        .is_some_and(|value| (value == "legacy") != legacy)
+                    {
+                        continue;
+                    }
+                    let started = Instant::now();
+                    for _ in 0..100 {
+                        black_box(if legacy {
+                            legacy_changed_process_rows(black_box(&current), Some(black_box(&base)))
+                        } else {
+                            changed_process_rows(black_box(&current), Some(black_box(&base)))
+                        });
+                    }
+                    eprintln!(
+                        "rows=500 changed_every={changed_every} trial={trial} legacy={legacy} elapsed_us={}",
+                        started.elapsed().as_micros()
+                    );
+                }
+            }
         }
     }
 

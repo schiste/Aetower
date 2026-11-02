@@ -1,0 +1,97 @@
+{
+  "status": "complete",
+  "app": {
+    "app": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/Aetower.app",
+    "source": "f41e21c11211 runtime; temporary external linker map; production roots and release optimization settings",
+    "executable_sha256": "d4dc9e6b9c093dc6443ca239abe79c8f2ca38cdbddeec9fd0a83ef4665a5f619",
+    "rust_sha256": "1b6dc30f2a2c6fff00f8b870471873ff5510130f4c0d70bb0409f4425b8aa1dd",
+    "rust_uuid": "CD516FDA-BF86-3ABF-BE21-F558476AF24D"
+  },
+  "configuration": {
+    "settle_seconds": 60,
+    "sample_seconds": 15,
+    "sample_interval_milliseconds": 1
+  },
+  "scope": "separate diagnostic only; no build running; includes profiler overhead; not a baseline/candidate performance comparison",
+  "memory_summary_exit_status": 0,
+  "loaded_bundled_rust_verified": true,
+  "symbolization": {
+    "status": "complete",
+    "sample_sha256": "5194499641312988514e1055df7c542c900968679dba6d8ca3864eeb437b094b",
+    "library_uuid": "CD516FDA-BF86-3ABF-BE21-F558476AF24D",
+    "library_sha256": "1b6dc30f2a2c6fff00f8b870471873ff5510130f4c0d70bb0409f4425b8aa1dd",
+    "linkmap_sha256": "3da42560fe26264fd34e18a93770b2619ebddae3ed78b39dfdf1d8c9ecfb43b2",
+    "export_addresses_independently_verified": 213,
+    "unknown_rust_frames": 666,
+    "mapped_rust_frames": 666,
+    "distinct_mapped_symbols": 220,
+    "scope": "same profiled image only; code/stub ranges with nonzero symbol size; profiler samples include waiting threads; inclusive counts are not exclusive CPU time"
+  },
+  "rust_build": {
+    "status": "complete",
+    "source_commit": "852db17714f6052fdbad489c5b3db17596356135",
+    "ffi_source_sha256": "c83eb1fb42dfc559e5822b4b673ae3dc481f340072dd73d36285f57030cd9a77",
+    "temporary_build_script": "fn main() { let path = std::path::PathBuf::from(std::env::var_os(\"OUT_DIR\").unwrap()).join(\"aetower-ffi.map\"); println!(\"cargo:rustc-link-arg-cdylib=-Wl,-map,{}\", path.display()); }\n",
+    "rust_roots": [
+      "aetower-mcp",
+      "aetower-cli",
+      "aetower-ffi"
+    ],
+    "profile": "release",
+    "jobs": 2,
+    "rustc_wrapper": "",
+    "scope": "profiling support only; external linker map; no global RUSTFLAGS or runtime optimization changes; not an app performance comparison",
+    "linkmap_compiler_output": "/private/tmp/aetower-build-performance/rust/target/release/build/aetower-ffi-65ea5b1df7e533d9/out/aetower-ffi.map",
+    "dylib_sha256": "b9712b4b6f7e490a2eb2bca8e04455ec2b3367d9befa9e31527fb82bf7fa7413",
+    "linkmap_sha256": "3da42560fe26264fd34e18a93770b2619ebddae3ed78b39dfdf1d8c9ecfb43b2",
+    "temporary_build_script_removed": true,
+    "ffi_source_unchanged": true
+  },
+  "swift_symbols": {
+    "dsym_uuid": "1759DE74-CDF5-343C-B2A7-86BFBB776387",
+    "matches_sample_image_uuid": true,
+    "load_address": "0x102f2c000",
+    "atos_addresses": {
+      "0x102f93138": "specialized static FfiConverterSequenceUInt64.read(from:) (aetower_ffi.swift:11920)",
+      "0x102f95b64": "specialized static FfiConverterTypeMetricTrend.read(from:) (aetower_ffi.swift:5744)",
+      "0x102f96dc8": "specialized static FfiConverterTypeEntitySnapshot.read(from:) (aetower_ffi.swift:4229)",
+      "0x102f5840c": "specialized static FfiConverterRustBuffer.lift(_:) (aetower_ffi.swift:198)",
+      "0x10302d168": "closure #1 in AppState.refresh(force:) (AppState.swift:1984)"
+    },
+    "retained_dsym_path": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/retained/loop8-profile/AetowerApp.dSYM"
+  },
+  "memory_summary": {
+    "scope": "single diagnostic at 60 seconds; includes profiler overhead; not a comparison or a component attribution",
+    "physical_footprint_MiB": 109.2,
+    "peak_physical_footprint_MiB": 112.7,
+    "default_malloc_zone_allocated_MiB": 51.9,
+    "default_malloc_zone_allocations": 319437,
+    "default_malloc_zone_dirty_plus_swapped_fragmentation_MiB": 23.6,
+    "default_malloc_zone_fragmentation_percent": 32,
+    "all_malloc_zones_allocated_MiB": 54.4
+  },
+  "findings": [
+    "Most Rust background-worker samples are parked or waiting; counts are not exclusive CPU time.",
+    "The snapshot-refresh Swift stack reaches generated UInt64 sequence and entity decoding, with Foundation DataProtocol.copyBytes and Swift generic metadata operations underneath.",
+    "The default malloc zone is the largest allocated zone; this does not identify which language or component owns its allocations.",
+    "No app-wide saving or causal explanation for pass seven higher CPU/wakeups is established."
+  ],
+  "retained_raw_files": {
+    "stacks.txt": {
+      "bytes": 1511938,
+      "sha256": "5194499641312988514e1055df7c542c900968679dba6d8ca3864eeb437b094b"
+    },
+    "stacks-symbolized.txt": {
+      "bytes": 1540456,
+      "sha256": "3fde57c27b45853658a6844a5e513c29530f0f2c19f710e38af5720dc4ace527"
+    },
+    "memory-summary.txt": {
+      "bytes": 8238,
+      "sha256": "9f70102ed86537f60287089dc23d44a806fe368c4ea5749038595d52defddb24"
+    },
+    "mapped-files.txt": {
+      "bytes": 4728,
+      "sha256": "f23956c4f70cf9b50e1fc76205b6d60a26e8bb8e010af63b77d48d34006b7b8c"
+    }
+  }
+}

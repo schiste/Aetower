@@ -29,6 +29,8 @@ use tungstenite::{Message, connect};
 use url::Url;
 
 mod registry;
+#[cfg(target_os = "macos")]
+mod version;
 
 use registry::AdapterRegistry;
 
@@ -1976,6 +1978,14 @@ fn app_bundle_path(executable_path: &str) -> Option<String> {
 /// Read `CFBundleShortVersionString` from a bundle's Info.plist. Best-effort —
 /// returns `None` when the plist or key is absent.
 fn resolve_app_version(bundle_path: &str) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    if let Some(value) = version::read(bundle_path) {
+        return Some(value);
+    }
+    resolve_app_version_cli(bundle_path)
+}
+
+fn resolve_app_version_cli(bundle_path: &str) -> Option<String> {
     let plist = format!("{bundle_path}/Contents/Info.plist");
     let output = Command::new("/usr/libexec/PlistBuddy")
         .args(["-c", "Print :CFBundleShortVersionString", &plist])

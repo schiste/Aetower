@@ -35,6 +35,58 @@ use crate::{AetowerMcpDataSource, AetowerMcpServer, ProcessActionApprovalStore};
 pub(crate) const SOCKET_DIR_MODE: u32 = 0o700;
 pub(crate) const SOCKET_FILE_MODE: u32 = 0o600;
 const PROXY_POLL_TIMEOUT: Duration = Duration::from_millis(250);
+
+#[cfg(target_os = "macos")]
+mod proxy_events;
+
+struct ProxyWaiter {
+    #[cfg(target_os = "macos")]
+    events: Option<proxy_events::Readiness>,
+}
+
+impl ProxyWaiter {
+    fn new(stdin_fd: i32, socket_fd: i32, parent_pid: libc::pid_t) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            // Unsupported descriptors or parent watches keep the existing
+            // bounded polling path rather than making the proxy unavailable.
+            Self {
+                events: proxy_events::Readiness::new(stdin_fd, socket_fd, parent_pid).ok(),
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (stdin_fd, socket_fd, parent_pid);
+            Self {}
+        }
+    }
+
+    fn wait(
+        &mut self,
+        fds: &mut [libc::pollfd; 2],
+        stdin_open: bool,
+        idle_remaining: Duration,
+    ) -> std::io::Result<Option<i32>> {
+        #[cfg(target_os = "macos")]
+        if let Some(events) = self.events.as_mut() {
+            return events.wait(fds, stdin_open, idle_remaining);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (stdin_open, idle_remaining);
+        let result = unsafe {
+            libc::poll(
+                fds.as_mut_ptr(),
+                fds.len() as libc::nfds_t,
+                PROXY_POLL_TIMEOUT.as_millis() as i32,
+            )
+        };
+        if result < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(Some(result))
+        }
+    }
+}
 const MAX_MCP_CLIENTS: usize = 64;
 const MAX_MCP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_MCP_BODY_BYTES: usize = 1024 * 1024;
@@ -489,6 +541,7 @@ fn proxy_stdio_to_socket_polling(socket_path: impl AsRef<Path>) -> Result<(), St
     let stdin_fd = input.as_raw_fd();
     let socket_fd = stream.as_raw_fd();
     let original_parent_pid = current_parent_pid();
+    let mut waiter = ProxyWaiter::new(stdin_fd, socket_fd, original_parent_pid);
     let mut stdin_open = true;
     let mut write_half_open = true;
     let mut stdin_buffer = [0u8; 8192];
@@ -519,20 +572,16 @@ fn proxy_stdio_to_socket_polling(socket_path: impl AsRef<Path>) -> Result<(), St
             },
         ];
 
-        let poll_result = unsafe {
-            libc::poll(
-                fds.as_mut_ptr(),
-                fds.len() as libc::nfds_t,
-                PROXY_POLL_TIMEOUT.as_millis() as i32,
-            )
+        let poll_result = match waiter.wait(
+            &mut fds,
+            stdin_open,
+            PROXY_IDLE_TIMEOUT.saturating_sub(last_activity.elapsed()),
+        ) {
+            Ok(Some(result)) => result,
+            Ok(None) => break, // The watched parent exited.
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(format!("poll MCP proxy fds: {error}")),
         };
-        if poll_result < 0 {
-            let error = std::io::Error::last_os_error();
-            if error.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(format!("poll MCP proxy fds: {error}"));
-        }
         if poll_result == 0 {
             continue;
         }

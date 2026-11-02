@@ -2,6 +2,10 @@ name: Aetower quality
 
 on:
   push:
+    # PR updates already run the full gate. Avoid a second identical build
+    # for every feature-branch push; retain trunk and release-tag checks.
+    branches: [master]
+    tags: ["**"]
   pull_request:
   workflow_dispatch:
 
@@ -14,7 +18,7 @@ env:
 concurrency:
   group: quality-${{ github.workflow }}-${{ github.ref }}
   # Cancel superseded branch and pull-request runs so contributors get fast
-  # feedback, but never cancel a master run. Cancelling skips the "Post Cache"
+  # feedback, but never cancel a master run. Cancelling skips the final cache
   # steps, so a cancelled run saves nothing: with `true` here, pushing twice
   # in quick succession would leave the master cache permanently cold and the
   # gate would rebuild from scratch on every run.
@@ -24,8 +28,8 @@ jobs:
   quality:
     name: macOS 15 quality gate
     runs-on: macos-15
-    # The gate runs the full Rust workspace test suite, the serialised
-    # aetower-mcp suite, and the Swift suite, so a cold run is long. Bump
+    # The gate runs the full Rust workspace and Swift suites, so a cold run
+    # is long. Bump
     # this if the gate outgrows it rather than letting runs be killed
     # mid-suite, which produces no diagnostic.
     timeout-minutes: 120
@@ -39,58 +43,45 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Without this every run recompiles ~260 crates plus the release FFI
-      # dylib and re-resolves Sparkle from scratch. Cache keys are scoped by
-      # the lockfile and toolchain so a dependency change invalidates them.
-      - name: Cache Rust build artifacts
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            rust/target
-          key: rust-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: |
-            rust-${{ runner.os }}-
-
-      - name: Cache SwiftPM build artifacts
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          # macos/Package.swift hardcodes macos/.build in its linker
-          # unsafeFlags, so the gate must build there; caching that exact
-          # path is what makes the Swift suite incremental.
-          path: |
-            macos/.build
-            ~/Library/Caches/org.swift.swiftpm
-          key: swiftpm-${{ runner.os }}-${{ hashFiles('macos/Package.resolved', 'macos/Package.swift') }}
-          restore-keys: |
-            swiftpm-${{ runner.os }}-
-
-      # The version is read from rust-toolchain.toml rather than repeated
-      # here, so there is a single source of truth. rustup auto-installs
-      # the pinned toolchain on first use. The Swift version is printed too:
-      # SwiftUI main-actor isolation diagnostics differ between toolchains, so
-      # a build failure here is only diagnosable with the version in the log.
+      # Cache compatibility includes both compiler and SDK versions. Source
+      # fingerprints let incremental builds publish fresh snapshots;
+      # an immutable dependency-only key otherwise stays cold for changed code.
       - name: Report pinned toolchain
+        id: toolchain
         run: |
-          channel="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
-          echo "pinned rust toolchain: $channel"
           rustc --version
           cargo --version
           swift --version
           echo "runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+          rust_id="$( { rustc --version --verbose; xcrun --sdk macosx --show-sdk-build-version; } | shasum -a 256 | cut -d ' ' -f 1)"
+          swift_id="$( { swift --version; xcrun --sdk macosx --show-sdk-build-version; } | shasum -a 256 | cut -d ' ' -f 1)"
+          echo "rust=$rust_id" >> "$GITHUB_OUTPUT"
+          echo "swift=$swift_id" >> "$GITHUB_OUTPUT"
+
+      # Dependency metadata needs package sources, but not compiled targets.
+      - name: Restore Cargo dependency sources
+        id: registry-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: cargo-registry-v1-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-v1-${{ runner.os }}-
 
       # Cache just the version-pinned tool; keep its advisory database fetch fresh.
-      - name: Cache cargo-deny
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore cargo-deny
+        id: deny-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-deny
           key: cargo-deny-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${{ env.CARGO_DENY_VERSION }}
 
-      - name: Install quality tools
+      - name: Install dependency policy tool
         run: |
-          brew install gitleaks swiftlint semgrep shellcheck
           if ! command -v cargo-deny >/dev/null 2>&1 \
               || [ "$(cargo-deny --version)" != "cargo-deny $CARGO_DENY_VERSION" ]; then
             cargo install cargo-deny --version "$CARGO_DENY_VERSION" --locked --force
@@ -98,7 +89,80 @@ jobs:
           cargo deny fetch db --config ../deny.toml
         working-directory: rust
 
+      # Reject policy failures before large target/Swift cache transfers.
+      - name: Dependency policy preflight
+        run: sh scripts/check-dependencies.sh
+
+      - name: Restore Rust build artifacts
+        id: rust-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            rust/target
+          key: rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.toml', 'rust/crates/**', 'scripts/ci-local.sh', 'scripts/test-rust-workspace.sh', 'scripts/build-rust.sh', 'scripts/build-settings.sh') }}
+          restore-keys: |
+            rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}-
+            rust-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-
+            rust-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('rust/Cargo.lock', 'rust-toolchain.toml') }}-
+            rust-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.rust }}-
+
+      - name: Restore SwiftPM build artifacts
+        id: swift-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            macos/.build
+            tmp/clang-module-cache
+            ~/Library/Caches/org.swift.swiftpm
+          # Binding and gate drivers can change the compiled inputs or graph.
+          # Fingerprint them so immutable cache keys can save refreshed work.
+          key: swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('macos/Package.swift', 'macos/Package.resolved') }}-${{ hashFiles('macos/Sources/**', 'macos/Tests/**', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rust-toolchain.toml', 'rust/crates/**', 'scripts/build-rust.sh', 'scripts/build-settings.sh', 'scripts/package-macos.sh', 'scripts/prepare-swift-bindings.py', 'scripts/ci-local.sh', 'scripts/swift-quality-checks.sh') }}
+          restore-keys: |
+            swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('macos/Package.swift', 'macos/Package.resolved') }}-
+            swiftpm-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-
+
+      - name: Install remaining quality tools
+        run: brew install gitleaks swiftlint semgrep shellcheck
+
       - name: Run the full local pre-push gate
         env:
           AETOWER_SKIP_DIRTY_WORKTREE_CONFIRM: "1"
         run: sh scripts/ci-local.sh --mode pre-push
+
+      # Preserve compiler work even when a test or the dependency audit fails.
+      # Cached artifacts are inputs to the next gate, never evidence of a pass.
+      - name: Save Cargo dependency sources
+        if: ${{ !cancelled() && steps.registry-cache.outputs.cache-hit != 'true' && steps.registry-cache.outputs.cache-primary-key != '' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: ${{ steps.registry-cache.outputs.cache-primary-key }}
+
+      - name: Save Rust build artifacts
+        if: ${{ !cancelled() && steps.rust-cache.outputs.cache-hit != 'true' && steps.rust-cache.outputs.cache-primary-key != '' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            rust/target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+
+      - name: Save SwiftPM build artifacts
+        if: ${{ !cancelled() && steps.swift-cache.outputs.cache-hit != 'true' && steps.swift-cache.outputs.cache-primary-key != '' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            macos/.build
+            tmp/clang-module-cache
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ steps.swift-cache.outputs.cache-primary-key }}
+
+      - name: Save cargo-deny
+        if: ${{ !cancelled() && steps.deny-cache.outputs.cache-hit != 'true' && steps.deny-cache.outputs.cache-primary-key != '' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ steps.deny-cache.outputs.cache-primary-key }}

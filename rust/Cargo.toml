@@ -45,9 +45,24 @@ sha2 = "0.11"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 miniz_oxide = "0.9"
 
+# Bundled SQLite is hot in storage tests. Optimize that dependency while keeping
+# normal development debug information and runtime checks.
+[profile.dev.package.libsqlite3-sys]
+opt-level = 1
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
 # panic stays "unwind": uniffi converts Rust panics into Swift-visible errors via
 # catch_unwind at the FFI boundary; panic = "abort" would kill the host app instead.
+
+# Split the large MCP crate to reduce measured release compiler memory and CPU.
+# Other release crates retain the workspace default of one codegen unit.
+[profile.release.package.aetower-mcp]
+codegen-units = 8
+
+# Keep Rust's post-link strip from misaligning Mach-O LINKEDIT entries. The
+# macOS bridge strips local/debug symbols in the linker instead (see build.rs).
+[profile.release.package.aetower-ffi]
+strip = "none"
