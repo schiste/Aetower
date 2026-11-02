@@ -439,6 +439,7 @@ public final class AppState {
     public private(set) var snapshotSequence: UInt64 = 0
     public private(set) var snapshotCapturedAtMillis: UInt64 = 0
     private(set) var monitorViewModel = MonitorViewModel.empty
+    let processResponsiveness = ProcessResponsivenessMonitor()
     public private(set) var historySnapshots: [SystemSnapshot] = []
     public private(set) var historyLoadError: String?
     public private(set) var historyRangeSummary: HistoryRangeSummary?
@@ -1061,6 +1062,7 @@ public final class AppState {
     }
 
     public func stop() {
+        processResponsiveness.stop()
         refreshTask?.cancel()
         refreshTask = nil
         refreshFetchTask?.cancel()
@@ -1960,6 +1962,7 @@ public final class AppState {
     }
 
     public func refresh(force: Bool = false) {
+        if windowsVisible { processResponsiveness.refresh() }
         ensureLocalMcpServer()
         let refreshStartedAt = CFAbsoluteTimeGetCurrent()
         if refreshInFlight {

@@ -1,0 +1,213 @@
+{
+  "source_commit": "4041b5b312fff003f468c8d19ff0fad5fc6118b8",
+  "platform": "macOS 27.2 arm64",
+  "scope": "Final Swift UI source with unchanged merged release Rust bridge. Absolute probe cost, not an A/B build or whole-app footprint claim. Warm native scan cost excludes registered-app catalog enumeration, startup and UI rendering. RSS is process peak including AppKit initialization and prior fixture observations, not incremental memory or Aetower physical footprint.",
+  "retained_artifacts": "/Volumes/T7-repositories/Aetower-build-performance-cache/session-11/retained",
+  "native_source_sha256": "db4e239c6ad5c2a432df2f988125a6126eb15a9706e26d875e95a0a5e4591606",
+  "native_transitions": [
+    {
+      "status": "responding",
+      "seconds_from_initial_sample": 0.0
+    },
+    {
+      "status": "notResponding",
+      "seconds_from_initial_sample": 18.037
+    },
+    {
+      "status": "responding",
+      "seconds_from_initial_sample": 18.042
+    }
+  ],
+  "after_exit": "unknown",
+  "native_probe_cost": {
+    "registeredAppCount": 161,
+    "available": true,
+    "processPeakRSSBytesIncludingAppKitInitialization": 30851072,
+    "maxObserved": 161,
+    "cpuMillisecondsPerScan": 3.0741999999999994,
+    "iterations": 200,
+    "runsOnMainThread": false,
+    "minObserved": 161,
+    "wall_mean_ms": 13.15606479140115,
+    "wall_median_ms": 6.389875001332257,
+    "wall_p95_ms": 50.80387499765493
+  },
+  "fixture": "Owned foreground active/key-window readiness verified; final v6 uses no synthetic input. Main/background agreement was separately verified by v5.",
+  "native_attempts": [
+    {
+      "cohort": "responsiveness-native-v1",
+      "status": "failed_or_interrupted",
+      "error": "WindowServer did not flag owned blocked main loop",
+      "owned_helpers_stopped": true,
+      "source_unchanged": true,
+      "receipt_sha256": "3c5e34e5afd06fce4cc8da344c54e0d9b178c91de48ac6dff4a2def430cdb5ed"
+    },
+    {
+      "cohort": "responsiveness-native-v2",
+      "status": "complete",
+      "error": null,
+      "owned_helpers_stopped": true,
+      "source_unchanged": true,
+      "receipt_sha256": "7dedddbc1827fc5f1b28d0772b6458bb2ba0e0f1e15a6b6df0425786970e1590"
+    },
+    {
+      "cohort": "responsiveness-native-v3",
+      "status": "failed_or_interrupted",
+      "error": "WindowServer did not flag owned blocked main loop",
+      "owned_helpers_stopped": true,
+      "source_unchanged": true,
+      "receipt_sha256": "6b0a059a1b41f1aff3533d86abfe2a7b783bb9b1c42d793b8bf33ba59df2596c"
+    },
+    {
+      "cohort": "responsiveness-native-v4",
+      "status": "failed_or_interrupted",
+      "error": "WindowServer did not flag owned blocked main loop",
+      "owned_helpers_stopped": true,
+      "source_unchanged": true,
+      "receipt_sha256": "a35e5a01825652b9ec5c4fddf06e0ed6984d9a24100f09eaba459fc4067a535e"
+    },
+    {
+      "cohort": "responsiveness-native-v5",
+      "status": "complete",
+      "error": null,
+      "owned_helpers_stopped": true,
+      "source_unchanged": true,
+      "receipt_sha256": "c8815e35dcec5fcf736d0ab03048c6dec0bc283f5fbcdc1867a2374ffd298920"
+    },
+    {
+      "cohort": "responsiveness-native-v6",
+      "status": "complete",
+      "error": null,
+      "owned_helpers_stopped": true,
+      "source_unchanged": true,
+      "receipt_sha256": "5bea5ddbdf47faf5d84ce43b274563a2038718a9121fb5f11b0b92e112bac778"
+    }
+  ],
+  "swift_tests": [
+    {
+      "cohort": "swift-focused-v1",
+      "cases": 12,
+      "failures": 0,
+      "source_unchanged": true,
+      "test_binary_unchanged": null,
+      "cost": {
+        "command": [
+          "/usr/bin/swift",
+          "test",
+          "--package-path",
+          "/private/tmp/aetower-process-responsiveness/macos",
+          "--scratch-path",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/swift",
+          "--configuration",
+          "release",
+          "--jobs",
+          "1",
+          "--disable-automatic-resolution",
+          "-Xswiftc",
+          "-num-threads",
+          "-Xswiftc",
+          "1",
+          "--filter",
+          "ProcessResponsivenessTests",
+          "--verbose"
+        ],
+        "cwd": "/private/tmp/aetower-process-responsiveness",
+        "exit_status": 0,
+        "wall_seconds": 558.429,
+        "user_cpu_seconds": 356.986,
+        "system_cpu_seconds": 37.695,
+        "average_cpu_percent": 70.7,
+        "sampled_peak_tree_rss_bytes": 1699282944,
+        "rss_samples": 520,
+        "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+      },
+      "receipt_sha256": "69824bc35edb49d4054f219b7a8058ad44261628913f04822de3cc0f62fe3ad3"
+    },
+    {
+      "cohort": "swift-focused-v2",
+      "cases": 14,
+      "failures": 0,
+      "source_unchanged": true,
+      "test_binary_unchanged": null,
+      "cost": {
+        "command": [
+          "/usr/bin/swift",
+          "test",
+          "--package-path",
+          "/private/tmp/aetower-process-responsiveness/macos",
+          "--scratch-path",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/swift",
+          "--configuration",
+          "release",
+          "--jobs",
+          "1",
+          "--disable-automatic-resolution",
+          "-Xswiftc",
+          "-num-threads",
+          "-Xswiftc",
+          "1",
+          "--filter",
+          "ProcessResponsivenessTests",
+          "--verbose"
+        ],
+        "cwd": "/private/tmp/aetower-process-responsiveness",
+        "exit_status": 0,
+        "wall_seconds": 957.732,
+        "user_cpu_seconds": 225.961,
+        "system_cpu_seconds": 32.875,
+        "average_cpu_percent": 27.0,
+        "sampled_peak_tree_rss_bytes": 1927692288,
+        "rss_samples": 867,
+        "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+      },
+      "receipt_sha256": "b4f7e06f32d6ddbdd3abc7ef4ffe0ef5a00cdac0bb2cbed6724eba6ba18c4167"
+    },
+    {
+      "cohort": "swift-full-v1",
+      "cases": 226,
+      "failures": 0,
+      "source_unchanged": true,
+      "test_binary_unchanged": true,
+      "cost": {
+        "command": [
+          "/usr/bin/swift",
+          "test",
+          "--skip-build",
+          "--package-path",
+          "/private/tmp/aetower-process-responsiveness/macos",
+          "--scratch-path",
+          "/Volumes/T7-repositories/Aetower-build-performance-cache/session-8/swift",
+          "--configuration",
+          "release",
+          "--jobs",
+          "1",
+          "--disable-automatic-resolution",
+          "-Xswiftc",
+          "-num-threads",
+          "-Xswiftc",
+          "1",
+          "--verbose"
+        ],
+        "cwd": "/private/tmp/aetower-process-responsiveness",
+        "exit_status": 0,
+        "wall_seconds": 21.473,
+        "user_cpu_seconds": 4.448,
+        "system_cpu_seconds": 4.507,
+        "average_cpu_percent": 41.7,
+        "sampled_peak_tree_rss_bytes": 455933952,
+        "rss_samples": 20,
+        "rss_note": "1s aggregate process-tree RSS samples; shared pages may be counted twice; short peaks may be missed"
+      },
+      "receipt_sha256": "62e9b163438570337935ee00f141e6720072ed28b895bc2ecd7011ed467725f1"
+    }
+  ],
+  "swiftlint": "strict repository configuration, no cache, exit 0",
+  "broker_verification": "submit refused before verification: legacy broker root needs explicit digest-confirmed binding plan/apply",
+  "hosted_ci": "CodeQL checks succeeded at initial feature head; macOS 15 quality gate queued at last observation. Recheck live PR for current status.",
+  "full_suite_listing_audit": {
+    "listed": 226,
+    "executed": 226,
+    "exact_match": true,
+    "listing_sha256": "e165268e39d06600d1ea83dda89139c583560acedd2c75f8f67b72b98d1e4ad1"
+  }
+}

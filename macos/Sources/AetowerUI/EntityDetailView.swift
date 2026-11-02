@@ -1115,7 +1115,8 @@ public struct EntityDetailView: View {
                     ProcessTreeView(
                         entity: entity,
                         allEntities: state.entitiesState,
-                        seedEntities: processTreeSeedEntities
+                        seedEntities: processTreeSeedEntities,
+                        responsiveness: state.processResponsiveness.snapshot
                     )
                 }
             }
