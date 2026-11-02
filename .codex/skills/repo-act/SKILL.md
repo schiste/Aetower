@@ -40,6 +40,11 @@ description: Use after repo-onboarding or Explore when moving from orientation i
   every writer has exited and no uncheckpointed WAL remains. Verify primary-file
   hashes before/after; never apply this shortcut to a live database.
 - Document any override-based maintainer note that affected the change plan.
+- For broker-managed delivery, use the coordinator's accepted merge form;
+  GitHub CLI support alone does not establish that a flag is accepted. Run each
+  merge from the session owning its source branch. For stacked PRs, land the
+  base first and verify the follow-up head and diff after retargeting. Verify
+  final default-branch ancestry and tree identity before reporting completion.
 - Before long resource experiments, persist the controller PID and progress in a
   durable receipt. Missing or truncated tool output does not prove termination.
   Match that PID to the expected command and inspect its owned descendants and
