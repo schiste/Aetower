@@ -6448,10 +6448,9 @@ fn record_generation_growth_deltas(
          WHERE generation_id = ?1
          ORDER BY path ASC",
     )?;
-    let rows = statement
-        .query_map(params![generation_id], indexed_file_row_from_sql)?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    drop(statement);
+    // Staging stays read-only while growth is recorded. Decode one row at a
+    // time so publishing a large scan does not retain the whole index in memory.
+    let rows = statement.query_map(params![generation_id], indexed_file_row_from_sql)?;
 
     let mut insert_delta = transaction.prepare(
         "INSERT INTO storage_growth_delta (
@@ -6475,13 +6474,12 @@ fn record_generation_growth_deltas(
             max_abs_delta_bytes = MAX(max_abs_delta_bytes, excluded.max_abs_delta_bytes),
             updated_at_millis = MAX(updated_at_millis, excluded.updated_at_millis)",
     )?;
+    let mut previous_physical_statement =
+        transaction.prepare("SELECT physical_bytes FROM storage_file_index WHERE path = ?1")?;
     for row in rows {
-        let previous_physical: i64 = transaction
-            .query_row(
-                "SELECT physical_bytes FROM storage_file_index WHERE path = ?1",
-                params![&row.path],
-                |value| value.get(0),
-            )
+        let row = row?;
+        let previous_physical: i64 = previous_physical_statement
+            .query_row(params![&row.path], |value| value.get(0))
             .optional()?
             .unwrap_or_default();
         let previous_physical = previous_physical.max(0) as u64;
@@ -6509,6 +6507,8 @@ fn record_generation_growth_deltas(
         ])?;
         upsert_growth_rollups(&mut upsert_rollup, &row, bucket_millis, delta)?;
     }
+    drop(previous_physical_statement);
+    drop(statement);
     drop(insert_delta);
     drop(upsert_rollup);
     if max_scan_millis > 0 {

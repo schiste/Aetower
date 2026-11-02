@@ -2522,8 +2522,9 @@ public final class AppState {
         }
         lastStorageVolumeCapacityRefreshDate = now
 
-        if var situation = storageSituation {
-            situation.volumeStates = StorageVolumeCapacityEnricher.enrich(situation.volumeStates)
+        if let situation = storageSituation {
+            // Publication refreshes capacity once. Enriching here too repeats
+            // the same filesystem/CacheDelete queries on every capacity tick.
             publishStorageSituation(situation, updateEstimate: false)
         } else if var report = storageHygieneReport {
             let refreshedVolumes = StorageVolumeCapacityEnricher.enrich(report.volumeStates)

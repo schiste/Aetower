@@ -2,7 +2,7 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CARGO_BIN="${CARGO_BIN:-$HOME/.cargo/bin/cargo}"
+. "$ROOT/scripts/build-settings.sh"
 
 cd "$ROOT"
 

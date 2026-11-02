@@ -219,7 +219,7 @@ pub struct CollectorTimings {
     pub deferred_expensive_sampling: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct ProcessCounterSample {
     start_time_millis: u64,
     wakeups: u64,
@@ -236,6 +236,34 @@ struct ProcessCounterSample {
     /// baseline, not by a single nominal tick — otherwise a 5-tick sample reads
     /// 5x too high. `None` until the first fresh read.
     counters_sampled_at: Option<std::time::Instant>,
+}
+
+// Keep one counter table between ticks. Pruning before sampling makes room for
+// new PIDs without retaining departed processes or allocating a second table.
+fn prepare_process_counters(
+    counters: &mut HashMap<u32, ProcessCounterSample>,
+    live_count: usize,
+    mut is_live: impl FnMut(u32) -> bool,
+) {
+    counters.retain(|pid, _| is_live(*pid));
+    counters.shrink_to(live_count);
+    counters.reserve(live_count.saturating_sub(counters.len()));
+}
+
+fn process_counter_slot(
+    counters: &mut HashMap<u32, ProcessCounterSample>,
+    pid: u32,
+    start_time_millis: u64,
+) -> (Option<ProcessCounterSample>, &mut ProcessCounterSample) {
+    use std::collections::hash_map::Entry;
+    match counters.entry(pid) {
+        Entry::Occupied(entry) => {
+            let slot = entry.into_mut();
+            let previous = (slot.start_time_millis == start_time_millis).then_some(*slot);
+            (previous, slot)
+        }
+        Entry::Vacant(entry) => (None, entry.insert(ProcessCounterSample::default())),
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -275,6 +303,21 @@ impl HostVmRates {
 struct ProcessIdentitySample {
     start_time_millis: u64,
     identity: Arc<ProcessIdentity>,
+}
+
+fn retain_live_process_metadata(
+    cwd_cache: &mut HashMap<u32, String>,
+    identity_cache: &mut HashMap<u32, ProcessIdentitySample>,
+    mut start_time_for_pid: impl FnMut(u32) -> Option<u64>,
+) {
+    cwd_cache.retain(|pid, _| start_time_for_pid(*pid).is_some());
+    identity_cache.retain(|pid, cached| start_time_for_pid(*pid) == Some(cached.start_time_millis));
+}
+
+fn cache_cwd_if_changed(cache: &mut HashMap<u32, String>, pid: u32, cwd: &str) {
+    if cache.get(&pid).is_none_or(|cached| cached != cwd) {
+        cache.insert(pid, cwd.to_owned());
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -566,7 +609,12 @@ impl Collector {
         }
 
         let process_sampling_started = std::time::Instant::now();
-        let mut next_process_counters = HashMap::with_capacity(self.system.processes().len());
+        let process_table = self.system.processes();
+        prepare_process_counters(
+            &mut self.previous_process_counters,
+            process_table.len(),
+            |pid| process_table.contains_key(&sysinfo::Pid::from_u32(pid)),
+        );
         let all_processes: Vec<_> = self
             .system
             .processes()
@@ -574,10 +622,11 @@ impl Collector {
             .map(|process| {
                 let pid = process.pid().as_u32();
                 let start_time_millis = process.start_time().saturating_mul(1_000);
-                let previous = self
-                    .previous_process_counters
-                    .get(&pid)
-                    .filter(|prev| prev.start_time_millis == start_time_millis);
+                let (previous, counter_slot) = process_counter_slot(
+                    &mut self.previous_process_counters,
+                    pid,
+                    start_time_millis,
+                );
                 // Wakeups and energy come from the same syscall
                 // (`proc_pid_rusage`). We sample them on the same slow cadence
                 // (every `WAKEUPS_SAMPLE_INTERVAL_TICKS` ticks, ~10 s) to avoid
@@ -679,21 +728,18 @@ impl Collector {
                 let disk_read_bps = (disk_read_delta as f64 / elapsed_seconds) as u64;
                 let disk_write_bps = (disk_write_delta as f64 / elapsed_seconds) as u64;
 
-                next_process_counters.insert(
-                    pid,
-                    ProcessCounterSample {
-                        start_time_millis,
-                        wakeups,
-                        energy_nj,
-                        physical_footprint_bytes,
-                        disk_read_bytes: disk_read_total,
-                        disk_write_bytes: disk_write_total,
-                        wakeups_per_second,
-                        energy_nj_per_s,
-                        thread_count,
-                        counters_sampled_at,
-                    },
-                );
+                *counter_slot = ProcessCounterSample {
+                    start_time_millis,
+                    wakeups,
+                    energy_nj,
+                    physical_footprint_bytes,
+                    disk_read_bytes: disk_read_total,
+                    disk_write_bytes: disk_write_total,
+                    wakeups_per_second,
+                    energy_nj_per_s,
+                    thread_count,
+                    counters_sampled_at,
+                };
 
                 let identity = match self.process_identity_cache.get(&pid) {
                     Some(cached)
@@ -753,10 +799,7 @@ impl Collector {
                         && (full_collection || self.process_metadata_tick.is_multiple_of(2))
                     {
                         // Only probe new PIDs; return cached cwd for known ones.
-                        let is_new = self
-                            .previous_process_counters
-                            .get(&pid)
-                            .is_none_or(|prev| prev.start_time_millis != start_time_millis);
+                        let is_new = previous.is_none();
                         if is_new {
                             platform::process_cwd(pid)
                         } else {
@@ -770,24 +813,27 @@ impl Collector {
             })
             .collect();
         let process_sampling_millis = process_sampling_started.elapsed().as_secs_f64() * 1000.0;
-        self.previous_process_counters = next_process_counters;
 
         // Update CWD cache: insert fresh values, prune dead PIDs.
         if !self.config.defer_expensive_sampling
             && (full_collection || self.process_metadata_tick.is_multiple_of(2))
         {
-            let alive: std::collections::HashSet<u32> =
-                all_processes.iter().map(|p| p.pid).collect();
-            self.cwd_cache.retain(|pid, _| alive.contains(pid));
-            self.process_identity_cache.retain(|pid, cached| {
-                alive.contains(pid)
-                    && all_processes
-                        .iter()
-                        .any(|p| p.pid == *pid && p.start_time_millis == cached.start_time_millis)
-            });
+            // sysinfo already indexes the exact process set mapped above.
+            // Reuse it instead of allocating an alive set and scanning every
+            // process for every identity (quadratic on large process tables).
+            let process_table = self.system.processes();
+            retain_live_process_metadata(
+                &mut self.cwd_cache,
+                &mut self.process_identity_cache,
+                |pid| {
+                    process_table
+                        .get(&sysinfo::Pid::from_u32(pid))
+                        .map(|process| process.start_time().saturating_mul(1_000))
+                },
+            );
             for process in &all_processes {
                 if let Some(ref cwd) = process.cwd {
-                    self.cwd_cache.insert(process.pid, cwd.clone());
+                    cache_cwd_if_changed(&mut self.cwd_cache, process.pid, cwd);
                 }
             }
         }
@@ -3018,10 +3064,266 @@ mod platform {
 #[cfg(test)]
 mod top_level_tests {
     use super::{
-        HostVmRates, NetworkInterfaceIdentitySample, build_network_interface_snapshots, platform,
-        process_refresh_kind,
+        HostVmRates, NetworkInterfaceIdentitySample, ProcessCounterSample, ProcessIdentity,
+        ProcessIdentitySample, build_network_interface_snapshots, cache_cwd_if_changed, platform,
+        prepare_process_counters, process_counter_slot, process_refresh_kind,
+        retain_live_process_metadata,
     };
+    use std::collections::{BTreeMap, HashMap, HashSet};
+    use std::sync::Arc;
     use sysinfo::{Networks, UpdateKind};
+
+    fn cached_identity(start_time_millis: u64) -> ProcessIdentitySample {
+        ProcessIdentitySample {
+            start_time_millis,
+            identity: Arc::new(ProcessIdentity {
+                name: "fixture".to_owned(),
+                exe: None,
+                cmd: Vec::new(),
+                user: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn metadata_pruning_keeps_live_identity_and_rejects_reused_or_exited_pids() {
+        let current = HashMap::from([(10, 100), (20, 200), (40, 400)]);
+        let mut cwd = HashMap::from([(10, "a".into()), (20, "b".into()), (30, "c".into())]);
+        let mut identities = HashMap::from([
+            (10, cached_identity(100)),
+            (20, cached_identity(199)),
+            (30, cached_identity(300)),
+        ]);
+        let original_identity = Arc::clone(&identities[&10].identity);
+        let mut lookups = 0;
+        retain_live_process_metadata(&mut cwd, &mut identities, |pid| {
+            lookups += 1;
+            current.get(&pid).copied()
+        });
+        // CWD retains the existing PID-only behavior; identities must also
+        // match start time. Every cached entry needs exactly one lookup.
+        assert_eq!(cwd, HashMap::from([(10, "a".into()), (20, "b".into())]));
+        assert_eq!(identities.len(), 1);
+        assert!(Arc::ptr_eq(&identities[&10].identity, &original_identity));
+        assert_eq!(lookups, 6);
+    }
+
+    #[test]
+    fn unchanged_cwd_keeps_its_allocation_and_changed_values_are_replaced() {
+        let mut cache = HashMap::from([(10, "/old".to_owned())]);
+        let allocation = cache[&10].as_ptr();
+        cache_cwd_if_changed(&mut cache, 10, "/old");
+        assert_eq!(cache[&10].as_ptr(), allocation);
+        cache_cwd_if_changed(&mut cache, 10, "/new");
+        cache_cwd_if_changed(&mut cache, 20, "/other");
+        assert_eq!(
+            cache,
+            HashMap::from([(10, "/new".into()), (20, "/other".into())])
+        );
+    }
+
+    #[test]
+    #[ignore = "manual before/after algorithm benchmark; no timing assertion"]
+    fn metadata_cache_pruning_benchmark() {
+        for count in [1_000_u32, 5_000, 10_000] {
+            let current: HashMap<_, _> = (0..count).map(|pid| (pid, u64::from(pid))).collect();
+            let processes: Vec<_> = current.iter().map(|(pid, start)| (*pid, *start)).collect();
+            let original: HashMap<_, _> = (0..count + 100)
+                .map(|pid| {
+                    (
+                        pid,
+                        cached_identity(u64::from(pid) + u64::from(pid % 17 == 0)),
+                    )
+                })
+                .collect();
+            let original_cwd: HashMap<_, _> = (0..count + 100)
+                .map(|pid| (pid, format!("/fixture/{pid}")))
+                .collect();
+            let mut old_elapsed = std::time::Duration::ZERO;
+            let mut new_elapsed = std::time::Duration::ZERO;
+            for _ in 0..10 {
+                let mut old = original.clone();
+                let mut old_cwd = original_cwd.clone();
+                let mut new = original.clone();
+                let mut new_cwd = original_cwd.clone();
+                let started = std::time::Instant::now();
+                let alive: HashSet<_> = processes.iter().map(|(pid, _)| *pid).collect();
+                old_cwd.retain(|pid, _| alive.contains(pid));
+                old.retain(|pid, cached| {
+                    alive.contains(pid)
+                        && processes
+                            .iter()
+                            .any(|(live, start)| live == pid && *start == cached.start_time_millis)
+                });
+                old_elapsed += started.elapsed();
+                let started = std::time::Instant::now();
+                retain_live_process_metadata(&mut new_cwd, &mut new, |pid| {
+                    current.get(&pid).copied()
+                });
+                new_elapsed += started.elapsed();
+                let identities = |map: &HashMap<u32, ProcessIdentitySample>| -> BTreeMap<_, _> {
+                    map.iter()
+                        .map(|(pid, cached)| (*pid, cached.start_time_millis))
+                        .collect()
+                };
+                assert_eq!(old_cwd, new_cwd);
+                assert_eq!(identities(&old), identities(&new));
+            }
+            println!(
+                "metadata pruning: processes={count}, runs=10, old_us={}, new_us={}",
+                old_elapsed.as_micros(),
+                new_elapsed.as_micros()
+            );
+        }
+    }
+
+    #[test]
+    fn counter_slots_preserve_live_baselines_and_reject_new_or_reused_pids() {
+        let sample = ProcessCounterSample {
+            start_time_millis: 100,
+            wakeups: 17,
+            energy_nj: 1234,
+            disk_read_bytes: 55,
+            counters_sampled_at: Some(std::time::Instant::now()),
+            ..Default::default()
+        };
+        let mut counters = HashMap::from([(10, sample)]);
+        let (previous, slot) = process_counter_slot(&mut counters, 10, 100);
+        assert_eq!(previous, Some(sample));
+        slot.wakeups = 18;
+        assert_eq!(counters[&10].wakeups, 18);
+        assert!(process_counter_slot(&mut counters, 10, 101).0.is_none());
+        // A new PID can legitimately have a zero start time; the default
+        // inserted slot must never be mistaken for an existing baseline.
+        assert!(process_counter_slot(&mut counters, 20, 0).0.is_none());
+    }
+
+    #[test]
+    fn counter_table_prunes_exits_and_releases_excess_capacity() {
+        let mut counters: HashMap<_, _> = (0..1000)
+            .map(|pid| (pid, ProcessCounterSample::default()))
+            .collect();
+        let capacity = counters.capacity();
+        prepare_process_counters(&mut counters, 2, |pid| pid < 2);
+        assert_eq!(counters.len(), 2);
+        assert!(counters.capacity() < capacity);
+        let slot_address = &counters[&0] as *const _;
+        prepare_process_counters(&mut counters, 2, |pid| pid < 2);
+        assert_eq!(&counters[&0] as *const _, slot_address);
+        prepare_process_counters(&mut counters, 0, |_| false);
+        assert_eq!(counters.capacity(), 0);
+    }
+
+    #[test]
+    fn counter_table_matches_replacement_table_across_process_churn() {
+        let mut old = HashMap::<u32, ProcessCounterSample>::new();
+        let mut new = old.clone();
+        for processes in [
+            vec![(10, 100), (20, 200)],
+            vec![(10, 100), (20, 201), (30, 0)],
+            vec![(30, 0)],
+            vec![],
+            vec![(10, 100)],
+        ] {
+            prepare_process_counters(&mut new, processes.len(), |pid| {
+                processes.iter().any(|&(live, _)| live == pid)
+            });
+            let mut next = HashMap::with_capacity(processes.len());
+            for (pid, start) in processes {
+                let expected = old
+                    .get(&pid)
+                    .filter(|sample| sample.start_time_millis == start)
+                    .copied();
+                let (actual, slot) = process_counter_slot(&mut new, pid, start);
+                assert_eq!(actual, expected);
+                let updated = ProcessCounterSample {
+                    start_time_millis: start,
+                    wakeups: expected.map_or(1, |sample| sample.wakeups + 3),
+                    disk_read_bytes: expected.map_or(0, |sample| sample.disk_read_bytes + 10),
+                    ..Default::default()
+                };
+                *slot = updated;
+                next.insert(pid, updated);
+            }
+            old = next;
+            assert_eq!(old, new);
+        }
+    }
+
+    #[test]
+    #[ignore = "manual before/after counter-table benchmark; no timing assertion"]
+    fn counter_table_reuse_benchmark() {
+        for count in [1_000_u32, 5_000, 10_000] {
+            let processes: HashMap<_, _> = (0..count).map(|pid| (pid, u64::from(pid))).collect();
+            let original: HashMap<_, _> = processes
+                .iter()
+                .map(|(&pid, &start)| {
+                    (
+                        pid,
+                        ProcessCounterSample {
+                            start_time_millis: start,
+                            wakeups: 100,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect();
+            let mut old = original.clone();
+            let mut new = original;
+            let mut old_elapsed = std::time::Duration::ZERO;
+            let mut new_elapsed = std::time::Duration::ZERO;
+            for tick in 0..2_000 {
+                let update = |previous: Option<ProcessCounterSample>, start| ProcessCounterSample {
+                    start_time_millis: start,
+                    wakeups: previous.map_or(1, |sample| sample.wakeups + 1),
+                    ..Default::default()
+                };
+                let mut run_old = || {
+                    let started = std::time::Instant::now();
+                    let mut next = HashMap::with_capacity(processes.len());
+                    for (&pid, &start) in &processes {
+                        let previous = old
+                            .get(&pid)
+                            .filter(|s| s.start_time_millis == start)
+                            .copied();
+                        next.insert(pid, update(previous, start));
+                        std::hint::black_box(
+                            old.get(&pid).is_none_or(|s| s.start_time_millis != start),
+                        );
+                    }
+                    old = next;
+                    started.elapsed()
+                };
+                let mut run_new = || {
+                    let started = std::time::Instant::now();
+                    prepare_process_counters(&mut new, processes.len(), |pid| {
+                        processes.contains_key(&pid)
+                    });
+                    for (&pid, &start) in &processes {
+                        let (previous, slot) = process_counter_slot(&mut new, pid, start);
+                        *slot = update(previous, start);
+                        std::hint::black_box(previous.is_none());
+                    }
+                    started.elapsed()
+                };
+                if tick % 2 == 0 {
+                    old_elapsed += run_old();
+                    new_elapsed += run_new();
+                } else {
+                    new_elapsed += run_new();
+                    old_elapsed += run_old();
+                }
+                assert_eq!(old, new);
+            }
+            println!(
+                "counter table: processes={count}, ticks=2000, old_us={}, new_us={}, sample_bytes={}, capacity={}",
+                old_elapsed.as_micros(),
+                new_elapsed.as_micros(),
+                std::mem::size_of::<ProcessCounterSample>(),
+                new.capacity()
+            );
+        }
+    }
 
     #[test]
     fn vm_counter_deltas_become_byte_rates() {

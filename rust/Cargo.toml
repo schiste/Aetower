@@ -45,6 +45,11 @@ sha2 = "0.11"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 miniz_oxide = "0.9"
 
+# Bundled SQLite is hot in storage tests. Optimize that dependency while keeping
+# normal development debug information and runtime checks.
+[profile.dev.package.libsqlite3-sys]
+opt-level = 1
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

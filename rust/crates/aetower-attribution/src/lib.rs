@@ -76,6 +76,8 @@ pub fn build_entities(
         let ancestor_roles =
             collect_ancestor_roles(process, &seed.entity_id, &process_index, identity);
 
+        let command_line = command_line(process);
+        let detail = summarize_process(process.pid, command_line.as_deref());
         entry.components.push(ComponentSnapshot {
             kind: if seed.entity_kind == EntityKind::TerminalSession {
                 ComponentKind::Command
@@ -83,13 +85,13 @@ pub fn build_entities(
                 ComponentKind::Process
             },
             title: process.identity.name.clone(),
-            detail: summarize_process(process),
+            detail,
             adapter_context: None,
             provenance: component_provenance(process, &ancestor_roles),
             process_id: Some(process.pid),
             start_time_millis: process.start_time_millis,
             executable_path: process.identity.exe.clone(),
-            command_line: command_line(process),
+            command_line: command_line.clone(),
             parent_summary: parent_summary(process, &process_index),
             launched_by: launched_by(&ancestor_roles),
             cpu_percent: process.cpu_percent,
@@ -107,7 +109,7 @@ pub fn build_entities(
             title: process.identity.name.clone(),
             start_time_millis: process.start_time_millis,
             executable_path: process.identity.exe.clone(),
-            command_line: command_line(process),
+            command_line,
             cwd: process.cwd.clone(),
             user: process.identity.user.clone(),
             session_id: None,
@@ -172,20 +174,20 @@ fn entity_from_seed(seed: &EntitySeed) -> EntitySnapshot {
 }
 
 fn summarize_entity_attribution(entity: &mut EntitySnapshot) {
-    let launchers: BTreeSet<String> = entity
+    let launchers: BTreeSet<&str> = entity
         .components
         .iter()
-        .filter_map(|component| component.launched_by.clone())
+        .filter_map(|component| component.launched_by.as_deref())
         .filter(|value| !value.is_empty())
         .collect();
     entity.launcher_summary = match launchers.len() {
         0 => None,
-        1 => launchers.first().cloned(),
+        1 => launchers.first().map(|label| (*label).to_owned()),
         _ => {
             let summary = launchers
                 .iter()
                 .take(3)
-                .cloned()
+                .copied()
                 .collect::<Vec<_>>()
                 .join(", ");
             Some(format!("mixed lineage via {summary}"))
@@ -216,7 +218,7 @@ fn summarize_entity_attribution(entity: &mut EntitySnapshot) {
             launchers
                 .iter()
                 .take(4)
-                .cloned()
+                .copied()
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -310,12 +312,8 @@ fn entity_provenance(seed: &EntitySeed) -> Option<ProvenanceSnapshot> {
     None
 }
 
-fn summarize_process(process: &RawProcessSample) -> String {
-    if process.cmd().is_empty() {
-        format!("pid {}", process.pid)
-    } else {
-        compact_component_detail(&process.cmd().join(" "))
-    }
+fn summarize_process(pid: u32, command_line: Option<&str>) -> String {
+    command_line.map_or_else(|| format!("pid {pid}"), compact_component_detail)
 }
 
 fn command_line(process: &RawProcessSample) -> Option<String> {
@@ -324,14 +322,21 @@ fn command_line(process: &RawProcessSample) -> Option<String> {
 
 fn compact_component_detail(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.chars().count() <= MAX_COMPONENT_DETAIL_CHARS {
+    // At most 161 scalar values determine whether truncation is needed.
+    // Counting the entire command first made long argument lists needlessly
+    // expensive even though this field displays only a 160-character preview.
+    if trimmed.chars().nth(MAX_COMPONENT_DETAIL_CHARS).is_none() {
         return trimmed.to_owned();
     }
-    let head: String = trimmed
-        .chars()
-        .take(MAX_COMPONENT_DETAIL_CHARS.saturating_sub(3))
-        .collect();
-    format!("{head}...")
+    let head_end = trimmed
+        .char_indices()
+        .nth(MAX_COMPONENT_DETAIL_CHARS.saturating_sub(3))
+        .map(|(index, _)| index)
+        .unwrap_or(trimmed.len());
+    let mut detail = String::with_capacity(head_end + 3);
+    detail.push_str(&trimmed[..head_end]);
+    detail.push_str("...");
+    detail
 }
 
 fn parent_summary(
@@ -472,17 +477,16 @@ fn format_process_label(process: &RawProcessSample) -> String {
     format!("{} (pid {})", process_display_name(process), process.pid)
 }
 
-fn process_display_name(process: &RawProcessSample) -> String {
+fn process_display_name(process: &RawProcessSample) -> &str {
     if !process.name().is_empty() {
-        process.identity.name.clone()
+        process.name()
     } else if let Some(path) = process.exe() {
         std::path::Path::new(path)
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or(path)
-            .to_owned()
     } else {
-        "Unknown process".to_owned()
+        "Unknown process"
     }
 }
 
@@ -561,6 +565,46 @@ mod tests {
     use aetower_model::{EntityKind, FrontmostAppState};
 
     use super::*;
+
+    #[test]
+    #[ignore = "manual attribution CPU/allocation benchmark; no timing assertion"]
+    fn attribution_formatting_benchmark() {
+        let mut fixture_output = String::new();
+        for argument_bytes in [32, 1_024, 16_384] {
+            let argument = "x".repeat(argument_bytes);
+            let mut processes = vec![RawProcessSample::synthetic(
+                1,
+                None,
+                "zsh",
+                Some("/bin/zsh"),
+                &["-zsh"],
+            )];
+            processes.extend((2..502).map(|pid| {
+                RawProcessSample::synthetic(
+                    pid,
+                    Some(1),
+                    "worker",
+                    Some("/usr/bin/worker"),
+                    &["worker", &argument],
+                )
+            }));
+            let identity = aetower_identity::resolve(&processes);
+            let expected = format!("{:?}", build_entities(&processes, &identity, None));
+            let started = std::time::Instant::now();
+            for _ in 0..100 {
+                std::hint::black_box(build_entities(&processes, &identity, None));
+            }
+            println!(
+                "attribution: processes={}, argument_bytes={argument_bytes}, ticks=100, elapsed_us={}",
+                processes.len(),
+                started.elapsed().as_micros()
+            );
+            fixture_output.push_str(&expected);
+        }
+        if let Ok(path) = std::env::var("AETOWER_ATTRIBUTION_FIXTURE_OUTPUT") {
+            std::fs::write(path, fixture_output).expect("write complete attribution fixture");
+        }
+    }
 
     #[test]
     fn grouped_entities_sum_memory_across_processes() {
@@ -773,7 +817,7 @@ mod tests {
             )
         };
 
-        let detail = summarize_process(&process);
+        let detail = summarize_process(process.pid, command_line(&process).as_deref());
         let Some(command_line) = command_line(&process) else {
             panic!("command line should be present");
         };
@@ -781,6 +825,31 @@ mod tests {
         assert!(detail.len() <= MAX_COMPONENT_DETAIL_CHARS);
         assert!(detail.ends_with("..."));
         assert_eq!(command_line, format!("python3 {long_argument}"));
+    }
+
+    #[test]
+    fn compact_details_preserve_unicode_whitespace_and_boundary_behavior() {
+        for width in [0, 1, 156, 157, 159, 160, 161, 1_000] {
+            for character in ['x', 'é', '🦀'] {
+                let value = format!(" \t{}\n", character.to_string().repeat(width));
+                let trimmed = value.trim();
+                let expected = if width <= MAX_COMPONENT_DETAIL_CHARS {
+                    trimmed.to_owned()
+                } else {
+                    format!(
+                        "{}...",
+                        trimmed
+                            .chars()
+                            .take(MAX_COMPONENT_DETAIL_CHARS - 3)
+                            .collect::<String>()
+                    )
+                };
+                assert_eq!(compact_component_detail(&value), expected);
+            }
+        }
+        assert_eq!(summarize_process(42, None), "pid 42");
+        assert_eq!(summarize_process(42, Some("  ")), "");
+        assert_eq!(compact_component_detail("a\u{2003}b"), "a\u{2003}b");
     }
 
     #[test]

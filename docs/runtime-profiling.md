@@ -22,6 +22,23 @@ Enforce default local runtime budgets during the profile:
 sh scripts/profile-runtime.sh --duration 60 --interval 5 --sample-seconds 5 --enforce
 ```
 
+For before/after CPU, memory and wakeup comparisons, pass the PID of the app
+you launched to the counter-based sampler:
+
+```sh
+python3 scripts/measure-runtime.py --pid 12345 --duration 60 --interval 2 \
+  --output logs/runtime-counters.json
+```
+
+This samples only that process and does not launch or terminate it. Settle
+startup first and keep window visibility, app settings, workload, duration and
+host load comparable. CPU uses cumulative user/system counter deltas over the
+measured wall interval, rather than `ps`'s smoothed CPU estimate. Mach CPU ticks
+are converted using the host timebase. The JSON records interrupt wakeups and
+package-idle wakeups separately, their rates, and sampled RSS and physical
+footprint. Memory peaks between samples can be missed. If the process exits
+or the PID is reused, the sampler fails rather than reporting a zero load.
+
 ## What it captures
 
 Each run writes artifacts under `tmp/runtime-profile/<timestamp>/`:

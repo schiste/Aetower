@@ -3,13 +3,16 @@ import PackageDescription
 import Foundation
 
 let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
-let pluginOutputDirectory = URL(fileURLWithPath: packageDirectory)
-    .appendingPathComponent(".build/plugins/outputs/macos/AetowerBindings/destination/BuildRustBridgePlugin")
+// The Rust build runs explicitly before Swift. Link its outputs directly:
+// staging them through a plugin also made SwiftPM treat dylibs as resources.
+let rustTargetDirectory = URL(fileURLWithPath: packageDirectory)
+    .appendingPathComponent("../rust/target")
+    .standardizedFileURL
     .path
-let rustDebugLibraryPath = URL(fileURLWithPath: pluginOutputDirectory)
+let rustDebugLibraryPath = URL(fileURLWithPath: rustTargetDirectory)
     .appendingPathComponent("debug")
     .path
-let rustReleaseLibraryPath = URL(fileURLWithPath: pluginOutputDirectory)
+let rustReleaseLibraryPath = URL(fileURLWithPath: rustTargetDirectory)
     .appendingPathComponent("release")
     .path
 
@@ -25,11 +28,6 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0")
     ],
     targets: [
-        .plugin(
-            name: "BuildRustBridgePlugin",
-            capability: .buildTool(),
-            path: "Plugins/BuildRustBridgePlugin"
-        ),
         .systemLibrary(
             name: "aetower_ffiFFI",
             path: "Sources/aetower_ffiFFI"
@@ -52,8 +50,7 @@ let package = Package(
                     "-Xlinker", rustReleaseLibraryPath,
                 ], .when(configuration: .release)),
                 .linkedLibrary("aetower_ffi")
-            ],
-            plugins: ["BuildRustBridgePlugin"]
+            ]
         ),
         .target(
             name: "AetowerBridge",
