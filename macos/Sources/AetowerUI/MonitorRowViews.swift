@@ -276,6 +276,7 @@ struct MonitorProcessRowModel: Identifiable, Equatable {
     let owner: EntitySnapshot
     let commandLine: String?
     let pid: UInt32
+    let startTimeMillis: UInt64
     let displayName: String
     let subtitle: String
     let cpuText: String
@@ -291,6 +292,7 @@ struct MonitorProcessRowModel: Identifiable, Equatable {
         self.owner = reference.owner
         self.commandLine = reference.commandLine
         self.pid = reference.pid
+        self.startTimeMillis = reference.startTimeMillis
         self.displayName = reference.title.isEmpty
             ? reference.owner.displayName
             : reference.title
@@ -334,11 +336,13 @@ struct EntityRow: View, Equatable {
     let row: MonitorEntityRowModel
     let isSelected: Bool
     let isActionPending: Bool
+    var isNotResponding = false
 
     nonisolated static func == (lhs: EntityRow, rhs: EntityRow) -> Bool {
         lhs.row == rhs.row
             && lhs.isSelected == rhs.isSelected
             && lhs.isActionPending == rhs.isActionPending
+            && lhs.isNotResponding == rhs.isNotResponding
     }
 
     var body: some View {
@@ -359,6 +363,10 @@ struct EntityRow: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             ProcessOriginChip(summary: row.origin)
+
+            if isNotResponding {
+                NotRespondingBadge()
+            }
 
             entityBadges
 
@@ -431,11 +439,13 @@ struct MonitorProcessRow: View, Equatable {
     let row: MonitorProcessRowModel
     let isSelected: Bool
     let isActionPending: Bool
+    var isNotResponding = false
 
     nonisolated static func == (lhs: MonitorProcessRow, rhs: MonitorProcessRow) -> Bool {
         lhs.row == rhs.row
             && lhs.isSelected == rhs.isSelected
             && lhs.isActionPending == rhs.isActionPending
+            && lhs.isNotResponding == rhs.isNotResponding
     }
 
     var body: some View {
@@ -462,6 +472,10 @@ struct MonitorProcessRow: View, Equatable {
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isNotResponding {
+                NotRespondingBadge()
+            }
 
             Text(row.cpuText)
                 .font(AetowerDesign.Typography.data)
@@ -497,6 +511,7 @@ struct GroupedEntityRow: View, Equatable {
     let canExpand: Bool
     let isActionPending: Bool
     let onToggleExpansion: () -> Void
+    var isNotResponding = false
 
     nonisolated static func == (lhs: GroupedEntityRow, rhs: GroupedEntityRow) -> Bool {
         lhs.row == rhs.row
@@ -504,6 +519,7 @@ struct GroupedEntityRow: View, Equatable {
             && lhs.isExpanded == rhs.isExpanded
             && lhs.canExpand == rhs.canExpand
             && lhs.isActionPending == rhs.isActionPending
+            && lhs.isNotResponding == rhs.isNotResponding
     }
 
     var body: some View {
@@ -525,6 +541,10 @@ struct GroupedEntityRow: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             ProcessOriginChip(summary: row.origin)
+
+            if isNotResponding {
+                NotRespondingBadge()
+            }
 
             if let burdenLeaderText = row.burdenLeaderText {
                 AetowerBadge(

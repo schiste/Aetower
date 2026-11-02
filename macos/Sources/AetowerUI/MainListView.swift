@@ -271,6 +271,7 @@ public struct MainListView: View {
     @State private var selectedEntityID: String?
     @State private var selectedProcessRowID: String?
     @State private var searchText = ""
+    @State private var responsivenessClientID = UUID()
     @State private var originFilter: ProcessOriginFilter = .all
     @State private var sortKey: SortKey = .friction
     @State private var focusedIndex: Int = 0
@@ -389,7 +390,11 @@ public struct MainListView: View {
                 visibleRowCount: monitorVisibleRowCount
             )
         }
+        .onAppear {
+            state.processResponsiveness.beginObserving(client: responsivenessClientID)
+        }
         .onDisappear {
+            state.processResponsiveness.endObserving(client: responsivenessClientID)
             groupingTask?.cancel()
             groupingTask = nil
             searchFieldFocused = false
@@ -521,6 +526,12 @@ public struct MainListView: View {
             }
         } filterTools: {
             HStack(spacing: AetowerDesign.Spacing.xs) {
+                if state.processResponsiveness.snapshot.isAvailable == false {
+                    Label("App status unavailable", systemImage: "questionmark.circle")
+                        .font(AetowerDesign.Typography.metadata)
+                        .foregroundStyle(AetowerDesign.Ink.secondary)
+                        .help("App responsiveness cannot currently be read. An absent Not responding badge does not mean an app is responding.")
+                }
                 sortMenu
                 originMenu
                 advancedFilterButton
@@ -1817,7 +1828,11 @@ public struct MainListView: View {
                         Button {
                             selectEntity(row.entityId)
                         } label: {
-                            MonitorLiveEntityRow(row: row, isSelected: selectedEntityID == row.entityId)
+                            MonitorLiveEntityRow(
+                                row: row,
+                                isSelected: selectedEntityID == row.entityId,
+                                isNotResponding: state.processResponsiveness.snapshot.isNotResponding(row: row)
+                            )
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
@@ -1917,7 +1932,8 @@ public struct MainListView: View {
                                 EntityRow(
                                     row: row,
                                     isSelected: selectedEntityID == row.id,
-                                    isActionPending: entityRowActionIsPending(row.entity)
+                                    isActionPending: entityRowActionIsPending(row.entity),
+                                    isNotResponding: state.processResponsiveness.snapshot.isNotResponding(entity: row.entity)
                                 )
                                 .equatable()
                             }
@@ -1952,6 +1968,9 @@ public struct MainListView: View {
                                 isActionPending: groupRowActionIsPending(row.group),
                                 onToggleExpansion: {
                                     toggleGroupExpansion(row.group)
+                                },
+                                isNotResponding: row.group.members.contains {
+                                    state.processResponsiveness.snapshot.isNotResponding(entity: $0)
                                 }
                             )
                             .equatable()
@@ -1977,7 +1996,11 @@ public struct MainListView: View {
                                         MonitorProcessRow(
                                             row: processRow,
                                             isSelected: selectedProcessRowID == processRow.id,
-                                            isActionPending: processRowActionIsPending(processRow)
+                                            isActionPending: processRowActionIsPending(processRow),
+                                            isNotResponding: state.processResponsiveness.snapshot.status(
+                                                pid: processRow.pid,
+                                                startTimeMillis: processRow.startTimeMillis
+                                            ) == .notResponding
                                         )
                                         .equatable()
                                     }
@@ -1998,7 +2021,8 @@ public struct MainListView: View {
                                 EntityRow(
                                     row: row,
                                     isSelected: selectedEntityID == row.id,
-                                    isActionPending: entityRowActionIsPending(row.entity)
+                                    isActionPending: entityRowActionIsPending(row.entity),
+                                    isNotResponding: state.processResponsiveness.snapshot.isNotResponding(entity: row.entity)
                                 )
                                 .equatable()
                             }
