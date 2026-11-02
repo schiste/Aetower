@@ -215,6 +215,7 @@ final class MonitorLiveRowsStore: ObservableObject {
 struct MonitorLiveEntityRow: View {
     let row: UiProcessRow
     let isSelected: Bool
+    var isNotResponding = false
 
     var body: some View {
         HStack(spacing: AetowerDesign.Spacing.md) {
@@ -229,6 +230,9 @@ struct MonitorLiveEntityRow: View {
                         .font(AetowerDesign.Typography.controlLabel)
                         .foregroundStyle(AetowerDesign.Ink.primary)
                         .lineLimit(1)
+                    if isNotResponding {
+                        NotRespondingBadge()
+                    }
                     if row.isForeground {
                         AetowerBadge("Foreground", tone: AetowerDesign.Tone.cpu)
                     }
@@ -258,7 +262,7 @@ struct MonitorLiveEntityRow: View {
         )
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.displayName), CPU \(String(format: "%.1f", row.cpuPercent)) percent, memory \(formatBytes(max(row.memoryResidentBytes, row.memoryPhysicalFootprintBytes)) )")
+        .accessibilityLabel("\(row.displayName)\(isNotResponding ? ", Not responding" : ""), CPU \(String(format: "%.1f", row.cpuPercent)) percent, memory \(formatBytes(max(row.memoryResidentBytes, row.memoryPhysicalFootprintBytes)) )")
     }
 
     private func metric(_ value: String, label: String) -> some View {

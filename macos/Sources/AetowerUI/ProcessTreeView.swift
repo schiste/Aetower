@@ -7,15 +7,31 @@ public struct ProcessTreeView: View {
     let entity: EntitySnapshot
     let allEntities: [EntitySnapshot]
     let seedEntities: [EntitySnapshot]
+    let responsiveness: ProcessResponsivenessSnapshot
 
     public init(
         entity: EntitySnapshot,
         allEntities: [EntitySnapshot],
         seedEntities: [EntitySnapshot]? = nil
     ) {
+        self.init(
+            entity: entity,
+            allEntities: allEntities,
+            seedEntities: seedEntities ?? [entity],
+            responsiveness: ProcessResponsivenessSnapshot()
+        )
+    }
+
+    init(
+        entity: EntitySnapshot,
+        allEntities: [EntitySnapshot],
+        seedEntities: [EntitySnapshot],
+        responsiveness: ProcessResponsivenessSnapshot
+    ) {
         self.entity = entity
         self.allEntities = allEntities
-        self.seedEntities = seedEntities ?? [entity]
+        self.seedEntities = seedEntities
+        self.responsiveness = responsiveness
     }
 
     public var body: some View {
@@ -35,7 +51,8 @@ public struct ProcessTreeView: View {
             ForEach(Array(treeNodes.enumerated()), id: \.offset) { index, node in
                 ProcessTreeNode(
                     node: node,
-                    isLast: index == treeNodes.count - 1
+                    isLast: index == treeNodes.count - 1,
+                    responsiveness: responsiveness
                 )
             }
         }
@@ -69,6 +86,7 @@ public struct ProcessTreeView: View {
 private struct TreeNode {
     let title: String
     let pid: UInt32?
+    var startTimeMillis: UInt64? = nil
     let kind: ComponentKind
     let detail: String?
     let depth: Int
@@ -285,6 +303,7 @@ private func makeProcessNode(
     return TreeNode(
         title: component.title,
         pid: component.processId,
+        startTimeMillis: component.startTimeMillis,
         kind: component.kind,
         detail: processDetail(component, aggregate: aggregate),
         depth: depth,
@@ -605,6 +624,7 @@ private func extractParentPid(from parentSummary: String?) -> UInt32? {
 private struct ProcessTreeNode: View {
     let node: TreeNode
     let isLast: Bool
+    let responsiveness: ProcessResponsivenessSnapshot
 
     var body: some View {
         HStack(spacing: 0) {
@@ -645,6 +665,10 @@ private struct ProcessTreeNode: View {
                         Text("\(pid)")
                             .font(.system(size: 9, design: .monospaced))
                             .foregroundStyle(.tertiary)
+                    }
+
+                    if responsiveness.status(pid: node.pid, startTimeMillis: node.startTimeMillis) == .notResponding {
+                        NotRespondingBadge()
                     }
 
                     if let adapter = node.adapterLabel {
