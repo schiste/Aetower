@@ -24,9 +24,12 @@ description: Use after repo-onboarding or Explore when moving from orientation i
 - Exercise null/error returns in FFI ownership wrappers before app adoption;
   reject null handles before constructing an owner.
 - Check likely entrypoints and impacted callers before finishing.
-- For macOS app responsiveness, use an owned recoverable fixture with an event
-  pending for its blocked main loop. Blocking an idle main loop alone need not
-  trigger WindowServer's unresponsive flag. Exercise hang, recovery and exit;
+- For macOS app responsiveness, use an owned recoverable foreground fixture;
+  wait for its event loop and verify active/key-window state before blocking it.
+  An inactive or idle blocked loop need not trigger WindowServer's flag. Do not
+  assume synthetic input was delivered: check nonprompting event-post permission
+  and prefer a fixture that reproduces without input. Compare main/background
+  reads when diagnosing a missed transition. Exercise hang, recovery and exit;
   target any fixture input only at the owned PID and retain failed attempts.
   Validate observation age from scan start, late completion after stop/restart,
   missing native APIs and process identity changes separately from the OS signal.
