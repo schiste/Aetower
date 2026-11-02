@@ -50,14 +50,29 @@ mismatches, aggregate helper PIDs, recovery and exit without metric changes,
 empty app catalogs, stale and late results, cancellation, one in-flight scan,
 and multiple-window demand.
 
-An owned recoverable AppKit fixture exercises the real native query. It must
-leave an event pending for its blocked main loop: an earlier fixture blocked
-an idle loop and did not trigger WindowServer's flag. The corrected fixture
-posts events only to its own PID. On the validation Mac, macOS reported the
-hang after about 15.5 seconds, cleared it on recovery, and the probe returned
-unknown after exit. This demonstrates the native transition on that host;
-it does not promise the same delay or SPI availability on every macOS version.
+All 14 focused tests and the full release suite of 226 Swift tests passed.
+Strict SwiftLint with the repository configuration also passed. Rust sources,
+bindings and the retained release bridge are unchanged.
+
+An owned recoverable AppKit fixture exercises the real native query. Inactive
+fixtures did not reliably trigger WindowServer's flag, even with an initialized
+event loop. The final fixture verifies foreground activation and a key window
+before blocking. It uses no synthetic input. The final background probe detected
+the hang, recovery and exit on macOS 27.2; a separate foreground diagnostic
+confirmed that main-thread and background reads agreed. Earlier failed attempts
+are retained. These checks demonstrate the native transition on that host;
+they do not promise the same detection delay or SPI availability everywhere.
+
+In 200 warm scans of 161 registered apps, the final probe used **3.07 ms of CPU
+per scan**, with **6.39 ms median elapsed time**. This absolute measurement
+excludes app-catalog enumeration, startup and UI rendering, and does not establish
+whole-app CPU or memory overhead. The probe ran on a utility background queue.
+No build or other owned resource experiment overlapped this capture.
 
 Retained raw attempts and source hashes are under the external build cache's
-`session-11/retained/` directory. Final test counts and probe cost measurements
-are recorded in the pull request after validation completes.
+`session-11/retained/` directory. See
+[`process-responsiveness-validation.json`](process-responsiveness-validation.json)
+for bounded results, receipt hashes and all attempt outcomes. Build/test costs
+are validation costs under variable host load, not a matched build comparison.
+Broker submission was attempted but refused by the existing legacy worktree-root
+registry state before verification; the draft PR is the published delivery.
